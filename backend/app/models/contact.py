@@ -70,6 +70,41 @@ class Contact(Base):
         String(50),
         nullable=True,
     )
+    # Phone verification fields
+    phone_verified: Mapped[Optional[bool]] = mapped_column(
+        nullable=True,
+    )
+    phone_e164: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        index=True,
+    )
+    phone_type: Mapped[Optional[str]] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+    phone_carrier: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    phone_country_code: Mapped[Optional[str]] = mapped_column(
+        String(5),
+        nullable=True,
+    )
+    phone_region: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    phone_risk_level: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+    phone_score: Mapped[Optional[int]] = mapped_column(
+        nullable=True,
+    )
+    phone_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        nullable=True,
+    )
     linkedin_url: Mapped[Optional[str]] = mapped_column(
         String(500),
         nullable=True,

@@ -19,6 +19,9 @@ dnspython>=2.4.0
 aiosmtplib>=3.0.0
 email-validator>=2.1.0
 
+# Phone verification (Google's libphonenumber)
+phonenumbers>=8.13.0
+
 # HTTP client for external API calls
 httpx>=0.26.0
 

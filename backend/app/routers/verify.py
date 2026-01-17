@@ -28,15 +28,22 @@ from app.core.security import AppContext, get_current_app
 from app.core.usage_tracker import check_usage_limit, increment_usage
 from app.core.lago_client import get_lago_client
 from app.schemas.verify import (
+    BatchPhoneVerifyRequest,
+    BatchPhoneVerifyResponse,
     BatchVerifyRequest,
     BatchVerifyResponse,
     EmailVerifyRequest,
     JobResult,
     JobStatus,
+    PhoneRiskLevel,
+    PhoneType,
+    PhoneVerificationResult,
+    PhoneVerifyRequest,
     RiskLevel,
     VerificationResult,
     VerificationStatus,
 )
+from app.services.phone_verifier import get_phone_verifier
 
 logger = structlog.get_logger(__name__)
 
@@ -424,4 +431,202 @@ async def get_job_status(
         created_at=datetime.fromisoformat(job_data["created_at"]) if job_data.get("created_at") else datetime.utcnow(),
         completed_at=datetime.fromisoformat(job_data["completed_at"]) if job_data.get("completed_at") else None,
         error_message=job_data.get("error_message"),
+    )
+
+
+# ============================================================================
+# Phone Verification Endpoints
+# ============================================================================
+
+
+@router.post(
+    "/phone",
+    summary="Verify single phone number",
+    description="Verify a phone number using Google's libphonenumber and optional carrier APIs.",
+    response_model=PhoneVerificationResult,
+)
+async def verify_phone(
+    request: PhoneVerifyRequest,
+    app: AppContext = Depends(get_current_app),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> PhoneVerificationResult:
+    """
+    Verify a single phone number.
+
+    Performs comprehensive phone verification including:
+    - Format validation (E.164, national)
+    - Number type detection (mobile, fixed line, VOIP)
+    - Carrier lookup (based on prefix patterns)
+    - Geographic region and timezone
+    - Risk scoring
+
+    Uses Google's libphonenumber locally, with optional Veriphone API
+    for enhanced carrier data (1,000 free/month).
+
+    Args:
+        request: Phone verification request
+        app: Authenticated application context
+        db: Database session
+        settings: Application settings
+
+    Returns:
+        PhoneVerificationResult with detailed verification information
+    """
+    # Check permission (using same permission as email for now)
+    check_permission(app.permissions, Permission.VERIFY_SINGLE)
+
+    # Check usage limit
+    if app.user_id:
+        await check_usage_limit(db, app.user_id, "verify:single", app.tier)
+
+    logger.info(
+        "Phone verification request",
+        phone=request.phone,
+        region=request.region,
+        use_api=request.use_api,
+        app_name=app.app_name,
+    )
+
+    # Get phone verifier with optional Veriphone API key
+    verifier = get_phone_verifier(
+        veriphone_api_key=settings.VERIPHONE_API_KEY if request.use_api else None
+    )
+
+    # Perform verification
+    if request.use_api:
+        result = await verifier.verify(
+            request.phone,
+            region=request.region,
+            use_api=True,
+        )
+    else:
+        result = verifier.verify_local(request.phone, region=request.region)
+
+    # Increment usage after successful verification
+    if app.user_id:
+        await increment_usage(db, app.user_id, "verify:single")
+
+    logger.info(
+        "Phone verification complete",
+        phone=request.phone,
+        is_valid=result.is_valid,
+        phone_type=result.phone_type.value,
+        score=result.score,
+    )
+
+    # Convert to Pydantic response
+    return PhoneVerificationResult(
+        phone=result.phone,
+        formatted_e164=result.formatted_e164,
+        formatted_national=result.formatted_national,
+        is_valid=result.is_valid,
+        is_possible=result.is_possible,
+        phone_type=PhoneType(result.phone_type.value),
+        carrier_name=result.carrier_name,
+        country_code=result.country_code,
+        region=result.region,
+        timezone=result.timezone,
+        risk_level=PhoneRiskLevel(result.risk_level.value),
+        score=result.score,
+        verification_method=result.verification_method,
+        verified_at=datetime.utcnow(),
+        error=result.error,
+    )
+
+
+@router.post(
+    "/phone/batch",
+    summary="Verify batch of phone numbers",
+    description="Verify multiple phone numbers. Defaults to local-only verification for speed.",
+    response_model=BatchPhoneVerifyResponse,
+)
+async def verify_phone_batch(
+    request: BatchPhoneVerifyRequest,
+    app: AppContext = Depends(get_current_app),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> BatchPhoneVerifyResponse:
+    """
+    Verify a batch of phone numbers.
+
+    For batch operations, API calls are disabled by default to avoid rate limits.
+    Uses local phonenumbers library for validation.
+
+    Args:
+        request: Batch phone verification request
+        app: Authenticated application context
+        db: Database session
+        settings: Application settings
+
+    Returns:
+        BatchPhoneVerifyResponse with results for each phone
+    """
+    # Check permission
+    check_permission(app.permissions, Permission.VERIFY_BATCH)
+
+    phone_count = len(request.phones)
+
+    # Check usage limit
+    if app.user_id:
+        await check_usage_limit(db, app.user_id, "verify:batch", app.tier, count=phone_count)
+
+    logger.info(
+        "Batch phone verification request",
+        phone_count=phone_count,
+        region=request.region,
+        use_api=request.use_api,
+        app_name=app.app_name,
+    )
+
+    # Get phone verifier
+    verifier = get_phone_verifier(
+        veriphone_api_key=settings.VERIPHONE_API_KEY if request.use_api else None
+    )
+
+    # Verify all phones
+    raw_results = await verifier.verify_batch(
+        request.phones,
+        region=request.region,
+        use_api=request.use_api,
+    )
+
+    # Convert to Pydantic responses
+    results = [
+        PhoneVerificationResult(
+            phone=r.phone,
+            formatted_e164=r.formatted_e164,
+            formatted_national=r.formatted_national,
+            is_valid=r.is_valid,
+            is_possible=r.is_possible,
+            phone_type=PhoneType(r.phone_type.value),
+            carrier_name=r.carrier_name,
+            country_code=r.country_code,
+            region=r.region,
+            timezone=r.timezone,
+            risk_level=PhoneRiskLevel(r.risk_level.value),
+            score=r.score,
+            verification_method=r.verification_method,
+            verified_at=datetime.utcnow(),
+            error=r.error,
+        )
+        for r in raw_results
+    ]
+
+    valid_count = sum(1 for r in results if r.is_valid)
+
+    # Increment usage after successful verification
+    if app.user_id:
+        await increment_usage(db, app.user_id, "verify:batch", count=phone_count)
+
+    logger.info(
+        "Batch phone verification complete",
+        phone_count=phone_count,
+        valid_count=valid_count,
+    )
+
+    return BatchPhoneVerifyResponse(
+        results=results,
+        valid_count=valid_count,
+        total_count=phone_count,
     )

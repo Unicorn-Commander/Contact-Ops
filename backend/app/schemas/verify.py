@@ -256,3 +256,207 @@ class BatchVerifyResponse(BaseModel):
         default=None,
         description="Immediate results for sync requests",
     )
+
+
+# ============================================================================
+# Phone Verification Schemas
+# ============================================================================
+
+
+class PhoneType(str, Enum):
+    """Phone number types from libphonenumber."""
+
+    MOBILE = "mobile"
+    FIXED_LINE = "fixed_line"
+    FIXED_LINE_OR_MOBILE = "fixed_line_or_mobile"
+    VOIP = "voip"
+    TOLL_FREE = "toll_free"
+    PREMIUM_RATE = "premium_rate"
+    SHARED_COST = "shared_cost"
+    PERSONAL = "personal"
+    PAGER = "pager"
+    UAN = "uan"
+    UNKNOWN = "unknown"
+
+
+class PhoneRiskLevel(str, Enum):
+    """Risk level for phone numbers."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    UNKNOWN = "unknown"
+
+
+class PhoneVerifyRequest(BaseModel):
+    """Request schema for phone verification."""
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        json_schema_extra={
+            "example": {
+                "phone": "+1 (843) 555-1234",
+                "region": "US",
+            }
+        },
+    )
+
+    phone: str = Field(
+        ...,
+        min_length=5,
+        max_length=30,
+        description="Phone number to verify (any format)",
+    )
+    region: str = Field(
+        default="US",
+        min_length=2,
+        max_length=2,
+        description="ISO 3166-1 alpha-2 region code for parsing",
+    )
+    use_api: bool = Field(
+        default=True,
+        description="Use external APIs for enhanced carrier lookup",
+    )
+
+
+class PhoneVerificationResult(BaseModel):
+    """Result of phone verification."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "phone": "+1 (843) 555-1234",
+                "formatted_e164": "+18435551234",
+                "formatted_national": "(843) 555-1234",
+                "is_valid": True,
+                "is_possible": True,
+                "phone_type": "mobile",
+                "carrier_name": "Verizon Wireless",
+                "country_code": "US",
+                "region": "South Carolina",
+                "timezone": ["America/New_York"],
+                "risk_level": "low",
+                "score": 85,
+                "verification_method": "phonenumbers",
+            }
+        },
+    )
+
+    # Input
+    phone: str = Field(..., description="Original phone number input")
+
+    # Formatted versions
+    formatted_e164: str | None = Field(
+        default=None,
+        description="E.164 format (+12025551234)",
+    )
+    formatted_national: str | None = Field(
+        default=None,
+        description="National format ((202) 555-1234)",
+    )
+
+    # Validity
+    is_valid: bool = Field(..., description="Whether the number is valid for the region")
+    is_possible: bool = Field(
+        default=False,
+        description="Whether the number length is possible",
+    )
+
+    # Type and carrier
+    phone_type: PhoneType = Field(
+        default=PhoneType.UNKNOWN,
+        description="Type of phone number",
+    )
+    carrier_name: str | None = Field(
+        default=None,
+        description="Carrier name (based on prefix patterns, ~85% accurate due to portability)",
+    )
+
+    # Location
+    country_code: str | None = Field(
+        default=None,
+        description="ISO 3166-1 alpha-2 country code",
+    )
+    region: str | None = Field(
+        default=None,
+        description="Geographic region (e.g., 'South Carolina')",
+    )
+    timezone: list[str] | None = Field(
+        default=None,
+        description="Possible timezones for this number",
+    )
+
+    # Risk assessment
+    risk_level: PhoneRiskLevel = Field(
+        default=PhoneRiskLevel.UNKNOWN,
+        description="Risk level based on number type and patterns",
+    )
+    score: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Confidence score (0-100)",
+    )
+
+    # Metadata
+    verification_method: str = Field(
+        default="phonenumbers",
+        description="Method used for verification",
+    )
+    verified_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When the verification was performed",
+    )
+    error: str | None = Field(
+        default=None,
+        description="Error message if verification failed",
+    )
+
+
+class BatchPhoneVerifyRequest(BaseModel):
+    """Request schema for batch phone verification."""
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        json_schema_extra={
+            "example": {
+                "phones": ["+1 (843) 555-1234", "+1 (843) 555-5678"],
+                "region": "US",
+                "use_api": False,
+            }
+        },
+    )
+
+    phones: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="List of phone numbers to verify (max 1000)",
+    )
+    region: str = Field(
+        default="US",
+        min_length=2,
+        max_length=2,
+        description="Default region code for parsing",
+    )
+    use_api: bool = Field(
+        default=False,
+        description="Use external APIs (careful with rate limits for batch)",
+    )
+
+
+class BatchPhoneVerifyResponse(BaseModel):
+    """Response for batch phone verification."""
+
+    results: list[PhoneVerificationResult] = Field(
+        default_factory=list,
+        description="Verification results for each phone",
+    )
+    valid_count: int = Field(
+        default=0,
+        description="Number of valid phone numbers",
+    )
+    total_count: int = Field(
+        default=0,
+        description="Total phone numbers processed",
+    )

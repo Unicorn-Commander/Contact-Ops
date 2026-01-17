@@ -48,6 +48,7 @@ from app.services.catalogue_service import (
     normalize_contact,
     track_source,
 )
+from app.services.phone_verifier import get_phone_verifier
 
 logger = structlog.get_logger(__name__)
 
@@ -60,15 +61,19 @@ router = APIRouter(prefix="/api/v1/catalogue", tags=["Catalogue"])
 
 
 class ContactSubmission(BaseModel):
-    """Contact data for catalogue submission."""
+    """Contact data for catalogue submission.
 
-    email: EmailStr
+    At least one of email or phone is required for storage.
+    Contacts are stored if they have a valid email OR a valid phone.
+    """
+
+    email: EmailStr | None = None  # Optional - stored if valid
     name: str | None = None
     first_name: str | None = None
     last_name: str | None = None
     full_name: str | None = None
     title: str | None = None
-    phone: str | None = None
+    phone: str | None = None  # Optional - stored if valid
     mobile: str | None = None
     linkedin_url: str | None = None
     department: str | None = None
@@ -120,16 +125,20 @@ class CatalogueSubmitInput(BaseModel):
     contacts: list[ContactSubmission] = Field(default_factory=list)
     source: SourceInfoInput = Field(..., description="Source/citation information")
     connections: list[ConnectionInput] = Field(default_factory=list, description="Relationships between entities")
-    verify_emails: bool = Field(default=True, description="Verify contact emails (required for storage)")
+    verify_emails: bool = Field(default=True, description="Verify contact emails")
+    verify_phones: bool = Field(default=True, description="Verify contact phone numbers")
     deduplicate: bool = Field(default=True, description="Merge with existing records")
 
 
 class ContactVerificationResult(BaseModel):
-    """Verification result for a contact's email."""
+    """Verification result for a contact."""
 
     id: str
-    email: str
-    verification: dict[str, Any] | None = None
+    email: str | None = None
+    phone: str | None = None
+    email_verification: dict[str, Any] | None = None
+    phone_verification: dict[str, Any] | None = None
+    stored: bool = Field(default=False, description="Whether contact was stored in catalogue")
 
 
 class SubmitResponse(BaseModel):
@@ -346,39 +355,72 @@ async def submit_data(
                     source_record_id=source_record_id, source_url=source_url
                 )
 
-        # Process contacts with verification
+        # Process contacts with verification (email OR phone required)
+        phone_verifier = get_phone_verifier(veriphone_api_key=settings.VERIPHONE_API_KEY)
+
         for i, contact_data in enumerate(request.contacts):
             contact_dict = normalize_contact(contact_data.model_dump())
             email = contact_dict.get("email")
+            phone = contact_dict.get("phone") or contact_dict.get("mobile")
 
-            if not email:
+            # Skip if no email and no phone
+            if not email and not phone:
                 continue
 
-            # Always verify emails
-            from app.routers.verify import perform_verification
-            verification = await perform_verification(email, settings)
+            # Verify email if provided
+            email_verification = None
+            email_verification_dict = None
+            email_valid = False
 
-            # Determine if we should store this contact (only valid emails)
-            should_store = (
-                verification.status.value == "valid"
-                and verification.is_deliverable
-                and verification.risk_level.value in ("low", "medium")
-            )
+            if email and request.verify_emails:
+                from app.routers.verify import perform_verification
+                email_verification = await perform_verification(email, settings)
+                email_valid = (
+                    email_verification.status.value == "valid"
+                    and email_verification.is_deliverable
+                    and email_verification.risk_level.value in ("low", "medium")
+                )
+                email_verification_dict = {
+                    "status": email_verification.status.value,
+                    "is_deliverable": email_verification.is_deliverable,
+                    "is_disposable": email_verification.is_disposable,
+                    "is_role_based": email_verification.is_role_based,
+                    "risk_level": email_verification.risk_level.value,
+                    "score": email_verification.score,
+                }
+
+            # Verify phone if provided
+            phone_verification = None
+            phone_verification_dict = None
+            phone_valid = False
+
+            if phone and request.verify_phones:
+                phone_verification = await phone_verifier.verify(phone, use_api=False)
+                phone_valid = (
+                    phone_verification.is_valid
+                    and phone_verification.score >= 50
+                    and phone_verification.risk_level.value in ("low", "medium")
+                )
+                phone_verification_dict = {
+                    "is_valid": phone_verification.is_valid,
+                    "formatted_e164": phone_verification.formatted_e164,
+                    "phone_type": phone_verification.phone_type.value,
+                    "carrier_name": phone_verification.carrier_name,
+                    "country_code": phone_verification.country_code,
+                    "region": phone_verification.region,
+                    "risk_level": phone_verification.risk_level.value,
+                    "score": phone_verification.score,
+                }
+
+            # Store if valid email OR valid phone
+            should_store = email_valid or phone_valid
 
             contact_id: str | None = None
-            verification_dict = {
-                "status": verification.status.value,
-                "is_deliverable": verification.is_deliverable,
-                "is_disposable": verification.is_disposable,
-                "is_role_based": verification.is_role_based,
-                "risk_level": verification.risk_level.value,
-                "score": verification.score,
-            }
 
             if should_store:
-                # Check for existing contact by email
+                # Check for existing contact by email (if valid)
                 existing_contact = None
-                if request.deduplicate:
+                if request.deduplicate and email and email_valid:
                     existing_contact = await deduplicate_by_email(db, email)
 
                 if existing_contact:
@@ -387,10 +429,24 @@ async def submit_data(
                         existing_contact.enrichment_data or {},
                         contact_dict.get("enrichment_data", {}),
                     )
-                    # Update verification info in enrichment
-                    existing_contact.enrichment_data["_email_status"] = verification.status.value
-                    existing_contact.enrichment_data["_email_score"] = verification.score
-                    existing_contact.enrichment_data["_email_verified_at"] = datetime.utcnow().isoformat()
+
+                    # Update email verification info
+                    if email_verification:
+                        existing_contact.enrichment_data["_email_status"] = email_verification.status.value
+                        existing_contact.enrichment_data["_email_score"] = email_verification.score
+                        existing_contact.enrichment_data["_email_verified_at"] = datetime.utcnow().isoformat()
+
+                    # Update phone verification info
+                    if phone_verification and phone_valid:
+                        existing_contact.phone_verified = True
+                        existing_contact.phone_e164 = phone_verification.formatted_e164
+                        existing_contact.phone_type = phone_verification.phone_type.value
+                        existing_contact.phone_carrier = phone_verification.carrier_name
+                        existing_contact.phone_country_code = phone_verification.country_code
+                        existing_contact.phone_region = phone_verification.region
+                        existing_contact.phone_risk_level = phone_verification.risk_level.value
+                        existing_contact.phone_score = phone_verification.score
+                        existing_contact.phone_verified_at = datetime.utcnow()
 
                     # Update fields if new data is better
                     for field in ["full_name", "first_name", "last_name", "title",
@@ -415,13 +471,14 @@ async def submit_data(
                 else:
                     # Create new contact
                     enrichment = contact_dict.get("enrichment_data", {})
-                    enrichment["_email_status"] = verification.status.value
-                    enrichment["_email_score"] = verification.score
-                    enrichment["_email_verified_at"] = datetime.utcnow().isoformat()
+                    if email_verification:
+                        enrichment["_email_status"] = email_verification.status.value
+                        enrichment["_email_score"] = email_verification.score
+                        enrichment["_email_verified_at"] = datetime.utcnow().isoformat()
 
                     new_contact = Contact(
                         company_id=uuid.UUID(company_id) if company_id else None,
-                        primary_email=email,
+                        primary_email=email if email_valid else None,
                         full_name=contact_dict.get("full_name") or contact_dict.get("name"),
                         first_name=contact_dict.get("first_name"),
                         last_name=contact_dict.get("last_name"),
@@ -432,6 +489,16 @@ async def submit_data(
                         enrichment_data=enrichment,
                         source_apps=[source_app],
                         owner_user_id=uuid.UUID(app.user_id) if app.user_id else None,
+                        # Phone verification fields
+                        phone_verified=phone_valid if phone_verification else None,
+                        phone_e164=phone_verification.formatted_e164 if phone_verification and phone_valid else None,
+                        phone_type=phone_verification.phone_type.value if phone_verification and phone_valid else None,
+                        phone_carrier=phone_verification.carrier_name if phone_verification and phone_valid else None,
+                        phone_country_code=phone_verification.country_code if phone_verification and phone_valid else None,
+                        phone_region=phone_verification.region if phone_verification and phone_valid else None,
+                        phone_risk_level=phone_verification.risk_level.value if phone_verification and phone_valid else None,
+                        phone_score=phone_verification.score if phone_verification and phone_valid else None,
+                        phone_verified_at=datetime.utcnow() if phone_verification and phone_valid else None,
                     )
                     db.add(new_contact)
                     await db.flush()
@@ -441,24 +508,29 @@ async def submit_data(
                         source_record_id=source_record_id, source_url=source_url
                     )
 
-                # Store email verification record
-                await _verify_and_store_email(
-                    db, email, uuid.UUID(contact_id), source_app, settings
-                )
+                # Store email verification record if email is valid
+                if email and email_valid and contact_id:
+                    await _verify_and_store_email(
+                        db, email, uuid.UUID(contact_id), source_app, settings
+                    )
 
-            # Send billing event for verification
+            # Send billing event for verification (count both email and phone)
             if app.user_id:
-                await lago.send_verification_event(
-                    user_id=app.user_id,
-                    verification_id=f"{batch_id}-{i}",
-                    email=email,
-                )
+                if email:
+                    await lago.send_verification_event(
+                        user_id=app.user_id,
+                        verification_id=f"{batch_id}-{i}-email",
+                        email=email,
+                    )
 
             contact_results.append(
                 ContactVerificationResult(
                     id=contact_id or "",
                     email=email,
-                    verification=verification_dict,
+                    phone=phone,
+                    email_verification=email_verification_dict,
+                    phone_verification=phone_verification_dict,
+                    stored=should_store,
                 )
             )
 

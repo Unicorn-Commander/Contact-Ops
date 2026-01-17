@@ -8,9 +8,12 @@
 
 This is a standalone microservice that provides:
 1. **SMTP Email Verification** - Verify email deliverability via DNS/MX/SMTP checks
-2. **Data Cataloguing** - Store and normalize enriched company/contact data from various apps
-3. **Unified Lookup** - Query catalogued data by email, domain, or full-text search
-4. **Source Tracking** - Track which applications contributed data to each entity
+2. **Phone Number Verification** - Validate phone numbers using Google's libphonenumber with optional carrier lookup
+3. **Data Cataloguing** - Store and normalize enriched company/contact data from various apps
+4. **Unified Lookup** - Query catalogued data by email, domain, or full-text search
+5. **Source Tracking** - Track which applications contributed data to each entity
+
+**Key Feature:** Contacts are stored if they have a valid email OR a valid phone number. This ensures valuable contacts with only phone numbers are not discarded.
 
 ## Tech Stack
 
@@ -91,6 +94,55 @@ REMOVED
   "score": 95
 }
 ```
+
+### Phone Verification
+
+```bash
+# Single phone verification
+POST /api/v1/verify/phone
+Content-Type: application/json
+REMOVED
+
+{
+  "phone": "+1 (843) 555-1234",
+  "region": "US",
+  "use_api": true
+}
+
+# Response
+{
+  "phone": "+1 (843) 555-1234",
+  "formatted_e164": "+18435551234",
+  "formatted_national": "(843) 555-1234",
+  "is_valid": true,
+  "is_possible": true,
+  "phone_type": "mobile",
+  "carrier_name": "Verizon Wireless",
+  "country_code": "US",
+  "region": "South Carolina",
+  "timezone": ["America/New_York"],
+  "risk_level": "low",
+  "score": 85,
+  "verification_method": "phonenumbers"
+}
+```
+
+```bash
+# Batch phone verification (local-only by default for speed)
+POST /api/v1/verify/phone/batch
+Content-Type: application/json
+
+{
+  "phones": ["+1 (843) 555-1234", "+1 (843) 555-5678"],
+  "region": "US",
+  "use_api": false
+}
+```
+
+**Phone Verification Stack:**
+- **phonenumbers** (Google's libphonenumber) - Format, type, carrier patterns (free, local)
+- **Veriphone API** - Enhanced carrier lookup (1,000/month free, optional)
+- **phone-number-api.com** - Backup lookup (free, no API key needed)
 
 ```bash
 # Batch verification

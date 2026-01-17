@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     SMTP_TIMEOUT: int = 10
     SMTP_CONCURRENCY: int = 10
 
+    # Phone Verification
+    VERIPHONE_API_KEY: str = ""  # Optional: 1,000 free verifications/month
+
     # Keycloak JWT validation (when not in standalone mode)
     KEYCLOAK_REALM_URL: str = ""
     KEYCLOAK_CLIENT_ID: str = ""
