@@ -1,0 +1,152 @@
+# Center Deep Data Intel - Production Docker Compose
+# OAuth2 Proxy with Keycloak OIDC authentication
+
+services:
+  dataintel-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dataintel-backend
+    restart: unless-stopped
+    expose:
+      - "8501"
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=false
+    networks:
+      - unicorn-network
+      - web
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dataintel-api.rule=Host(`api.verify.centerdeep.online`)"
+      - "traefik.http.routers.dataintel-api.entrypoints=websecure"
+      - "traefik.http.routers.dataintel-api.tls=true"
+      - "traefik.http.routers.dataintel-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.dataintel-api.loadbalancer.server.port=8501"
+      - "traefik.docker.network=web"
+
+  dataintel-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: dataintel-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - unicorn-network
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+  oauth2-proxy-dataintel:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: oauth2-proxy-dataintel
+    restart: unless-stopped
+    expose:
+      - "4180"
+    networks:
+      - unicorn-network
+      - web
+    environment:
+      # OIDC Provider Configuration (Keycloak)
+      - OAUTH2_PROXY_PROVIDER=oidc
+      - OAUTH2_PROXY_OIDC_ISSUER_URL=https://auth.centerdeep.online/realms/uchub
+      - OAUTH2_PROXY_CLIENT_ID=center-deep
+      - OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET}
+      - OAUTH2_PROXY_REDIRECT_URL=https://verify.centerdeep.online/oauth2/callback
+
+      # Cookie Configuration
+      - OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_COOKIE_SECRET}
+      - OAUTH2_PROXY_COOKIE_DOMAINS=.centerdeep.online
+      - OAUTH2_PROXY_COOKIE_SECURE=true
+      - OAUTH2_PROXY_COOKIE_SAMESITE=lax
+      - OAUTH2_PROXY_COOKIE_NAME=_oauth2_proxy_dataintel
+      - OAUTH2_PROXY_COOKIE_EXPIRE=168h
+      - OAUTH2_PROXY_COOKIE_REFRESH=1h
+
+      # Upstream Configuration
+      - OAUTH2_PROXY_UPSTREAMS=http://dataintel-frontend:80
+      - OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180
+
+      # Email/User Configuration
+      - OAUTH2_PROXY_EMAIL_DOMAINS=*
+      - OAUTH2_PROXY_PASS_USER_HEADERS=true
+      - OAUTH2_PROXY_SET_XAUTHREQUEST=true
+      - OAUTH2_PROXY_PASS_ACCESS_TOKEN=true
+
+      # Skip Authentication for specific paths
+      # API key authentication handled separately for /api/* endpoints
+      - OAUTH2_PROXY_SKIP_AUTH_ROUTES=^/api/.*,^/health.*,^/docs.*,^/redoc.*,^/openapi\.json$,^/assets/.*,^/static/.*,^/favicon\.ico$,^/manifest\.json$
+
+      # Pass through Authorization header for API key auth
+      - OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER=true
+
+      # Logging and Security
+      - OAUTH2_PROXY_SILENCE_PING_LOGGING=true
+      - OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
+      - OAUTH2_PROXY_REVERSE_PROXY=true
+
+      # Session Configuration
+      - OAUTH2_PROXY_SESSION_STORE_TYPE=cookie
+
+      # OIDC specific settings
+      - OAUTH2_PROXY_OIDC_EMAIL_CLAIM=email
+      - OAUTH2_PROXY_OIDC_GROUPS_CLAIM=groups
+      - OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=true
+    healthcheck:
+      test: ["CMD", "/bin/oauth2-proxy", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    labels:
+      - "traefik.enable=true"
+      # Route both verify and dataintel subdomains to OAuth2 proxy
+      - "traefik.http.routers.dataintel.rule=Host(`verify.centerdeep.online`) || Host(`dataintel.centerdeep.online`)"
+      - "traefik.http.routers.dataintel.entrypoints=websecure"
+      - "traefik.http.routers.dataintel.tls=true"
+      - "traefik.http.routers.dataintel.tls.certresolver=letsencrypt"
+      - "traefik.http.services.dataintel.loadbalancer.server.port=4180"
+      - "traefik.docker.network=web"
+
+networks:
+  unicorn-network:
+    external: true
+  web:
+    external: true

@@ -1,0 +1,53 @@
+services:
+  dataintel-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dataintel-backend
+    restart: unless-stopped
+    expose:
+      - "8501"
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=true
+    networks:
+      - unicorn-network
+      - web
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  dataintel-frontend:
+    image: nginx:alpine
+    container_name: dataintel-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    ports:
+      - "8502:80"
+    volumes:
+      - ./frontend/build:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - unicorn-network
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dataintel.rule=Host(`verify.centerdeep.online`)"
+      - "traefik.http.routers.dataintel.entrypoints=websecure"
+      - "traefik.http.routers.dataintel.tls=true"
+      - "traefik.http.routers.dataintel.tls.certresolver=cloudflare"
+      - "traefik.http.services.dataintel.loadbalancer.server.port=80"
+      - "traefik.docker.network=web"
+
+networks:
+  unicorn-network:
+    external: true
+  web:
+    external: true
