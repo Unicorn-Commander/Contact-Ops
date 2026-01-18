@@ -57,7 +57,8 @@ class Connection(Base):
         Text,
         nullable=True,
     )
-    metadata: Mapped[Optional[dict]] = mapped_column(
+    connection_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata",  # Keep DB column name as "metadata"
         JSONB,
         nullable=True,
         default=dict,
