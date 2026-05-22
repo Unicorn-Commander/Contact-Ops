@@ -8,16 +8,20 @@ import { TagChip } from "@/components/domain/Badges";
 
 export function PersonCard({ person }: { person: PersonSummary }) {
   return (
-    <Link to="/people/$id" params={{ id: person.person_id }} className="block">
-      <Card className="transition-colors hover:border-primary/60">
+    <Link to="/people/$id" params={{ id: person.person_id }} className="block hover:bg-muted/50 transition-colors">
+      <Card className="border border-muted hover:border-violet-200">
         <CardContent className="flex items-center gap-4 p-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-violet-500">
             {initials(person.display_name)}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <p className="truncate font-medium">{person.display_name}</p>
-              {person.relationship_temperature ? <Badge>{person.relationship_temperature}</Badge> : null}
+              {person.relationship_temperature ? (
+                <Badge variant="secondary" className="text-xs">
+                  {person.relationship_temperature}
+                </Badge>
+              ) : null}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
               <span className="inline-flex items-center gap-1">
@@ -30,7 +34,16 @@ export function PersonCard({ person }: { person: PersonSummary }) {
               </span>
             </div>
             {person.tags?.length ? (
-              <div className="mt-2 flex flex-wrap gap-1">{person.tags.slice(0, 4).map((tag) => <TagChip key={tag} label={tag} />)}</div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {person.tags.slice(0, 3).map((tag) => (
+                  <TagChip key={tag} label={tag} />
+                ))}
+                {person.tags.length > 3 && (
+                  <span className="text-xs text-muted-foreground italic">
+                    +{person.tags.length - 3} more
+                  </span>
+                )}
+              </div>
             ) : null}
           </div>
         </CardContent>
@@ -41,10 +54,10 @@ export function PersonCard({ person }: { person: PersonSummary }) {
 
 export function OrgCard({ org }: { org: OrganizationSummary }) {
   return (
-    <Link to="/orgs/$id" params={{ id: org.org_id }} className="block">
-      <Card className="transition-colors hover:border-primary/60">
+    <Link to="/orgs/$id" params={{ id: org.org_id }} className="block hover:bg-muted/50 transition-colors">
+      <Card className="border border-muted hover:border-violet-200">
         <CardContent className="flex items-center gap-4 p-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-violet-500">
             <UserRound className="h-5 w-5" />
           </div>
           <div className="min-w-0">

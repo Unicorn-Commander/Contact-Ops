@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet, redirect } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet } from "@tanstack/react-router";
 import { useAuth } from "react-oidc-context";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
@@ -46,32 +46,64 @@ function AuthGate() {
 
 function NotFound() {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>That page is not in Contact-Ops</CardTitle>
-        <CardDescription>The route may be from a future phase or the URL may be mistyped.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Button asChild>
-          <a href="/">Back to dashboard</a>
-        </Button>
-      </CardContent>
+    <Card className="text-center py-12">
+      <div className="mb-6">
+        <svg 
+          className="h-12 w-12 mx-auto text-violet-400" 
+          fill="none" 
+          stroke="currentColor" 
+          viewBox="0 0 24 24"
+        >
+          <path 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+            strokeWidth={2} 
+            d="M12 8v4l3 3"
+          />
+        </svg>
+      </div>
+      <h2 className="mb-4 text-xl font-semibold text-violet-600">Page not found</h2>
+      <p className="mb-6 text-muted-foreground max-w-xl">
+        The page you're looking for doesn't exist or has been moved.
+      </p>
+      <Button 
+        className="bg-violet-500 hover:bg-violet-600"
+        asChild
+      >
+        <a href="/">Back to dashboard</a>
+      </Button>
     </Card>
   );
 }
 
 function InboxPlaceholder() {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Approval inbox</CardTitle>
-        <CardDescription>No agent suggestions yet. Phase 3 lands the agents.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Suggestion cards will mount here without changing the shell or navigation.
-        </div>
-      </CardContent>
+    <Card className="text-center py-12">
+      <div className="mb-6">
+        <svg 
+          className="h-12 w-12 mx-auto text-violet-400" 
+          fill="none" 
+          stroke="currentColor" 
+          viewBox="0 0 24 24"
+        >
+          <path 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+            strokeWidth={2} 
+            d="M12 8v4l3 3M6 6h12"
+          />
+        </svg>
+      </div>
+      <h2 className="mb-4 text-xl font-semibold text-violet-600">Approval inbox</h2>
+      <p className="mb-6 text-muted-foreground max-w-xl">
+        No agent suggestions yet. Phase 3 lands the agents that will fill this inbox with automated recommendations.
+      </p>
+      <Button 
+        className="bg-violet-500 hover:bg-violet-600"
+        asChild
+      >
+        <a href="/people">Explore people</a>
+      </Button>
     </Card>
   );
 }
@@ -107,10 +139,23 @@ const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/sett
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
-  beforeLoad: () => {
-    throw redirect({ to: "/" });
-  }
+  component: CallbackRoute
 });
+
+function CallbackRoute() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <div className="text-center space-y-4">
+        <div className="h-8 w-8">
+          <Skeleton className="h-full w-full rounded-full" />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Signing in... Please wait.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export const routeTree = rootRoute.addChildren([
   appRoute.addChildren([indexRoute, peopleRoute, personRoute, orgsRoute, orgRoute, tagsRoute, inboxRoute, tenantsRoute, settingsRoute]),
