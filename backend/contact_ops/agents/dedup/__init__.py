@@ -1,0 +1,46 @@
+from contact_ops.agents.dedup.comparisons import (
+    ComparisonOutcome,
+    FactRef,
+    compare_address,
+    compare_company,
+    compare_dob,
+    compare_email,
+    compare_face_embedding,
+    compare_first_name,
+    compare_government_id,
+    compare_last_name,
+    compare_name_embedding,
+    compare_phone,
+    compare_voice_fingerprint,
+)
+from contact_ops.agents.dedup.hipaa_fence import PersonRef, crosses_hipaa_fence
+from contact_ops.agents.dedup.normalizers import (
+    apply_nickname_map,
+    extract_vcard_uid,
+    normalize_address,
+    normalize_email,
+    normalize_phone_e164,
+)
+
+__all__ = [
+    "normalize_email",
+    "normalize_phone_e164",
+    "normalize_address",
+    "extract_vcard_uid",
+    "apply_nickname_map",
+    "ComparisonOutcome",
+    "FactRef",
+    "compare_first_name",
+    "compare_last_name",
+    "compare_email",
+    "compare_phone",
+    "compare_dob",
+    "compare_address",
+    "compare_name_embedding",
+    "compare_face_embedding",
+    "compare_voice_fingerprint",
+    "compare_company",
+    "compare_government_id",
+    "PersonRef",
+    "crosses_hipaa_fence",
+]
