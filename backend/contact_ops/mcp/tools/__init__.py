@@ -42,6 +42,18 @@ def _import_phase_2_modules() -> None:
                 raise
 
 
+_PHASE_3_MODULES = ("agent_admin",)
+
+
+def _import_phase_3_modules() -> None:
+    for module_name in _PHASE_3_MODULES:
+        try:
+            importlib.import_module(f"contact_ops.mcp.tools.{module_name}")
+        except ModuleNotFoundError as exc:
+            if exc.name != f"contact_ops.mcp.tools.{module_name}":
+                raise
+
+
 def register_all_tools() -> None:
     """Register Codex 1 tools and any optional peer-track tools present."""
 
@@ -51,6 +63,7 @@ def register_all_tools() -> None:
         register_relationship_tools()
     _import_optional_tool_modules()
     _import_phase_2_modules()
+    _import_phase_3_modules()
 
 
 __all__ = ["register_all_tools"]
