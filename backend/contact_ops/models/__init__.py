@@ -196,18 +196,24 @@ class Organization(Base):
 
 
 from contact_ops.models.action_event import ActionEvent
+from contact_ops.models.acl_grant import AclGrant
 from contact_ops.models.agent_registry import AgentRegistry
 from contact_ops.models.address import PostalAddress
 from contact_ops.models.email import Email
 from contact_ops.models.identifier import Identifier
 from contact_ops.models.im_handle import IMHandle
+from contact_ops.models.media_asset import MediaAsset
+from contact_ops.models.organization_tenant_membership import OrganizationTenantMembership
 from contact_ops.models.person_alias import PersonAlias
 from contact_ops.models.person_org_role import PersonOrgRole
 from contact_ops.models.person_person_relation import PersonPersonRelation
 from contact_ops.models.person_tenant_membership import PersonTenantMembership
 from contact_ops.models.phone import Phone
+from contact_ops.models.photo import Photo
 from contact_ops.models.tag import Tag
 from contact_ops.models.url import Url
+from contact_ops.models.voice_fingerprint import VoiceFingerprint
+from contact_ops.models.voice_sample import VoiceSample
 
 
 __all__ = [
@@ -218,14 +224,20 @@ __all__ = [
     "Email",
     "Phone",
     "ActionEvent",
+    "AclGrant",
     "PersonAlias",
     "PersonPersonRelation",
     "AgentRegistry",
+    "MediaAsset",
+    "OrganizationTenantMembership",
     "PersonTenantMembership",
+    "Photo",
     "PostalAddress",
     "Identifier",
     "IMHandle",
     "PersonOrgRole",
     "Tag",
     "Url",
+    "VoiceFingerprint",
+    "VoiceSample",
 ]
