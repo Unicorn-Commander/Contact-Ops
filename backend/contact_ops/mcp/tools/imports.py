@@ -1,22 +1,33 @@
 """Import job MCP tools."""
+# ruff: noqa: I001
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import cast
 
+import sqlalchemy as sa
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import text
 
 from contact_ops.importers.base import ProvenanceContext, SourceKind
 from contact_ops.importers.google_csv import GoogleCSVImporter
 from contact_ops.importers.icloud_carddav import ICloudCardDAVImporter
-from contact_ops.importers.job_runner import cancel_job, create_import_job, get_job_status
+from contact_ops.importers.job_runner import (
+    _TASKS,
+    cancel_job,
+    create_import_job,
+    get_job_status,
+    import_jobs_table,
+)
 from contact_ops.importers.linkedin_csv import LinkedInCSVImporter
+from contact_ops.importers.mcp_writer import MCPImporterWriter
 from contact_ops.importers.nextcloud_carddav import NextcloudCardDAVImporter
 from contact_ops.importers.vcard import VCardImporter
+from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.errors import VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
-from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, register
 
 
@@ -74,10 +85,16 @@ async def import_contacts(ctx: MCPContext, req: ImportContactsInput) -> ImportCo
         source_uri=importer.source_uri,
         estimated_records=estimated,
     )
-    _ = ProvenanceContext(
-        source_kind=req.source,
-        source_uri=importer.source_uri,
-        tenant_id=ctx.tenant_id,
+    _TASKS[handle.job_id] = asyncio.create_task(
+        _run_import_job(
+            req=req,
+            job_id=handle.job_id,
+            user_id=ctx.user_id,
+            actor_chain=ctx.actor_chain,
+            human_authority=ctx.human_authority,
+            request_id=ctx.request_id,
+            claims=ctx.claims,
+        )
     )
     return ImportContactsOutput(job_id=handle.job_id, estimated_records=handle.estimated_records)
 
@@ -114,6 +131,93 @@ def _importer(req: ImportContactsInput):
     if req.source == "nextcloud":
         return NextcloudCardDAVImporter(url=req.url, batch_size=req.batch_size)
     return ICloudCardDAVImporter(url=req.url, batch_size=req.batch_size)
+
+
+async def _run_import_job(
+    *,
+    req: ImportContactsInput,
+    job_id: uuid.UUID,
+    user_id: str,
+    actor_chain: dict[str, object],
+    human_authority: str,
+    request_id: str,
+    claims: dict[str, object],
+) -> None:
+    from contact_ops.core.config import get_settings
+    from contact_ops.core.database import async_session_maker, audit_session_maker
+
+    settings = get_settings()
+    async with async_session_maker() as db, audit_session_maker() as audit_db:
+        await db.execute(
+            text("SELECT set_config(:k, :v, true)"),
+            {"k": settings.TENANT_GUC_NAME, "v": str(req.tenant_id)},
+        )
+        await audit_db.execute(
+            text("SELECT set_config(:k, :v, true)"),
+            {"k": settings.TENANT_GUC_NAME, "v": str(req.tenant_id)},
+        )
+        await db.execute(
+            import_jobs_table.update()
+            .where(import_jobs_table.c.id == job_id)
+            .values(status="running", progress=0)
+        )
+        await db.commit()
+        try:
+            importer = _importer(req)
+            records = await importer.records()
+            ctx = MCPContext(
+                tenant_id=req.tenant_id,
+                user_id=user_id,
+                actor_chain=actor_chain,
+                human_authority=human_authority,
+                db=db,
+                audit_db=audit_db,
+                request_id=request_id,
+                claims=claims,
+            )
+            writer = MCPImporterWriter(
+                ctx=ctx,
+                provenance=ProvenanceContext(
+                    source_kind=req.source,
+                    source_uri=importer.source_uri,
+                    tenant_id=req.tenant_id,
+                ),
+                dry_run=req.dry_run,
+                dedup_threshold=req.dedup_threshold,
+            )
+            result = await writer.write_records(records)
+            stats = {
+                "created": result.stats.created,
+                "merged": result.stats.merged,
+                "candidates": result.stats.candidates_logged,
+                "errors": result.stats.errors,
+            }
+            await db.execute(
+                import_jobs_table.update()
+                .where(import_jobs_table.c.id == job_id)
+                .values(
+                    status="completed" if result.stats.errors == 0 else "failed",
+                    progress=1,
+                    stats=stats,
+                    error_log=result.errors,
+                    completed_at=sa.func.now(),
+                )
+            )
+            await db.commit()
+            await audit_db.commit()
+        except asyncio.CancelledError:
+            await db.rollback()
+            await audit_db.rollback()
+            raise
+        except Exception as exc:  # noqa: BLE001 - job status must preserve failure detail.
+            await db.rollback()
+            await audit_db.rollback()
+            await db.execute(
+                import_jobs_table.update()
+                .where(import_jobs_table.c.id == job_id)
+                .values(status="failed", error_log=[str(exc)], completed_at=sa.func.now())
+            )
+            await db.commit()
 
 
 for _name, _input, _output, _handler, _read_only in [
