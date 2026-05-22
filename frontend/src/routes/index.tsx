@@ -11,6 +11,7 @@ import { OrgsRoute, OrgDetailRoute } from "@/routes/pages/Orgs";
 import { TagsRoute } from "@/routes/pages/Tags";
 import { TenantsRoute } from "@/routes/pages/Tenants";
 import { SettingsRoute } from "@/routes/pages/Settings";
+import { InboxRoute } from "@/routes/pages/Inbox";
 
 function AuthGate() {
   const auth = useAuth();
@@ -76,38 +77,6 @@ function NotFound() {
   );
 }
 
-function InboxPlaceholder() {
-  return (
-    <Card className="text-center py-12">
-      <div className="mb-6">
-        <svg 
-          className="h-12 w-12 mx-auto text-violet-400" 
-          fill="none" 
-          stroke="currentColor" 
-          viewBox="0 0 24 24"
-        >
-          <path 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            strokeWidth={2} 
-            d="M12 8v4l3 3M6 6h12"
-          />
-        </svg>
-      </div>
-      <h2 className="mb-4 text-xl font-semibold text-violet-600">Approval inbox</h2>
-      <p className="mb-6 text-muted-foreground max-w-xl">
-        No agent suggestions yet. Phase 3 lands the agents that will fill this inbox with automated recommendations.
-      </p>
-      <Button 
-        className="bg-violet-500 hover:bg-violet-600"
-        asChild
-      >
-        <a href="/people">Explore people</a>
-      </Button>
-    </Card>
-  );
-}
-
 export function AuditList({ events }: { events?: Array<Record<string, unknown>> }) {
   return <div>{events?.length ? events.map((event, index) => <ActionEventRow key={String(event.event_id ?? index)} event={event} />) : <p className="text-sm text-muted-foreground">No audit events returned.</p>}</div>;
 }
@@ -133,7 +102,7 @@ const personRoute = createRoute({ getParentRoute: () => appRoute, path: "/people
 const orgsRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs", component: OrgsRoute });
 const orgRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs/$id", component: OrgDetailRoute });
 const tagsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tags", component: TagsRoute });
-const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox", component: InboxPlaceholder });
+const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox", component: InboxRoute });
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const callbackRoute = createRoute({
