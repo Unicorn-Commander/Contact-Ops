@@ -86,6 +86,22 @@ def make_celery_app() -> Celery:
     # other agents register their own schedule below.
     app.conf.beat_schedule = _build_beat_schedule()
 
+    # Infrastructure beats that aren't agents — Phase 3.3a inbox snooze
+    # re-flipper. Runs every 5 minutes per Aaron's B5.
+    app.conf.beat_schedule.setdefault(
+        "inbox-snooze-flipper",
+        {
+            "task": "contact_ops.agents.tasks.run_inbox_snooze_flipper",
+            "schedule": crontab(minute="*/5"),
+            "kwargs": {"agent_slug": "inbox-snooze-flipper"},
+        },
+    )
+
+    # Force-import infra tasks so the worker registers them at startup.
+    # The import has the side-effect of binding the @shared_task to
+    # this Celery app via Celery's task registry.
+    from contact_ops.agents import inbox_snooze_flipper  # noqa: F401
+
     return app
 
 
