@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -10,6 +11,33 @@ from alembic import context
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+
+def _database_url() -> str:
+    url = (
+        os.environ.get("MIGRATION_DATABASE_URL")
+        or os.environ.get("ALEMBIC_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+    )
+    if not url:
+        raise RuntimeError(
+            "Set MIGRATION_DATABASE_URL, ALEMBIC_DATABASE_URL, or DATABASE_URL before running Alembic"
+        )
+    return _asyncpg_url(url)
+
+
+def _asyncpg_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgres://")
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    for driver in ("postgresql+psycopg://", "postgresql+psycopg2://"):
+        if url.startswith(driver):
+            return "postgresql+asyncpg://" + url.removeprefix(driver)
+    return url
+
+
+config.set_main_option("sqlalchemy.url", _database_url())
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
