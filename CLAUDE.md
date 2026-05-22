@@ -1,4 +1,4 @@
-# CLAUDE.md — Contact-Ops AI agent orientation
+# CLAUDE.md: Contact-Ops AI agent orientation
 
 **Date**: 2026-05-21
 **Status**: Phase 0 (scaffold)
@@ -54,7 +54,7 @@ Aaron's standing memory (`feedback_quality_standard.md`): **no MVP work, everyth
 | Migrations | Alembic | Migrations 0001-0015 land in Phase 0. Hand-managed SQL via `op.execute`; autogenerate disabled for now. |
 | CI | Woodpecker | `.woodpecker/pipeline.yml`. Postgres service, mypy `--strict`, pytest against real DB. |
 | Container | Docker / Docker Compose | `docker-compose.yml` for local dev, `docker-compose.prod.yml` for centerdeep deploy |
-| Forgejo | `git.unicorncommander.ai` | Remote configured. Nothing pushed yet — wait for Track A + B + C green. |
+| Forgejo | `git.unicorncommander.ai` | Remote configured. Nothing pushed yet, wait for Track A + B + C green. |
 
 ---
 
@@ -239,8 +239,8 @@ Significant decisions (vendor choice, schema deviation, security trade-off, infr
 - **Don't write f-string SQL or Cypher.** Parameterized only.
 - **Don't introduce a single-table-per-feature pattern.** The schema is normalized and intentional. New attributes go on existing tables or into `facts` if they're truly freeform.
 - **Don't auto-apply legal-class or `is_deceased` events.** Forever `propose_only`. Aaron's `feedback_confidence_tags_legal_work.md` memory is non-negotiable.
-- **Don't strip emojis** from this file or any other doc unless Aaron asks. But also don't add emojis to code or new docs — Aaron's writing style is plain.
-- **Don't add em-dashes** (`—`). Aaron specifically dislikes them. Use commas, semicolons, or two hyphens (`--`) when you must.
+- **Don't strip emojis** from this file or any other doc unless Aaron asks. But also don't add emojis to code or new docs, Aaron's writing style is plain.
+- **Don't add em-dashes** (`--`). Aaron specifically dislikes them. Use commas, semicolons, or two hyphens (`--`) when you must.
 
 ---
 
