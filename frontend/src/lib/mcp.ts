@@ -1,15 +1,19 @@
 import { env } from "@/lib/env";
 import type {
   ActionEvent,
+  BulkActionResult,
   CardDavPassword,
+  ListPendingProposalsResult,
   ListResult,
   Organization,
   OrganizationSummary,
   Person,
   PersonSummary,
   Photo,
+  ProposalEvidence,
   Tag,
   Tenant,
+  Tier,
   UUID
 } from "@/lib/types";
 
@@ -132,5 +136,114 @@ export const tools = {
     callTool<ListResult<CardDavPassword>>("list_carddav_app_passwords", {}, token).catch(() => ({ items: [], count: 0 })),
   generateCardDavPassword: (args: Record<string, unknown>, token: string) =>
     callTool("generate_carddav_app_password", args, token),
-  revokeCardDavPassword: (args: Record<string, unknown>, token: string) => callTool("revoke_carddav_app_password", args, token)
+  revokeCardDavPassword: (args: Record<string, unknown>, token: string) => callTool("revoke_carddav_app_password", args, token),
+
+  // ---- Phase 3.3 inbox tools ----
+  listPendingProposals: (args: Record<string, unknown>, token: string) =>
+    callTool<ListPendingProposalsResult>("list_pending_proposals", args, token),
+  approveProposal: (
+    args: {
+      proposal_id: UUID;
+      tier_assigned: Tier;
+      field_choices?: Record<string, "master" | "proposed" | "custom"> | null;
+      custom_values?: Record<string, unknown> | null;
+      typed_phrase?: string | null;
+      time_to_decide_sec?: number | null;
+      keyboard_path?: boolean;
+      typed_phrase_used?: boolean;
+    },
+    token: string
+  ) =>
+    callTool<{ applied: boolean; action_event_id: UUID; inbox_decision_id: UUID }>(
+      "approve_proposal",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  rejectProposal: (
+    args: {
+      proposal_id: UUID;
+      mode?: "reject" | "dismiss_duplicate" | "mute" | "undo";
+      reason?: string | null;
+      tier_assigned?: Tier;
+      time_to_decide_sec?: number | null;
+      keyboard_path?: boolean;
+      suppression_aggregate_id?: UUID | null;
+      suppression_field_name?: string | null;
+      suppression_expires_at?: string | null;
+    },
+    token: string
+  ) =>
+    callTool<{ rejected: boolean; inbox_decision_id: UUID; suppression_rule_id?: UUID | null }>(
+      "reject_proposal",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  snoozeProposal: (
+    args: {
+      proposal_id: UUID;
+      snooze_until: string;
+      snooze_reason?:
+        | "wait_for_event"
+        | "tomorrow"
+        | "end_of_week"
+        | "next_monday"
+        | "custom";
+      pegged_event_id?: UUID | null;
+      tier_assigned?: Tier;
+      keyboard_path?: boolean;
+    },
+    token: string
+  ) => callTool<{ snoozed: boolean; inbox_decision_id: UUID }>(
+    "snooze_proposal",
+    args as unknown as Record<string, unknown>,
+    token
+  ),
+  bulkApprove: (
+    args: {
+      proposal_ids: UUID[];
+      typed_phrase?: string | null;
+      tier_assigned?: Tier;
+      time_to_decide_sec?: number | null;
+      keyboard_path?: boolean;
+    },
+    token: string
+  ) => callTool<BulkActionResult>("bulk_approve", args as unknown as Record<string, unknown>, token),
+  bulkReject: (
+    args: {
+      proposal_ids: UUID[];
+      reason?: string | null;
+      tier_assigned?: Tier;
+      time_to_decide_sec?: number | null;
+      keyboard_path?: boolean;
+    },
+    token: string
+  ) => callTool<BulkActionResult>("bulk_reject", args as unknown as Record<string, unknown>, token),
+  getProposalEvidence: (proposal_id: UUID, token: string) =>
+    callTool<ProposalEvidence>("get_proposal_evidence", { proposal_id }, token),
+  revertAutoApplied: (
+    args: { proposal_id: UUID; reason?: string | null },
+    token: string
+  ) =>
+    callTool<{
+      reverted: boolean;
+      inbox_decision_id: UUID;
+      reverted_at: string;
+      age_seconds: number;
+    }>("revert_auto_applied", args as unknown as Record<string, unknown>, token),
+  resolveConflictKeepBoth: (
+    args: {
+      primary_proposal_id: UUID;
+      conflicting_proposal_id: UUID;
+      source_tags: Record<UUID, string>;
+      tier_assigned?: Tier;
+      time_to_decide_sec?: number | null;
+    },
+    token: string
+  ) =>
+    callTool<{
+      primary_applied: boolean;
+      conflicting_applied: boolean;
+      conflict_id: UUID;
+      inbox_decision_id: UUID;
+    }>("resolve_conflict_keep_both", args as unknown as Record<string, unknown>, token)
 };
