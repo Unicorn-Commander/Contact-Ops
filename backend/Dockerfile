@@ -1,8 +1,8 @@
-# Backend Dockerfile for Center Deep Data Intel
-# Python 3.11-slim base with production-quality practices
+# Backend Dockerfile for Contact-Ops
+# Python 3.12-slim base with production-quality practices
 
 # Stage 1: Build dependencies
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -17,11 +17,11 @@ COPY requirements.txt .
 RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 # Create non-root user for security
-RUN groupadd --gid 1000 dataintel \
-    && useradd --uid 1000 --gid dataintel --shell /bin/bash --create-home dataintel
+RUN groupadd --gid 1000 contact_ops \
+    && useradd --uid 1000 --gid contact_ops --shell /bin/bash --create-home contact_ops
 
 WORKDIR /app
 
@@ -39,10 +39,10 @@ RUN pip install --no-cache-dir /wheels/* \
     && rm -rf /wheels
 
 # Copy application code
-COPY --chown=dataintel:dataintel app/ ./app/
+COPY --chown=contact_ops:contact_ops contact_ops/ ./contact_ops/
 
 # Switch to non-root user
-USER dataintel
+USER contact_ops
 
 # Expose port
 EXPOSE 8501
@@ -52,4 +52,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/health || exit 1
 
 # Run uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8501"]
+CMD ["uvicorn", "contact_ops.main:app", "--host", "0.0.0.0", "--port", "8501"]

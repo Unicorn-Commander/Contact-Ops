@@ -1,12 +1,12 @@
-# Center Deep Data Intel - Development Docker Compose
+# Contact-Ops - Development Docker Compose
 # STANDALONE_MODE=true for local development without OAuth2
 
 services:
-  dataintel-backend:
+  contact-ops-backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: dataintel-backend
+    container_name: contact-ops-backend
     restart: unless-stopped
     ports:
       - "8501:8501"
@@ -14,7 +14,7 @@ services:
       - .env
     volumes:
       # Hot reload for development
-      - ./backend/app:/app/app:ro
+      - ./backend/contact_ops:/app/contact_ops:ro
     networks:
       - unicorn-network
     healthcheck:
@@ -32,9 +32,9 @@ services:
           memory: 256M
           cpus: '0.25'
 
-  dataintel-frontend:
+  contact-ops-frontend:
     image: nginx:alpine
-    container_name: dataintel-frontend
+    container_name: contact-ops-frontend
     restart: unless-stopped
     ports:
       - "8502:80"

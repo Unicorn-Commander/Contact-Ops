@@ -1,11 +1,11 @@
--- Center Deep Data Intel - Database Initialization
+-- Contact-Ops - Database Initialization
 -- Run this against unicorn-postgresql to create the database and tables
 
 -- Create database (run as superuser)
--- CREATE DATABASE dataintel_db OWNER unicorn;
+-- CREATE DATABASE contact_ops_db OWNER unicorn;
 
--- Connect to dataintel_db before running the rest
--- \c dataintel_db
+-- Connect to contact_ops_db before running the rest
+-- \c contact_ops_db
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -158,10 +158,10 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_app ON api_keys(app_name);
 -- ============================================
 
 -- Insert default API keys for internal apps
--- Key format: sk-{app}-dataintel-2025
+-- Key format: sk-{app}-contact-ops-2025
 -- These are SHA256 hashes of the actual keys
 
--- loopnet-leads: sk-loopnet-dataintel-2025
+-- loopnet-leads: sk-loopnet-contact-ops-2025
 INSERT INTO api_keys (key_prefix, key_hash, app_name, description, tier, rate_limit)
 VALUES (
     'sk-loopnet',
@@ -172,7 +172,7 @@ VALUES (
     10000
 ) ON CONFLICT DO NOTHING;
 
--- ca-retirement-leads: sk-caqr-dataintel-2025
+-- ca-retirement-leads: sk-caqr-contact-ops-2025
 INSERT INTO api_keys (key_prefix, key_hash, app_name, description, tier, rate_limit)
 VALUES (
     'sk-caqr',
@@ -183,7 +183,7 @@ VALUES (
     10000
 ) ON CONFLICT DO NOTHING;
 
--- magic-unicorn-outreach: sk-outreach-dataintel-2025
+-- magic-unicorn-outreach: sk-outreach-contact-ops-2025
 INSERT INTO api_keys (key_prefix, key_hash, app_name, description, tier, rate_limit)
 VALUES (
     'sk-outreach',
@@ -194,7 +194,7 @@ VALUES (
     10000
 ) ON CONFLICT DO NOTHING;
 
--- ops-center: sk-opscenter-dataintel-2025
+-- ops-center: sk-opscenter-contact-ops-2025
 INSERT INTO api_keys (key_prefix, key_hash, app_name, description, tier, rate_limit)
 VALUES (
     'sk-opscenter',

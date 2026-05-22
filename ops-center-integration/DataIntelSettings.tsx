@@ -1,8 +1,8 @@
 /**
- * Data Intel Settings Component for Ops-Center Admin Panel
+ * Contact-Ops Settings Component for Ops-Center Admin Panel
  *
  * This component integrates into Ops-Center's Settings section to provide
- * full administrative control over Center Deep Data Intel.
+ * full administrative control over Contact-Ops.
  *
  * Installation:
  * 1. Copy this file to ops-center/frontend/src/pages/admin/settings/DataIntelSettings.tsx
@@ -10,7 +10,7 @@
  * 3. Add menu item in Settings sidebar
  *
  * Required environment variable in Ops-Center:
- *   VITE_DATAINTEL_API_URL=http://dataintel-backend:8501
+ *   VITE_CONTACT_OPS_API_URL=http://contact-ops-backend:8501
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -85,18 +85,18 @@ interface RecentActivity {
 }
 
 // API Configuration
-const DATAINTEL_API_URL = import.meta.env.VITE_DATAINTEL_API_URL || 'http://localhost:8501';
+const CONTACT_OPS_API_URL = import.meta.env.VITE_CONTACT_OPS_API_URL || 'http://localhost:8501';
 
 // API Client
 const api = {
   async get<T>(endpoint: string): Promise<T> {
-    const response = await fetch(`${DATAINTEL_API_URL}${endpoint}`);
+    const response = await fetch(`${CONTACT_OPS_API_URL}${endpoint}`);
     if (!response.ok) throw new Error(`API error: ${response.statusText}`);
     return response.json();
   },
 
   async post<T>(endpoint: string, data?: unknown): Promise<T> {
-    const response = await fetch(`${DATAINTEL_API_URL}${endpoint}`, {
+    const response = await fetch(`${CONTACT_OPS_API_URL}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: data ? JSON.stringify(data) : undefined,
@@ -106,7 +106,7 @@ const api = {
   },
 
   async put<T>(endpoint: string, data: unknown): Promise<T> {
-    const response = await fetch(`${DATAINTEL_API_URL}${endpoint}`, {
+    const response = await fetch(`${CONTACT_OPS_API_URL}${endpoint}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -116,7 +116,7 @@ const api = {
   },
 
   async delete(endpoint: string): Promise<void> {
-    const response = await fetch(`${DATAINTEL_API_URL}${endpoint}`, {
+    const response = await fetch(`${CONTACT_OPS_API_URL}${endpoint}`, {
       method: 'DELETE',
     });
     if (!response.ok) throw new Error(`API error: ${response.statusText}`);
@@ -266,7 +266,7 @@ export default function DataIntelSettings() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Data Intel</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Contact-Ops</h1>
           <p className="text-gray-500">Email verification and data cataloguing service</p>
         </div>
         <div className="flex items-center gap-2">
@@ -710,7 +710,7 @@ function QuickVerifyForm() {
     setLoading(true);
     setResult(null);
     try {
-      const response = await fetch(`${DATAINTEL_API_URL}/api/v1/verify/email`, {
+      const response = await fetch(`${CONTACT_OPS_API_URL}/api/v1/verify/email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),

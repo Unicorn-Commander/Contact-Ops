@@ -1,0 +1,73 @@
+# Contact-Ops CI Pipeline — Woodpecker CI
+# Targets unicorn-woodpecker-server on centerdeep
+
+when:
+  branch: main
+
+steps:
+  # ------------------------------------------------------------------
+  # 1. Install dependencies
+  # ------------------------------------------------------------------
+  install:
+    image: python:3.12-slim
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends git curl
+      - pip install --no-cache-dir -r backend/requirements.txt
+
+  # ------------------------------------------------------------------
+  # 2. Lint — ruff
+  # ------------------------------------------------------------------
+  lint:
+    image: python:3.12-slim
+    commands:
+      - pip install --no-cache-dir ruff
+      - ruff check backend/contact_ops/
+      - ruff format --check backend/contact_ops/
+
+  # ------------------------------------------------------------------
+  # 3. Typecheck — mypy
+  # ------------------------------------------------------------------
+  typecheck:
+    image: python:3.12-slim
+    commands:
+      - pip install --no-cache-dir mypy
+      - mypy backend/contact_ops/ --ignore-missing-imports --no-error-summary
+
+  # ------------------------------------------------------------------
+  # 4. Migration roundtrip test (local Postgres via Woodpecker service)
+  # ------------------------------------------------------------------
+  migration-test:
+    image: python:3.12-slim
+    commands:
+      - pip install --no-cache-dir -r backend/requirements.txt
+      - alembic --config backend/alembic.ini upgrade head
+      - alembic --config backend/alembic.ini downgrade base
+      - alembic --config backend/alembic.ini upgrade head
+    environment:
+      DATABASE_URL: postgresql+asyncpg://woodpecker:woodpecker@postgres:5432/contact_ops_test
+
+  # ------------------------------------------------------------------
+  # 5. Unit tests
+  # ------------------------------------------------------------------
+  test:
+    image: python:3.12-slim
+    commands:
+      - pip install --no-cache-dir -r backend/requirements.txt
+      - pip install --no-cache-dir pytest pytest-asyncio pytest-cov
+      - pytest backend/tests/ -v --tb=short
+    environment:
+      DATABASE_URL: postgresql+asyncpg://woodpecker:woodpecker@postgres:5432/contact_ops_test
+      STANDALONE_MODE: "true"
+
+  # ------------------------------------------------------------------
+  # 6. Docker build (production image)
+  # ------------------------------------------------------------------
+  docker-build:
+    image: docker:24
+    privileged: true
+    commands:
+      - docker build -t contact-ops:ci -f backend/Dockerfile backend/
+      - docker images | grep contact-ops
+    when:
+      event: tag
+      ref: refs/tags/*
