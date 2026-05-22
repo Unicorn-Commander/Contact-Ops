@@ -37,7 +37,7 @@ services:
       - "traefik.http.routers.contact-ops-mcp.rule=Host(`mcp.contacts.magicunicorn.dev`)"
       - "traefik.http.routers.contact-ops-mcp.entrypoints=websecure"
       - "traefik.http.routers.contact-ops-mcp.tls=true"
-      - "traefik.http.routers.contact-ops-mcp.tls.certresolver=cloudflare"
+      - "traefik.http.routers.contact-ops-mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.contact-ops-mcp.loadbalancer.server.port=8501"
       - "traefik.docker.network=web"
 
@@ -134,7 +134,7 @@ services:
       - "traefik.http.routers.contact-ops-web.rule=Host(`contacts.magicunicorn.dev`)"
       - "traefik.http.routers.contact-ops-web.entrypoints=websecure"
       - "traefik.http.routers.contact-ops-web.tls=true"
-      - "traefik.http.routers.contact-ops-web.tls.certresolver=cloudflare"
+      - "traefik.http.routers.contact-ops-web.tls.certresolver=letsencrypt"
       - "traefik.http.services.contact-ops-web.loadbalancer.server.port=4180"
       - "traefik.docker.network=web"
 
