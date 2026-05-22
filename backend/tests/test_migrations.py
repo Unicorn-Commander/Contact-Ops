@@ -59,7 +59,7 @@ def sync_engine(postgres_container: str):
     """Sync engine for Alembic commands (avoids asyncio.run conflicts)."""
     import os as _os
 
-    sync_url = postgres_container.replace("postgresql+psycopg2://", "postgresql://")
+    sync_url = postgres_container.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg2://", "postgresql://")
     _os.environ["MIGRATION_DATABASE_URL"] = postgres_container
     eng = create_engine(sync_url)
     yield eng
@@ -84,7 +84,7 @@ def test_downgrade_base(postgres_container):
     """Downgrade to base drops everything cleanly."""
     import os as _os
 
-    sync_url = postgres_container.replace("postgresql+psycopg2://", "postgresql://")
+    sync_url = postgres_container.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg2://", "postgresql://")
     _os.environ["MIGRATION_DATABASE_URL"] = postgres_container
     cfg = _make_config(sync_url)
 
@@ -108,7 +108,7 @@ def test_roundtrip(postgres_container):
     """Full roundtrip: base → head → base → head."""
     import os as _os
 
-    sync_url = postgres_container.replace("postgresql+psycopg2://", "postgresql://")
+    sync_url = postgres_container.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg2://", "postgresql://")
     _os.environ["MIGRATION_DATABASE_URL"] = postgres_container
     cfg = _make_config(sync_url)
 

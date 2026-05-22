@@ -66,13 +66,17 @@ def postgres_container():
 
     with PostgresContainer(
         "pgvector/pgvector:pg16",
-        username="postgres",
+        user="postgres",
         password="test",
         dbname="contact_ops_test",
+        driver="psycopg2",
     ) as pg:
-        url = pg.get_connection_url()
-        _run_migrations(url)
-        yield url
+        sync_url = pg.get_connection_url()
+        _run_migrations(sync_url)
+        # Return async-driver URL for the rest of the suite
+        yield sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://").replace(
+            "postgresql://", "postgresql+asyncpg://"
+        )
 
 
 def _run_migrations(sync_url: str) -> None:
