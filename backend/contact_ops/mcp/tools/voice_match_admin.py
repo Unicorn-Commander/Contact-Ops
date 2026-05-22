@@ -478,10 +478,10 @@ async def _handle_unlink_voice(
     )
 
     # Enqueue graph edge deletion
-    from contact_ops.core.config import get_settings
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from contact_ops.agents.outbox import EventOutbox
+    from contact_ops.core.config import get_settings
 
     settings = get_settings()
     engine = create_async_engine(settings.DATABASE_URL, echo=False)

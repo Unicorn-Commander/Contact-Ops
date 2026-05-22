@@ -93,7 +93,7 @@ class ERes2NetV2Extractor:
             result = self._model(audio)  # type: ignore[no-untyped-call,unused-ignore]
             if isinstance(result, dict):
                 embedding = result.get("spk_embedding") or result.get("embedding")
-            elif isinstance(result, (list, tuple)):
+            elif isinstance(result, list | tuple):
                 embedding = result[0] if len(result) > 0 else None
             else:
                 embedding = result
