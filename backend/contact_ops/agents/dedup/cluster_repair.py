@@ -85,7 +85,7 @@ def _find_components(
     comp_map = uf.components()
     clusters: list[Cluster] = []
 
-    for root, person_ids in comp_map.items():
+    for _root, person_ids in comp_map.items():
         cluster_edges = [e for e in active_edges if e.person_a_id in person_ids and e.person_b_id in person_ids]
         scores = [e.score for e in cluster_edges]
         max_score = max(scores) if scores else 0.0

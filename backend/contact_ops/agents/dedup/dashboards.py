@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram, CollectorRegistry
+from prometheus_client import Counter, Gauge, Histogram
 
 from contact_ops.agents.observability.metrics import REGISTRY
-
 
 # Dedup-specific metrics
 

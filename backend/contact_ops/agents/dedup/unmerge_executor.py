@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -166,10 +166,10 @@ async def _verify_can_unmerge(
 
     within_window: bool = False
     if reversible_until is not None:
-        within_window = reversible_until > datetime.now(timezone.utc)
+        within_window = reversible_until > datetime.now(UTC)
     elif performed_at is not None:
         deadline = performed_at + timedelta(days=retention_days)
-        within_window = deadline > datetime.now(timezone.utc)
+        within_window = deadline > datetime.now(UTC)
 
     if not within_window:
         raise ValueError(
@@ -317,7 +317,7 @@ async def _emit_revert_action_event(
     facts_restored: int,
 ) -> UUID:
     """Insert an action_event of type dedup.merge_reverted."""
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     result = await db.execute(
         text("""
             INSERT INTO action_event (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, is_dataclass, asdict
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -174,6 +174,6 @@ def _convert_values(obj: Any) -> Any:
         return _convert_values(asdict(obj))
     if isinstance(obj, dict):
         return {k: _convert_values(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_convert_values(v) for v in obj]
     return obj

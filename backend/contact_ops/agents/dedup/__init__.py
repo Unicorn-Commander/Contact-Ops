@@ -1,10 +1,3 @@
-from contact_ops.agents.dedup.normalizers import (
-    apply_nickname_map,
-    extract_vcard_uid,
-    normalize_address,
-    normalize_email,
-    normalize_phone_e164,
-)
 from contact_ops.agents.dedup.comparisons import (
     ComparisonOutcome,
     FactRef,
@@ -21,6 +14,13 @@ from contact_ops.agents.dedup.comparisons import (
     compare_voice_fingerprint,
 )
 from contact_ops.agents.dedup.hipaa_fence import PersonRef, crosses_hipaa_fence
+from contact_ops.agents.dedup.normalizers import (
+    apply_nickname_map,
+    extract_vcard_uid,
+    normalize_address,
+    normalize_email,
+    normalize_phone_e164,
+)
 
 __all__ = [
     "normalize_email",

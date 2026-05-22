@@ -12,8 +12,6 @@ from sqlalchemy import text
 from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.errors import (
     HIPAA_BLOCKED,
-    PERSON_MERGED,
-    PERSON_NOT_FOUND,
     ToolError,
     VALIDATION_FAILED,
 )
@@ -110,7 +108,6 @@ async def _propose_merge(ctx: MCPContext, args: BaseModel) -> ProposeMergeOutput
         compare_email,
         compare_first_name,
         compare_last_name,
-        compare_phone,
     )
 
     bits = 0.0

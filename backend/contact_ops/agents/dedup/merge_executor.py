@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -143,7 +143,7 @@ async def apply_merge(
     # 7. Update merge_history with merge_activity_id
     reversible_until: datetime | None = None
     if retention_days > 0:
-        reversible_until = datetime.now(timezone.utc) + timedelta(
+        reversible_until = datetime.now(UTC) + timedelta(
             days=retention_days
         )
 
@@ -201,7 +201,7 @@ async def apply_merge(
         else None,
     }
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    datetime.now(UTC).isoformat()
     affected_ids_literal = (
         "{" + str(alias_id) + "," + str(survivor_id) + "}"
     )

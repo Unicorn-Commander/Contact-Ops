@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -586,7 +586,7 @@ def _bits_to_probability(bits: float) -> float:
 
 
 def _model_version() -> str:
-    return datetime.now(timezone.utc).strftime("splink-%Y%m%d%H%M%S")
+    return datetime.now(UTC).strftime("splink-%Y%m%d%H%M%S")
 
 
 def _extract_value(row: pd.Series, column: str) -> Any:

@@ -44,7 +44,6 @@ from contact_ops.agents.dedup.evidence_pack import (
 )
 from contact_ops.agents.dedup.splink_runner import (
     ScoredPair,
-    SplinkResult,
     score_candidates,
 )
 from contact_ops.agents.dedup.tie_breaker import run_tie_breaker

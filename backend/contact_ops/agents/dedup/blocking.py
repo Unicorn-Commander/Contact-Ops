@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import jellyfish
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 from uuid import UUID
 
+import jellyfish
 from sqlalchemy import text
 
 from contact_ops.agents.dedup.hipaa_fence import PersonRef, crosses_hipaa_fence
-
 
 CONTACT_OPS_PERSON_NAME_COLLECTION = "contact_ops_person_name"
 
