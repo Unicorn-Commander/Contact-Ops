@@ -48,8 +48,12 @@ def test_escape_unescape_roundtrip() -> None:
 
 
 def test_unfold_handles_crlf_and_lf() -> None:
+    # Per RFC 6350 §3.2, CRLF + a single LWSP char is the entire continuation
+    # marker and gets removed wholesale. The space is part of the marker, not
+    # the content — to preserve a real space across a fold, callers must
+    # encode TWO spaces ("Hello \n  World" -> "Hello World").
     folded = "BEGIN:VCARD\r\nFN:Hello\r\n World\r\nEND:VCARD"
-    assert "Hello World" in unfold(folded)
+    assert "HelloWorld" in unfold(folded)
 
 
 def test_fold_keeps_short_lines_intact() -> None:
@@ -95,10 +99,19 @@ def test_parse_property_line_extracts_group_name_params_value() -> None:
 
 
 def test_parse_property_line_handles_quoted_param_values() -> None:
+    # Per RFC 6350 §3.3, DQUOTE quoting protects the entire value including
+    # internal commas — `TYPE="WORK,VOICE"` is ONE param value containing a
+    # literal comma. Multi-value params use unquoted CSV: `TYPE=WORK,VOICE`.
     prop = parse_property_line('EMAIL;TYPE="WORK,VOICE";LABEL="Hello, World":REMOVED')
     assert prop is not None
-    assert prop.params["TYPE"] == ["WORK", "VOICE"]
+    assert prop.params["TYPE"] == ["WORK,VOICE"]
     assert prop.params["LABEL"] == ["Hello, World"]
+
+
+def test_parse_property_line_handles_unquoted_csv_param() -> None:
+    prop = parse_property_line("EMAIL;TYPE=WORK,VOICE:REMOVED")
+    assert prop is not None
+    assert prop.params["TYPE"] == ["WORK", "VOICE"]
 
 
 def test_serialize_property_inverts_parse() -> None:
