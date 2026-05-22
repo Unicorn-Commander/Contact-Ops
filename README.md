@@ -1,6 +1,6 @@
 # Contact-Ops
 
-**Status**: Phase 0 (scaffold only — no MCP tools registered yet)
+**Status**: Phase 0 (scaffold only, no MCP tools registered yet)
 **Date**: 2026-05-21
 
 Contact-Ops is Magic Unicorn's canonical person and organization registry. It is an agent-first, MCP-native platform: the MCP server is the product, and every consumer (human UI, CardDAV server, iOS/macOS sync, agent inboxes, ecosystem apps like Listing-Ops, Crisis-Ops, Project-Ops, Meeting-Ops, Stable, Brigade) composes from a single tool surface. Forked from `centerdeep-data-intel`, which contributes the FastAPI + SQLAlchemy 2.0 async + Postgres + Qdrant + Keycloak `uchub` foundation.
@@ -11,7 +11,7 @@ Contact-Ops manages the contacts you actively curate. Data Intel (`verify.center
 
 | What | Where |
 |------|-------|
-| Canonical design doc | `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md` (5,685 lines — the source of truth for every fact in this repo) |
+| Canonical design doc | `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md` (5,685 lines, the source of truth for every fact in this repo) |
 | AI agent orientation | `CLAUDE.md` |
 | Architecture overview | `ARCHITECTURE.md` |
 | Ecosystem integration guide | `INTEGRATION_GUIDE.md` |
@@ -37,7 +37,7 @@ pytest
 uvicorn contact_ops.main:app --reload --port 8501
 
 # 5. Call MCP tools via Claude Code or any MCP client
-#    (Phase 0 has NO tools registered — only the JSON-RPC handshake works)
+#    (Phase 0 has NO tools registered, only the JSON-RPC handshake works)
 ```
 
 Production endpoints (Phase 1+):
