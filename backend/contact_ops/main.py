@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
 from contact_ops.middleware import AuditMiddleware, JWTValidationMiddleware
@@ -109,6 +110,10 @@ def create_application() -> FastAPI:
     # Routes
     app.include_router(health_router)
     app.include_router(mcp_router)
+    # CardDAV runs its own HTTP Basic auth (per-device app passwords).
+    # The JWT middleware skips /carddav and /.well-known/carddav via
+    # JWTValidationMiddleware.SKIP_PREFIXES — see middleware/jwt_validation.py.
+    app.include_router(carddav_router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, Any]:
