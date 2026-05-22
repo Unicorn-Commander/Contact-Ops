@@ -1,10 +1,10 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { Bell, Building2, Home, Inbox, Moon, Settings, Tags, Sun, Users } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useAuth } from "react-oidc-context";
 import { Button } from "@/components/ui/button";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { cn } from "@/lib/utils";
+import { UserMenu } from "@/components/UserMenu";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: Home },
@@ -17,7 +17,6 @@ const nav = [
 ] as const;
 
 export function AppShell() {
-  const auth = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light");
 
@@ -45,7 +44,7 @@ export function AppShell() {
                 to={item.to}
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-                  active && "bg-muted text-foreground"
+                  active && "bg-violet-500/10 text-violet-500 border-l-2 border-violet-500"
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -67,9 +66,7 @@ export function AppShell() {
             <Button variant="ghost" size="icon" onClick={() => setDark((value) => !value)} title="Toggle dark mode">
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button variant="outline" onClick={() => void auth.signoutRedirect()}>
-              Sign out
-            </Button>
+            <UserMenu />
           </div>
         </header>
         <main className="mx-auto max-w-7xl p-4 lg:p-6">
