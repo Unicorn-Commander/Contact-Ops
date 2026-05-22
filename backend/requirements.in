@@ -10,9 +10,17 @@ structlog
 httpx
 python-jose[cryptography]
 greenlet
-redis
+# redis pinned to 6.x: kombu 5.6 (Celery 5.5.3's broker library) requires
+# redis<6.5; falkordb 1.2.2 also requires redis>=6.0,<7.0. The 6.0.0 pin
+# threads the needle. redis-py 6.x retains the redis.asyncio surface used
+# by core/redis.py.
+redis==6.0.0
 qdrant-client
-falkordb
+# falkordb pinned to 1.2.2 (last release supporting redis<7) so the Celery
+# broker (kombu) and the FalkorDB graph client coexist. The codebase reaches
+# FalkorDB via redis.asyncio anyway (see routers/health.py); the falkordb
+# package is held in reserve for the Phase 4 graph sync work.
+falkordb==1.2.2
 dnspython
 aiosmtplib
 email-validator
@@ -20,3 +28,19 @@ phonenumbers
 python-multipart
 lxml
 bcrypt
+
+# Phase 3 Foundation: agent fleet substrate (Celery 5.6+ for kombu 5.6 redis>=6 support)
+celery[redis]==5.6.3
+prometheus-client==0.23.1
+
+# Phase 3 Foundation: OpenTelemetry tracing + GenAI semantic conventions
+opentelemetry-api==1.36.0
+opentelemetry-sdk==1.36.0
+opentelemetry-exporter-otlp==1.36.0
+opentelemetry-instrumentation-fastapi==0.57b0
+opentelemetry-instrumentation-asyncpg==0.57b0
+opentelemetry-instrumentation-redis==0.57b0
+opentelemetry-instrumentation-celery==0.57b0
+
+# Phase 3 Foundation: Beta posterior credible intervals for trust ladder
+scipy==1.14.1
