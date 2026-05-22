@@ -1,7 +1,8 @@
 export const env = {
-  mcpBaseUrl: import.meta.env.VITE_MCP_BASE_URL ?? "http://localhost:8501",
+  mcpBaseUrl:
+    import.meta.env.VITE_MCP_BASE_URL ?? "https://mcp.contacts.magicunicorn.dev",
   keycloakIssuer:
-    import.meta.env.VITE_KEYCLOAK_ISSUER ?? "https://auth.unicorncommander.ai/realms/uchub",
+    import.meta.env.VITE_KEYCLOAK_ISSUER ?? "https://auth.magicunicorn.dev/realms/uchub",
   keycloakClientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? "contact-ops-app"
 };
 
