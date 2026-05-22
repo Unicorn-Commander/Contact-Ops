@@ -42,7 +42,13 @@ def _import_phase_2_modules() -> None:
                 raise
 
 
-_PHASE_3_MODULES = ("agent_admin", "dedup_admin", "voice_match_admin", "inbox")
+_PHASE_3_MODULES = (
+    "agent_admin",
+    "dedup_admin",
+    "voice_match_admin",
+    "inbox",
+    "calibration_admin",
+)
 
 
 def _import_phase_3_modules() -> None:
