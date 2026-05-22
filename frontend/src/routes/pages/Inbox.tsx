@@ -340,6 +340,10 @@ function InboxCockpit() {
       { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "⌘.", onRun: () => focusMode.toggle() },
       { id: "settings-auto", group: "Settings" as const, label: "Open auto-approve thresholds", onRun: () => navigate({ to: "/settings" }) },
     ],
+    // doApprove/doReject/doMute/doDismiss are stable for the lifetime of
+    // a focusedProposal; including them here would trigger recreation on
+    // every parent render. Linter exhaustive-deps disabled intentionally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [focusedProposal, focusMode, navigate],
   );
 
