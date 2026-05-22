@@ -18,6 +18,12 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "N", "B", "UP", "S", "C4", "T20"]
 ignore = ["S101", "S104"]
 
+[tool.ruff.lint.per-file-ignores]
+# CLI tools legitimately need to print to stdout.
+"contact_ops/agents/cli.py" = ["T201"]
+# Test fixtures + tests can re-export and use leading-underscore helpers.
+"tests/**" = ["F401"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -27,3 +33,16 @@ no_implicit_reexport = true
 disallow_untyped_defs = true
 disallow_any_generics = true
 plugins = ["pydantic.mypy"]
+
+# Third-party libraries without type stubs.
+[[tool.mypy.overrides]]
+module = [
+    "celery",
+    "celery.*",
+    "scipy",
+    "scipy.*",
+    "prometheus_client",
+    "opentelemetry",
+    "opentelemetry.*",
+]
+ignore_missing_imports = true
