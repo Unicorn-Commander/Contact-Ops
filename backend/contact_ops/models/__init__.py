@@ -199,6 +199,7 @@ from contact_ops.models.action_event import ActionEvent
 from contact_ops.models.agent_registry import AgentRegistry
 from contact_ops.models.email import Email
 from contact_ops.models.person_alias import PersonAlias
+from contact_ops.models.person_person_relation import PersonPersonRelation
 from contact_ops.models.person_tenant_membership import PersonTenantMembership
 from contact_ops.models.phone import Phone
 
@@ -212,6 +213,7 @@ __all__ = [
     "Phone",
     "ActionEvent",
     "PersonAlias",
+    "PersonPersonRelation",
     "AgentRegistry",
     "PersonTenantMembership",
 ]
