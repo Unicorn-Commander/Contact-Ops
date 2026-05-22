@@ -20,6 +20,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # Redis is the Celery broker AND the circuit-breaker / cost-burn cache.
+  # In production this lives on ``unicorn-redis``; locally we run a tiny
+  # container so docker compose up brings the whole fleet substrate alive.
+  redis:
+    image: redis:7-alpine
+    container_name: contact-ops-redis-dev
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - contact-ops-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   migration:
     image: python:3.12-slim-bookworm
     container_name: contact-ops-migration-dev
@@ -96,9 +113,103 @@ services:
           memory: 64M
           cpus: '0.1'
 
+  # Phase 3.0: Celery worker pool for the agent fleet.
+  # Shares the backend image so it has the same Python + deps; runs the
+  # ``contact_ops.agents.runtime:celery_app`` task surface.
+  contact-ops-celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: contact-ops-celery-worker
+    restart: unless-stopped
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://contact_ops_dev:dev@postgres:5432/contact_ops_db_dev
+      REDIS_URL: redis://redis:6379/5
+      CONTACT_OPS_AGENTS_BROKER_URL: redis://redis:6379/9
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://contact-ops-laminar:4317
+      STANDALONE_MODE: "true"
+      ENV: dev
+    command:
+      - celery
+      - "-A"
+      - contact_ops.agents.runtime
+      - worker
+      - "--loglevel=info"
+      - "-Q"
+      - "agents.batch.high,agents.batch.low,agents.calibration"
+      - "--concurrency=2"
+    networks:
+      - unicorn-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Phase 3.0: Celery beat scheduler. Computes the per-agent cron schedule
+  # from the in-process registry; restart on each deploy.
+  contact-ops-celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: contact-ops-celery-beat
+    restart: unless-stopped
+    depends_on:
+      contact-ops-celery-worker:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://contact_ops_dev:dev@postgres:5432/contact_ops_db_dev
+      REDIS_URL: redis://redis:6379/5
+      CONTACT_OPS_AGENTS_BROKER_URL: redis://redis:6379/9
+      STANDALONE_MODE: "true"
+      ENV: dev
+    command:
+      - celery
+      - "-A"
+      - contact_ops.agents.runtime
+      - beat
+      - "--loglevel=info"
+    networks:
+      - unicorn-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # Phase 3.0: Laminar self-hosted OTel collector. Apache-2.0, OTel-native,
+  # GenAI semantic-convention aware. Profile-gated so docker compose up by
+  # default doesn't pull a 1GB+ image; bring it online with
+  # ``docker compose --profile observability up``.
+  contact-ops-laminar:
+    image: laminarflow/laminar:latest
+    container_name: contact-ops-laminar
+    restart: unless-stopped
+    profiles:
+      - observability
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+      - "5667:5667"  # Laminar web UI
+    environment:
+      LAMINAR_DB_URL: ${CONTACT_OPS_DATABASE_URL}
+    networks:
+      - unicorn-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
 networks:
   unicorn-network:
     external: true
 
 volumes:
   contact-ops-pgdata:
+  contact-ops-redisdata:
