@@ -7,7 +7,7 @@ Create Date: 2026-05-22
 Phase 3.1 of Contact-Ops. Adds dedup-specific tables that Foundation's 0021
 doesn't cover:
 
-* ``merge_candidates``  — pairs that scored 0.40–0.65 and weren't merged
+* ``dedup_pair_candidates``  — pairs that scored 0.40–0.65 and weren't merged
 * ``splink_models``     — Splink model version store
 * ``source_calibration`` — per-source confidence multipliers
 
@@ -28,7 +28,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS fuzzystrmatch")
-    _create_merge_candidates()
+    _create_dedup_pair_candidates()
     _create_splink_models()
     _create_source_calibration()
     _seed_source_calibration()
@@ -38,16 +38,16 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS source_calibration")
     op.execute("DROP TABLE IF EXISTS splink_models")
-    op.execute("DROP TABLE IF EXISTS merge_candidates")
+    op.execute("DROP TABLE IF EXISTS dedup_pair_candidates")
     op.execute("DROP EXTENSION IF EXISTS fuzzystrmatch")
 
 
-# ---- merge_candidates ----
+# ---- dedup_pair_candidates ----
 
-def _create_merge_candidates() -> None:
+def _create_dedup_pair_candidates() -> None:
     op.execute(
         """
-        CREATE TABLE merge_candidates (
+        CREATE TABLE dedup_pair_candidates (
             id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             tenant_id           UUID NOT NULL REFERENCES tenants(id),
             person_a_id         UUID NOT NULL REFERENCES persons(id),
@@ -59,17 +59,17 @@ def _create_merge_candidates() -> None:
             next_eligible_at    TIMESTAMPTZ,
             resolved_at         TIMESTAMPTZ,
             resolution          TEXT,
-            CONSTRAINT merge_candidates_pair_unique UNIQUE (tenant_id, person_a_id, person_b_id),
-            CONSTRAINT merge_candidates_ordered CHECK (person_a_id < person_b_id)
+            CONSTRAINT dedup_pair_candidates_pair_unique UNIQUE (tenant_id, person_a_id, person_b_id),
+            CONSTRAINT dedup_pair_candidates_ordered CHECK (person_a_id < person_b_id)
         )
         """
     )
     op.execute(
-        "CREATE INDEX merge_candidates_score_idx ON merge_candidates (tenant_id, score DESC) "
+        "CREATE INDEX dedup_pair_candidates_score_idx ON dedup_pair_candidates (tenant_id, score DESC) "
         "WHERE resolved_at IS NULL"
     )
     op.execute(
-        "CREATE INDEX merge_candidates_re_eligible_idx ON merge_candidates (next_eligible_at) "
+        "CREATE INDEX dedup_pair_candidates_re_eligible_idx ON dedup_pair_candidates (next_eligible_at) "
         "WHERE resolved_at IS NULL AND next_eligible_at IS NOT NULL"
     )
 
@@ -142,7 +142,7 @@ def _seed_source_calibration() -> None:
 
 def _install_rls_policies() -> None:
     tables = [
-        "merge_candidates",
+        "dedup_pair_candidates",
         "splink_models",
         "source_calibration",
     ]

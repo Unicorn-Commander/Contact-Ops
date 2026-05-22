@@ -11,7 +11,15 @@ from contact_ops.models import Base
 
 
 class MergeCandidate(Base):
-    __tablename__ = "merge_candidate"
+    """Dedup-Agent pair candidate (Phase 3.1).
+
+    NOT the same table as the Phase-6 ``merge_candidates`` table (created
+    in migration 0020) which stores import-time dedup hints. The Dedup
+    Agent's pair candidates live in ``dedup_pair_candidates`` to avoid
+    the name collision. Both tables coexist on main.
+    """
+
+    __tablename__ = "dedup_pair_candidates"
 
     id: Mapped[uuid_module.UUID] = mapped_column(PGUUID, primary_key=True)
     tenant_id: Mapped[uuid_module.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False)
