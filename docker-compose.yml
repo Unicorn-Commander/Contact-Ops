@@ -1,7 +1,43 @@
 # Contact-Ops - Development Docker Compose
 # STANDALONE_MODE=true for local development without OAuth2
+# docker compose up spins a working Postgres + backend locally
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: contact-ops-postgres-dev
+    environment:
+      POSTGRES_USER: contact_ops_dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: contact_ops_db_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - contact-ops-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contact_ops_dev -d contact_ops_db_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migration:
+    image: python:3.12-slim-bookworm
+    container_name: contact-ops-migration-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://contact_ops_dev:dev@postgres:5432/contact_ops_db_dev
+      MIGRATION_DATABASE_URL: ${CONTACT_OPS_DATABASE_URL}
+    volumes:
+      - ./backend:/app:ro
+    working_dir: /app
+    command: >
+      bash -c "
+        pip install --no-cache-dir alembic sqlalchemy[asyncio] asyncpg pgvector 2>&1 >/dev/null
+        && alembic upgrade head
+      "
+
   contact-ops-backend:
     build:
       context: ./backend
@@ -10,11 +46,13 @@ services:
     restart: unless-stopped
     ports:
       - "8501:8501"
-    env_file:
-      - .env
-    volumes:
-      # Hot reload for development
-      - ./backend/contact_ops:/app/contact_ops:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://contact_ops_dev:dev@postgres:5432/contact_ops_db_dev
+      STANDALONE_MODE: "true"
+      ENV: dev
+    depends_on:
+      migration:
+        condition: service_completed_successfully
     networks:
       - unicorn-network
     healthcheck:
@@ -61,3 +99,6 @@ services:
 networks:
   unicorn-network:
     external: true
+
+volumes:
+  contact-ops-pgdata:

@@ -1,5 +1,6 @@
 # Contact-Ops - Production Docker Compose
 # OAuth2 Proxy with Keycloak OIDC authentication
+# Routes: mcp.contacts.magicunicorn.dev (backend API) + OAuth2 proxy for web UI
 
 services:
   contact-ops-backend:
@@ -33,11 +34,11 @@ services:
           cpus: '0.5'
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.contact-ops-api.rule=Host(`api.verify.centerdeep.online`)"
-      - "traefik.http.routers.contact-ops-api.entrypoints=websecure"
-      - "traefik.http.routers.contact-ops-api.tls=true"
-      - "traefik.http.routers.contact-ops-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.contact-ops-api.loadbalancer.server.port=8501"
+      - "traefik.http.routers.contact-ops-mcp.rule=Host(`mcp.contacts.magicunicorn.dev`)"
+      - "traefik.http.routers.contact-ops-mcp.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-mcp.tls=true"
+      - "traefik.http.routers.contact-ops-mcp.tls.certresolver=cloudflare"
+      - "traefik.http.services.contact-ops-mcp.loadbalancer.server.port=8501"
       - "traefik.docker.network=web"
 
   contact-ops-frontend:
@@ -76,56 +77,44 @@ services:
       - unicorn-network
       - web
     environment:
-      # OIDC Provider Configuration (Keycloak)
       - OAUTH2_PROXY_PROVIDER=oidc
-      - OAUTH2_PROXY_OIDC_ISSUER_URL=https://auth.centerdeep.online/realms/uchub
-      - OAUTH2_PROXY_CLIENT_ID=center-deep
+      - OAUTH2_PROXY_OIDC_ISSUER_URL=https://auth.unicorncommander.ai/realms/uchub
+      - OAUTH2_PROXY_CLIENT_ID=contact-ops-mcp
       - OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET}
-      - OAUTH2_PROXY_REDIRECT_URL=https://verify.centerdeep.online/oauth2/callback
+      - OAUTH2_PROXY_REDIRECT_URL=https://contacts.magicunicorn.dev/oauth2/callback
 
-      # Cookie Configuration
       - OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_COOKIE_SECRET}
-      - OAUTH2_PROXY_COOKIE_DOMAINS=.centerdeep.online
+      - OAUTH2_PROXY_COOKIE_DOMAINS=.magicunicorn.dev
       - OAUTH2_PROXY_COOKIE_SECURE=true
       - OAUTH2_PROXY_COOKIE_SAMESITE=lax
       - OAUTH2_PROXY_COOKIE_NAME=_oauth2_proxy_contact_ops
       - OAUTH2_PROXY_COOKIE_EXPIRE=168h
       - OAUTH2_PROXY_COOKIE_REFRESH=1h
 
-      # Upstream Configuration
       - OAUTH2_PROXY_UPSTREAMS=http://contact-ops-frontend:80
       - OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180
 
-      # Email/User Configuration
       - OAUTH2_PROXY_EMAIL_DOMAINS=*
       - OAUTH2_PROXY_PASS_USER_HEADERS=true
       - OAUTH2_PROXY_SET_XAUTHREQUEST=true
       - OAUTH2_PROXY_PASS_ACCESS_TOKEN=true
 
-      # Skip Authentication for specific paths
-      # API key authentication handled separately for /api/* endpoints
       - OAUTH2_PROXY_SKIP_AUTH_ROUTES=^/api/.*,^/health.*,^/docs.*,^/redoc.*,^/openapi\.json$,^/assets/.*,^/static/.*,^/favicon\.ico$,^/manifest\.json$
 
-      # Pass through Authorization header for API key auth
       - OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER=true
-      # CRITICAL: Don't strip Authorization header on skipped routes (needed for API key auth)
       - OAUTH2_PROXY_SKIP_AUTH_STRIP_HEADERS=false
 
-      # Logging and Security
       - OAUTH2_PROXY_SILENCE_PING_LOGGING=true
       - OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
       - OAUTH2_PROXY_REVERSE_PROXY=true
 
-      # Session Configuration
       - OAUTH2_PROXY_SESSION_STORE_TYPE=cookie
 
-      # OIDC specific settings
       - OAUTH2_PROXY_OIDC_EMAIL_CLAIM=email
       - OAUTH2_PROXY_OIDC_GROUPS_CLAIM=groups
       - OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=true
 
-      # Pass JWT claims as custom headers
-      - OAUTH2_PROXY_EXTRA_JWT_ISSUERS=https://auth.centerdeep.online/realms/uchub=contact-ops
+      - OAUTH2_PROXY_EXTRA_JWT_ISSUERS=https://auth.unicorncommander.ai/realms/uchub=contact-ops
     healthcheck:
       test: ["CMD", "/bin/oauth2-proxy", "--version"]
       interval: 30s
@@ -142,12 +131,11 @@ services:
           cpus: '0.1'
     labels:
       - "traefik.enable=true"
-      # Route both verify and contact-ops subdomains to OAuth2 proxy
-      - "traefik.http.routers.contact-ops.rule=Host(`verify.centerdeep.online`) || Host(`contact-ops.centerdeep.online`)"
-      - "traefik.http.routers.contact-ops.entrypoints=websecure"
-      - "traefik.http.routers.contact-ops.tls=true"
-      - "traefik.http.routers.contact-ops.tls.certresolver=letsencrypt"
-      - "traefik.http.services.contact-ops.loadbalancer.server.port=4180"
+      - "traefik.http.routers.contact-ops-web.rule=Host(`contacts.magicunicorn.dev`)"
+      - "traefik.http.routers.contact-ops-web.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-web.tls=true"
+      - "traefik.http.routers.contact-ops-web.tls.certresolver=cloudflare"
+      - "traefik.http.services.contact-ops-web.loadbalancer.server.port=4180"
       - "traefik.docker.network=web"
 
 networks:

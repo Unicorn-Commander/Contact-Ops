@@ -45,3 +45,11 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# Cache directories
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+coverage.xml
+htmlcov/
+.coverage

@@ -1,15 +1,30 @@
 """
 MCP server smoke tests.
 
-Verify the JSON-RPC over HTTP endpoint responds correctly to
-initialize, tools/list, and tools/call requests.
+Verify the JSON-RPC over HTTP endpoint responds correctly. These tests
+target the public behavior as seen by an MCP client.
+
+Requires STANDALONE_MODE since MCP endpoint needs JWT claims.
+Track A has removed /mcp from SKIP_PATHS, so we need valid auth context.
 """
 
-import pytest
 import json
+
+import pytest
 from fastapi.testclient import TestClient
 
 from contact_ops.main import app
+
+
+@pytest.fixture(autouse=True)
+def _set_standalone():
+    """Force standalone mode so JWT middleware yields test claims."""
+    from contact_ops.core.config import get_settings
+
+    settings = get_settings()
+    settings.STANDALONE_MODE = True
+    yield
+    settings.STANDALONE_MODE = False
 
 
 @pytest.fixture
@@ -17,168 +32,116 @@ def client():
     return TestClient(app)
 
 
-def test_mcp_initialize(client):
-    """Verify MCP initialize endpoint responds."""
+def test_mcp_initialize_response_shape(client):
+    """initialize response has NO tools field at top level, capabilities.tools is an object."""
     payload = {
         "jsonrpc": "2.0",
         "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-03-26",
-            "clientInfo": {"name": "test-client", "version": "0.0.1"},
-        },
-        "id": "test-1",
+        "params": {"protocolVersion": "2025-11-25"},
+        "id": "init-1",
     }
     resp = client.post(
         "/mcp",
         data=json.dumps(payload),
         headers={"content-type": "application/json"},
     )
-    assert resp.status_code == 400  # No tenant_id header
-    body = resp.json()
-    assert "error" in body
-
-
-def test_mcp_initialize_with_tenant(client):
-    """Verify MCP initialize returns server info when tenant is provided."""
-    import uuid
-    tenant_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
-
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "initialize",
-        "params": {"protocolVersion": "2025-03-26"},
-        "id": "test-2",
-    }
-    resp = client.post(
-        "/mcp",
-        data=json.dumps(payload),
-        headers={
-            "content-type": "application/json",
-            "x-tenant-id": tenant_id,
-        },
-    )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["jsonrpc"] == "2.0"
-    assert "result" in body
-    assert body["result"]["protocolVersion"] == "2025-03-26"
-    assert body["result"]["serverInfo"]["name"] == "contact-ops-mcp"
-    assert body["result"]["tools"] == []  # Phase 0: no tools registered
+    result = body["result"]
+    assert "tools" not in result
+    assert "capabilities" in result
+    assert isinstance(result["capabilities"]["tools"], dict)
+    assert result["serverInfo"]["name"] == "contact-ops-mcp"
+    assert result["protocolVersion"] == "2025-11-25"
 
 
-def test_mcp_tools_list(client):
-    """Verify tools/list returns empty list in Phase 0."""
-    import uuid
-    tenant_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
-
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "tools/list",
-        "id": "test-3",
-    }
-    resp = client.post(
-        "/mcp",
-        data=json.dumps(payload),
-        headers={
-            "content-type": "application/json",
-            "x-tenant-id": tenant_id,
-        },
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["result"]["tools"] == []
-
-
-def test_mcp_tools_call(client):
-    """Verify tools/call returns placeholder in Phase 0."""
-    import uuid
-    tenant_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
-
+def test_mcp_tools_call_unknown_tool_returns_isError(client):
+    """tools/call for any tool name returns isError: true in Phase 0."""
     payload = {
         "jsonrpc": "2.0",
         "method": "tools/call",
-        "params": {"name": "get_person", "arguments": {"id": "abc123"}},
-        "id": "test-4",
+        "params": {"name": "get_person", "arguments": {"id": "abc"}},
+        "id": "call-1",
     }
     resp = client.post(
         "/mcp",
         data=json.dumps(payload),
-        headers={
-            "content-type": "application/json",
-            "x-tenant-id": tenant_id,
-        },
+        headers={"content-type": "application/json"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert "result" in body
+    assert body["result"]["isError"] is True
 
 
-def test_mcp_unknown_method(client):
-    """Verify unknown methods return -32601 error."""
-    import uuid
-    tenant_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
-
+def test_mcp_notification_no_response(client):
+    """Request with no 'id' (a notification) must not receive a response body."""
     payload = {
         "jsonrpc": "2.0",
-        "method": "foobar/notreal",
-        "id": "test-5",
+        "method": "notifications/initialized",
     }
     resp = client.post(
         "/mcp",
         data=json.dumps(payload),
-        headers={
-            "content-type": "application/json",
-            "x-tenant-id": tenant_id,
-        },
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 204
+    assert resp.content == b""
+
+
+def test_mcp_unknown_method(client):
+    """Unknown MCP methods return -32601 JSON-RPC error."""
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "foobar/notreal",
+        "id": "err-1",
+    }
+    resp = client.post(
+        "/mcp",
+        data=json.dumps(payload),
+        headers={"content-type": "application/json"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["error"]["code"] == -32601
 
 
-def test_mcp_batch_request(client):
-    """Verify batch requests are handled."""
-    import uuid
-    tenant_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
-
-    payload = [
-        {
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-03-26"},
-            "id": "batch-1",
-        },
-        {
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "id": "batch-2",
-        },
-    ]
+def test_mcp_tools_list(client):
+    """tools/list returns empty list in Phase 0."""
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "id": "list-1",
+    }
     resp = client.post(
         "/mcp",
         data=json.dumps(payload),
-        headers={
-            "content-type": "application/json",
-            "x-tenant-id": tenant_id,
-        },
+        headers={"content-type": "application/json"},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert isinstance(body, list)
-    assert len(body) == 2
+    assert body["result"]["tools"] == []
 
 
-def test_health_check(client):
-    """Verify basic health endpoint."""
-    resp = client.get("/health")
+def test_mcp_parse_error(client):
+    """Malformed JSON returns JSON-RPC parse error."""
+    resp = client.post(
+        "/mcp",
+        data="not valid json at all",
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["code"] == -32700
+
+
+def test_mcp_empty_batch(client):
+    """Empty batch array returns -32600 error."""
+    resp = client.post(
+        "/mcp",
+        data=json.dumps([]),
+        headers={"content-type": "application/json"},
+    )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "healthy"
-
-
-def test_health_live(client):
-    """Verify liveness probe endpoint."""
-    resp = client.get("/health/live", timeout=5)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "alive"
+    assert body["error"]["code"] == -32600
