@@ -18,3 +18,5 @@ aiosmtplib
 email-validator
 phonenumbers
 python-multipart
+lxml
+bcrypt
