@@ -25,16 +25,45 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
     op.execute("CREATE EXTENSION IF NOT EXISTS citext")
 
-    # Create uuidv7 function if not exists
-    op.execute("""
-        CREATE OR REPLACE FUNCTION uuidv7_generate() RETURNS uuid
-        LANGUAGE sql STABLE
-        AS $$
-            SELECT uuid_in(
-                md5((random()::text || clock_timestamp()::text)::text)
-            )
-        $$
-    """)
+    has_pg_uuidv7 = op.get_bind().execute(sa.text("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_available_extensions
+            WHERE name = 'pg_uuidv7'
+        )
+    """)).scalar()
+    if has_pg_uuidv7:
+        op.execute("CREATE EXTENSION IF NOT EXISTS pg_uuidv7")
+        op.execute("""
+            CREATE OR REPLACE FUNCTION uuidv7_generate() RETURNS uuid
+            LANGUAGE sql VOLATILE PARALLEL SAFE
+            AS $$ SELECT uuid_generate_v7() $$
+        """)
+    else:
+        op.execute("""
+            CREATE OR REPLACE FUNCTION uuidv7_generate() RETURNS uuid
+            LANGUAGE plpgsql VOLATILE PARALLEL SAFE
+            AS $$
+            DECLARE
+                unix_ts_ms bigint;
+                random_bytes bytea;
+                rand_a integer;
+                uuid_bytes bytea;
+            BEGIN
+                unix_ts_ms := floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint;
+                random_bytes := gen_random_bytes(10);
+                rand_a := ((get_byte(random_bytes, 0) << 8) | get_byte(random_bytes, 1)) & 4095;
+
+                uuid_bytes :=
+                    decode(lpad(to_hex(unix_ts_ms), 12, '0'), 'hex') ||
+                    decode(lpad(to_hex((7 << 12) | rand_a), 4, '0'), 'hex') ||
+                    substring(random_bytes FROM 3 FOR 8);
+                uuid_bytes := set_byte(uuid_bytes, 8, (get_byte(uuid_bytes, 8) & 63) | 128);
+
+                RETURN encode(uuid_bytes, 'hex')::uuid;
+            END
+            $$
+        """)
 
     # App roles
     op.execute("DO $$ BEGIN CREATE ROLE contact_ops_app NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$")
@@ -189,6 +218,7 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION norm_text(text)")
     op.execute("DROP FUNCTION valid_window_ok(timestamptz, timestamptz)")
     op.execute("DROP FUNCTION uuidv7_generate()")
+    op.execute("DROP EXTENSION IF EXISTS pg_uuidv7")
     op.execute("DROP ROLE IF EXISTS contact_ops_app")
     op.execute("DROP ROLE IF EXISTS contact_ops_audit")
     op.execute("DROP ROLE IF EXISTS contact_ops_ro")
