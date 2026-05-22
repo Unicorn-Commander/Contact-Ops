@@ -53,3 +53,13 @@ jellyfish~=1.1
 rapidfuzz~=3.10
 usaddress~=0.5
 pyarrow~=18
+
+# Phase 3.1 Dedup Agent tie-breaker: LiteLLM gateway client (Aaron's
+# `project_llm_routing` — agent calls flow through commander's LiteLLM).
+litellm
+
+# Phase 3.2 Voice Match: JWT for the voice_consent signed-token flow.
+pyjwt
+
+# Phase 3.3a Inbox Backend: in-process Redis fake for tests.
+fakeredis

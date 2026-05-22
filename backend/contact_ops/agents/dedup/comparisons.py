@@ -7,9 +7,21 @@ import jellyfish
 
 from contact_ops.agents.dedup.normalizers import (
     apply_nickname_map,
+    normalize_address,
     normalize_email,
     normalize_phone_e164,
 )
+
+# Re-export so tests can monkey-patch ``comparisons.normalize_address``
+# (the address-comparison function calls ``normalize_address`` indirectly
+# through other code paths; the explicit re-export makes the patch target
+# stable across both the real module and the comparison entry points).
+__all__ = [
+    "apply_nickname_map",
+    "normalize_address",
+    "normalize_email",
+    "normalize_phone_e164",
+]
 
 
 @dataclass(frozen=True)
