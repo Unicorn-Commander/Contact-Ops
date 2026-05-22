@@ -50,6 +50,16 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         "/",
     })
 
+    # Prefix-based bypass. CardDAV runs HTTP Basic auth against per-device
+    # app passwords rather than bearer JWTs (iOS Contacts.app cannot send
+    # bearer tokens). Every request under ``/carddav`` and the discovery
+    # endpoint at ``/.well-known/carddav`` therefore bypasses JWT and is
+    # authenticated inline by :mod:`contact_ops.carddav.auth`.
+    SKIP_PREFIXES: tuple[str, ...] = (
+        "/carddav",
+        "/.well-known/carddav",
+    )
+
     def __init__(self, app: Any, settings: Settings) -> None:
         super().__init__(app)
         self.settings = settings
@@ -60,7 +70,12 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if request.url.path in self.SKIP_PATHS or request.method == "OPTIONS":
+        path = request.url.path
+        if (
+            path in self.SKIP_PATHS
+            or request.method == "OPTIONS"
+            or any(path == p or path.startswith(p + "/") for p in self.SKIP_PREFIXES)
+        ):
             return await call_next(request)
 
         # Standalone mode bypass — only honored when explicitly enabled AND not
