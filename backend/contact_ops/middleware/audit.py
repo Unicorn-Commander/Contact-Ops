@@ -52,6 +52,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         "/redoc",
         "/openapi.json",
         "/",
+        "/metrics",
     })
 
     async def dispatch(

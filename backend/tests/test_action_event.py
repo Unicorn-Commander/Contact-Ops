@@ -25,6 +25,11 @@ REQUIRED_COLUMNS: set[str] = {
     "approved_by", "reverted_by_event_id", "supersedes_event_id",
     "valid_from", "valid_to", "content_hash", "prev_event_hash",
     "signature",
+    # Phase 3 Foundation (migration 0021) additions
+    "idempotency_key", "decision_payload", "reversibility_class",
+    "parent_proposal_id", "conflict_reason", "agent_version",
+    "trust_tier_at_creation", "evidence_pack_id", "trace_id", "span_id",
+    "time_to_decide_seconds", "decided_by_user_id", "triggered_by",
 }
 
 REQUIRED_INDEXES: set[str] = {

@@ -66,7 +66,7 @@ def postgres_container():
 
     with PostgresContainer(
         "pgvector/pgvector:pg16",
-        user="postgres",
+        username="postgres",
         password="test",
         dbname="contact_ops_test",
         driver="psycopg2",
