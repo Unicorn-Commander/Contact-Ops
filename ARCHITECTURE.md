@@ -41,7 +41,7 @@ LinkedIn maps to the Contact-Ops half (you curate your network). Apollo maps to 
 - **Federation, not absorption.** Contact-Ops federates with Data Intel, Meeting-Ops, Crisis-Ops, Project-Ops, Brigade, Stable. It does not absorb them.
 - **"Rest of my life" durability.** No hard deletes by default. Bitemporal validity. 90-day unmerge. Field-level provenance forever.
 - **White-label from the schema up.** Tenancy is not a feature layer bolted on; it's in the schema from migration 002.
-- **World-class, not MVP.** Calibration, audit, RLS, HIPAA fencing, pgvector + Qdrant ANN, etag-guarded PATCH — all from day one.
+- **World-class, not MVP.** Calibration, audit, RLS, HIPAA fencing, pgvector + Qdrant ANN, etag-guarded PATCH, all from day one.
 - **Voice fingerprint canonical** via Meeting-Ops Parakeet on midboy2. A person can exist with no name and no email, only a 256-d voice embedding.
 - **3D graph navigation** via FalkorDB + react-force-graph-3d is the canonical way to ask "who knows whom" and "who connects me to X."
 
@@ -154,7 +154,7 @@ Both live on `unicorn-postgresql` on centerdeep. They are deliberately separate 
 | `contact_ops_audit` | Audit middleware connection | SELECT/INSERT on `action_event` only |
 | `contact_ops_ro` | Read-only operators | SELECT on everything |
 
-Connection string: `postgresql+asyncpg://contact_ops_app@unicorn-postgresql:5432/contact_ops_db?ssl=disable` (per Aaron's `project_uc_cloud_postgres_no_ssl.md` — no SSL internally).
+Connection string: `postgresql+asyncpg://contact_ops_app@unicorn-postgresql:5432/contact_ops_db?ssl=disable` (per Aaron's `project_uc_cloud_postgres_no_ssl.md`, no SSL internally).
 
 ### 3.3 Extensions
 
@@ -192,7 +192,7 @@ Full DDL in design doc §4.1 (lines 361-1568). Summary:
 ### 3.5 Key invariants
 
 - **`persons.canonical_owner_tenant_id` is NOT NULL** on every row from creation. The tenancy is in the schema.
-- **`vcard_uid` is UNIQUE** per person — enables CardDAV round-trips.
+- **`vcard_uid` is UNIQUE** per person, enables CardDAV round-trips.
 - **Email + phone owner XOR** check: every email/phone has exactly one owner (person OR org, never both).
 - **Time-bounded relationships**: every relationship table carries `valid_from` / `valid_until` for bitemporal queries.
 - **Append-only `action_event`**: UPDATE and DELETE are REVOKEd at the role level. Status changes become new events with `supersedes_event_id` linkage.
@@ -240,17 +240,17 @@ Enabling HIPAA on a tenant is forward-only without admin platform-level interven
 ### 4.1 Four tenant kinds
 
 `tenants.kind` is one of:
-- `personal` — an individual's tenant (Aaron's personal address book lives here).
-- `magic_unicorn_internal` — Magic Unicorn LLC tenants (work contacts).
-- `brand` — Brand-owned tenants under MU (Center Deep, Majiks, GFL).
-- `white_label_customer` — Independent customer tenants on the platform.
+- `personal`, an individual's tenant (Aaron's personal address book lives here).
+- `magic_unicorn_internal`, Magic Unicorn LLC tenants (work contacts).
+- `brand`, Brand-owned tenants under MU (Center Deep, Majiks, GFL).
+- `white_label_customer`, Independent customer tenants on the platform.
 
 ### 4.2 Graph mode
 
 `tenants.graph_mode` is one of:
-- `shared` — single global FalkorDB graph, filtered by org_id property. Dev only.
-- `per_org_graph` (default) — one FalkorDB graph per tenant in the shared FalkorDB instance, named `contact_ops__<tenant_slug>`.
-- `per_org_instance` — dedicated FalkorDB container under Docker Compose. Premium isolation for HIPAA / sensitive tenants.
+- `shared`, single global FalkorDB graph, filtered by org_id property. Dev only.
+- `per_org_graph` (default), one FalkorDB graph per tenant in the shared FalkorDB instance, named `contact_ops__<tenant_slug>`.
+- `per_org_instance`, dedicated FalkorDB container under Docker Compose. Premium isolation for HIPAA / sensitive tenants.
 
 Mirrors the pattern Aaron approved in `project_meeting_ops_brigade_integration.md`.
 
@@ -568,7 +568,7 @@ CardDAV server endpoint at `carddav.contacts.magicunicorn.dev/<user>/<tenant>/` 
 - Per-tenant address books per user.
 - CLIENTPIDMAP for multi-source round-trip fidelity (iCloud / Google / Contact-Ops as sources, no conflicts).
 - ETag-based conflict detection. On divergence, both versions land in the Inbox as a conflict pair; never silent overwrite.
-- CardDAV Reconciliation Agent (per_tenant scoping, per-user credentials) handles inbound PUTs and outbound updates with `auto_apply_high` for user-originated changes (the user themselves edited their contact on their iPhone — confidence base 0.97).
+- CardDAV Reconciliation Agent (per_tenant scoping, per-user credentials) handles inbound PUTs and outbound updates with `auto_apply_high` for user-originated changes (the user themselves edited their contact on their iPhone, confidence base 0.97).
 
 Phase 2 deliverable.
 
