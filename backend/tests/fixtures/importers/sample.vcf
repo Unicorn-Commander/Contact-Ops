@@ -1,0 +1,19 @@
+BEGIN:VCARD
+VERSION:4.0
+UID:sample-ios-1
+FN:Jane Example
+N:Example;Jane;;;
+EMAIL;TYPE=home:REMOVED
+TEL;TYPE=cell:+14155550100
+ADR;TYPE=home:;;1 Market St;San Francisco;CA;94105;USA
+CATEGORIES:Friends,Test
+END:VCARD
+BEGIN:VCARD
+VERSION:4.0
+UID:sample-ios-2
+FN:John Work
+N:Work;John;;;
+EMAIL;TYPE=work:REMOVED
+ORG:Example Co
+TITLE:Director
+END:VCARD
