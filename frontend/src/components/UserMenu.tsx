@@ -1,33 +1,34 @@
-import { DropDownTrigger, DropDownContent, DropDownItem } from "@/components/ui/dropdown-menu";
+import {
+  DropDownMenu,
+  DropDownTrigger,
+  DropDownContent,
+  DropDownItem,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "react-oidc-context";
 import { Settings, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 
 export function UserMenu() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, signoutRedirect } = useAuth();
 
   if (isLoading) {
     return (
-      <DropDownTrigger asChild>
-        <Button variant="outline" size="icon" className="h-9 w-9">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback>...</AvatarFallback>
-          </Avatar>
-        </Button>
-      </DropDownTrigger>
+      <Button variant="outline" size="icon" className="h-9 w-9" disabled>
+        <Avatar className="h-8 w-8">
+          <AvatarFallback>...</AvatarFallback>
+        </Avatar>
+      </Button>
     );
   }
 
   if (!isAuthenticated || !user) {
     return (
-      <DropDownTrigger asChild>
-        <Button variant="outline" size="icon" className="h-9 w-9">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback>?</AvatarFallback>
-          </Avatar>
-        </Button>
-      </DropDownTrigger>
+      <Button variant="outline" size="icon" className="h-9 w-9" disabled>
+        <Avatar className="h-8 w-8">
+          <AvatarFallback>?</AvatarFallback>
+        </Avatar>
+      </Button>
     );
   }
 
@@ -39,44 +40,55 @@ export function UserMenu() {
   const initials = name.charAt(0).toUpperCase();
 
   return (
-    <>
+    <DropDownMenu>
       <DropDownTrigger asChild>
         <Button variant="outline" size="icon" className="h-9 w-9">
           <Avatar className="h-8 w-8">
             <AvatarImage src={picture} />
-            <AvatarFallback>{initials}</AvatarFallback>
+            <AvatarFallback className="bg-violet-500 text-white text-sm font-medium">
+              {initials}
+            </AvatarFallback>
           </Avatar>
         </Button>
       </DropDownTrigger>
-      <DropDownContent className="w-48 p-0" sideOffset={4} align="end">
+      <DropDownContent
+        className="w-56 p-0 rounded-md border bg-popover shadow-md"
+        sideOffset={6}
+        align="end"
+      >
         <div className="space-y-1">
-          <div className="flex items-center space-x-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-500/20 text-violet-500">
+          <div className="flex items-center space-x-3 p-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-violet-500 font-semibold">
               {initials}
             </div>
-            <div>
-              <p className="font-medium">{name}</p>
-              <p className="text-xs text-muted-foreground">
-                {email}
-              </p>
-              {ucUid && (
-                <p className="text-xs text-muted-foreground font-mono">
-                  UCID: {ucUid}
+            <div className="min-w-0">
+              <p className="font-medium truncate">{name}</p>
+              {email ? (
+                <p className="text-xs text-muted-foreground truncate">{email}</p>
+              ) : null}
+              {ucUid ? (
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {ucUid}
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
-          <div className="h-px bg-muted"></div>
-          <DropDownItem>
+          <div className="h-px bg-muted" />
+          <DropDownItem className="flex w-full items-center px-3 py-2 text-sm cursor-pointer rounded-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground">
             <Settings className="mr-2 h-4 w-4" />
             Settings
           </DropDownItem>
-          <DropDownItem>
+          <DropDownItem
+            onSelect={() => {
+              void signoutRedirect();
+            }}
+            className="flex w-full items-center px-3 py-2 text-sm cursor-pointer rounded-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+          >
             <LogOut className="mr-2 h-4 w-4" />
             Sign out
           </DropDownItem>
         </div>
       </DropDownContent>
-    </>
+    </DropDownMenu>
   );
 }
