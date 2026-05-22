@@ -42,7 +42,7 @@ def _import_phase_2_modules() -> None:
                 raise
 
 
-_PHASE_3_MODULES = ("agent_admin",)
+_PHASE_3_MODULES = ("agent_admin", "inbox")
 
 
 def _import_phase_3_modules() -> None:
