@@ -16,16 +16,17 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from contact_ops.schemas.inbox import ListPendingProposalsInput
 from contact_ops.services.inbox_mutations import (
-    InboxMutationError,
     UNDO_WINDOW,
+    InboxMutationError,
     approve_proposal,
     bulk_approve,
     reject_proposal,
@@ -35,13 +36,11 @@ from contact_ops.services.inbox_mutations import (
 from contact_ops.services.inbox_query import (
     list_pending_proposals,
 )
-from contact_ops.schemas.inbox import ListPendingProposalsInput
 from contact_ops.services.suppression_rules import (
     create_suppression_rule,
     is_suppressed,
     list_suppression_rules,
 )
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -329,7 +328,7 @@ async def test_reject_proposal_undo_within_window(db_session: AsyncSession) -> N
     person = await _make_person(db_session, tenant_id=tenant, display_name="Undo Test")
     eid = await _make_proposal(
         db_session, tenant_id=tenant, aggregate_id=person,
-        status="applied", applied_at=datetime.now(timezone.utc) - timedelta(seconds=5),
+        status="applied", applied_at=datetime.now(UTC) - timedelta(seconds=5),
     )
 
     result = await reject_proposal(
@@ -354,7 +353,7 @@ async def test_reject_proposal_undo_outside_window(db_session: AsyncSession) -> 
     eid = await _make_proposal(
         db_session, tenant_id=tenant, aggregate_id=person,
         status="applied",
-        applied_at=datetime.now(timezone.utc) - (UNDO_WINDOW + timedelta(seconds=10)),
+        applied_at=datetime.now(UTC) - (UNDO_WINDOW + timedelta(seconds=10)),
     )
     with pytest.raises(InboxMutationError) as exc:
         await reject_proposal(
@@ -374,7 +373,7 @@ async def test_snooze_proposal_sets_snoozed_until(db_session: AsyncSession) -> N
     tenant = await _make_tenant(db_session)
     person = await _make_person(db_session, tenant_id=tenant, display_name="Snooze Test")
     eid = await _make_proposal(db_session, tenant_id=tenant, aggregate_id=person)
-    target = datetime.now(timezone.utc) + timedelta(hours=2)
+    target = datetime.now(UTC) + timedelta(hours=2)
 
     result = await snooze_proposal(
         db=db_session, tenant_id=tenant, reviewer_id=uuid.uuid4(),
@@ -396,7 +395,7 @@ async def test_snooze_in_past_rejected(db_session: AsyncSession) -> None:
     tenant = await _make_tenant(db_session)
     person = await _make_person(db_session, tenant_id=tenant, display_name="Past Snooze")
     eid = await _make_proposal(db_session, tenant_id=tenant, aggregate_id=person)
-    past = datetime.now(timezone.utc) - timedelta(minutes=5)
+    past = datetime.now(UTC) - timedelta(minutes=5)
     with pytest.raises(InboxMutationError) as exc:
         await snooze_proposal(
             db=db_session, tenant_id=tenant, reviewer_id=uuid.uuid4(),
@@ -414,7 +413,7 @@ async def test_conflict_trigger_clears_snooze(db_session: AsyncSession) -> None:
     person = await _make_person(db_session, tenant_id=tenant, display_name="Conflict Trigger")
     snoozed_eid = await _make_proposal(
         db_session, tenant_id=tenant, aggregate_id=person,
-        snoozed_until=datetime.now(timezone.utc) + timedelta(hours=1),
+        snoozed_until=datetime.now(UTC) + timedelta(hours=1),
     )
     other_eid = await _make_proposal(
         db_session, tenant_id=tenant, aggregate_id=person,
@@ -454,7 +453,7 @@ async def test_revert_auto_applied_within_window(db_session: AsyncSession) -> No
     person = await _make_person(db_session, tenant_id=tenant, display_name="Revert Test")
     eid = await _make_proposal(
         db_session, tenant_id=tenant, aggregate_id=person,
-        status="applied", applied_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+        status="applied", applied_at=datetime.now(UTC) - timedelta(seconds=30),
     )
     result = await revert_auto_applied(
         db=db_session, tenant_id=tenant, reviewer_id=uuid.uuid4(),
@@ -476,7 +475,7 @@ async def test_revert_auto_applied_outside_window(db_session: AsyncSession) -> N
     eid = await _make_proposal(
         db_session, tenant_id=tenant, aggregate_id=person,
         status="applied",
-        applied_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        applied_at=datetime.now(UTC) - timedelta(minutes=10),
     )
     with pytest.raises(InboxMutationError) as exc:
         await revert_auto_applied(
@@ -527,7 +526,7 @@ async def test_suppression_list_excludes_expired(db_session: AsyncSession) -> No
         db=db_session, tenant_id=tenant, agent_slug="enrichment",
         aggregate_type="person", aggregate_id=person, field_name="x",
         created_by=uuid.uuid4(),
-        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        expires_at=datetime.now(UTC) - timedelta(days=1),
     )
     rules = await list_suppression_rules(db=db_session, tenant_id=tenant)
     assert len(rules) == 0
@@ -550,7 +549,7 @@ async def test_bulk_approve_partial_failure(db_session: AsyncSession) -> None:
     pids.append(
         await _make_proposal(
             db_session, tenant_id=tenant, aggregate_id=person, status="applied",
-            applied_at=datetime.now(timezone.utc),
+            applied_at=datetime.now(UTC),
         )
     )
 

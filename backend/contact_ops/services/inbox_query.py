@@ -17,7 +17,9 @@ organizations, photos, tenants, proposal_conflict, and prov_activities.
 RLS is enforced by the existing app role's policies on action_event
 (set during request setup by the FastAPI tenant middleware).
 """
-# ruff: noqa: E501
+# ruff: noqa: E501, S608
+# S608 OK: f-strings build WHERE clauses from a closed allowlist; every value
+# is bound through params. See _build_where for the construction.
 
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ import base64
 import json
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from redis.asyncio import Redis

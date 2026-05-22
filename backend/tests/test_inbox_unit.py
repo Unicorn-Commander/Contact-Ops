@@ -12,7 +12,7 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -97,7 +97,7 @@ def test_revert_auto_applied_marked_destructive():
 
 
 def test_cursor_encode_decode_roundtrip():
-    proposed_at = datetime(2026, 5, 22, 14, 30, 0, tzinfo=timezone.utc)
+    proposed_at = datetime(2026, 5, 22, 14, 30, 0, tzinfo=UTC)
     event_id = uuid.uuid4()
     cursor = _encode_cursor(proposed_at=proposed_at, event_id=event_id)
     out_t, out_e = _decode_cursor(cursor)
@@ -106,12 +106,12 @@ def test_cursor_encode_decode_roundtrip():
 
 
 def test_decode_cursor_rejects_garbage():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         _decode_cursor("not-base64!!!")
 
 
 def test_bucket_for_truncates_to_midnight_utc():
-    dt = datetime(2026, 5, 22, 17, 33, 45, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 22, 17, 33, 45, tzinfo=UTC)
     bucket = _bucket_for(dt)
     assert bucket.hour == 0
     assert bucket.minute == 0
@@ -128,7 +128,7 @@ def test_bucket_for_naive_datetime_assumed_utc():
 def test_cluster_id_is_deterministic():
     tenant = uuid.UUID("11111111-1111-1111-1111-111111111111")
     agg = uuid.UUID("22222222-2222-2222-2222-222222222222")
-    bucket = datetime(2026, 5, 22, 0, 0, 0, tzinfo=timezone.utc)
+    bucket = datetime(2026, 5, 22, 0, 0, 0, tzinfo=UTC)
     a = _cluster_id_for(tenant_id=tenant, aggregate_id=agg, bucket=bucket)
     b = _cluster_id_for(tenant_id=tenant, aggregate_id=agg, bucket=bucket)
     assert a == b
@@ -136,7 +136,7 @@ def test_cluster_id_is_deterministic():
 
 def test_cluster_id_differs_across_tenants():
     agg = uuid.uuid4()
-    bucket = datetime(2026, 5, 22, 0, 0, 0, tzinfo=timezone.utc)
+    bucket = datetime(2026, 5, 22, 0, 0, 0, tzinfo=UTC)
     a = _cluster_id_for(tenant_id=uuid.uuid4(), aggregate_id=agg, bucket=bucket)
     b = _cluster_id_for(tenant_id=uuid.uuid4(), aggregate_id=agg, bucket=bucket)
     assert a != b
@@ -356,12 +356,12 @@ def test_bulk_count_of_helper():
 
 
 def test_list_input_rejects_extra_fields():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         ListPendingProposalsInput(unexpected_arg=True)  # type: ignore[call-arg]
 
 
 def test_approve_input_requires_proposal_id_and_tier():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         ApproveProposalInput(tier_assigned=1)  # type: ignore[call-arg]
 
 
@@ -375,18 +375,18 @@ def test_approve_input_accepts_field_choices():
 
 
 def test_bulk_approve_input_rejects_empty_list():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         BulkApproveInput(proposal_ids=[])
 
 
 def test_bulk_approve_input_rejects_over_100():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         BulkApproveInput(proposal_ids=[uuid.uuid4() for _ in range(101)])
 
 
 def test_snooze_input_required_fields():
     payload = SnoozeProposalInput(
         proposal_id=uuid.uuid4(),
-        snooze_until=datetime.now(timezone.utc) + timedelta(hours=2),
+        snooze_until=datetime.now(UTC) + timedelta(hours=2),
     )
     assert payload.snooze_reason == "custom"

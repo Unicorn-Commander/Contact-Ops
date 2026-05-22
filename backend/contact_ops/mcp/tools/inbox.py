@@ -29,7 +29,7 @@ import uuid
 from redis.asyncio import Redis
 
 from contact_ops.core.config import get_settings
-from contact_ops.mcp.errors import ToolError, VALIDATION_FAILED
+from contact_ops.mcp.errors import VALIDATION_FAILED, ToolError
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import register
 from contact_ops.schemas.inbox import (

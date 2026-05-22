@@ -15,6 +15,9 @@ A suppression rule says "don't show me proposals from <agent_slug> about
 Expires_at default = +90 days. Rule cleanup is incidental — old rows are
 kept for audit but ignored by ``is_suppressed``.
 """
+# ruff: noqa: S608
+# S608 OK: list_suppression_rules composes its WHERE from a closed
+# allowlist of fragments; all values go through bind params.
 
 from __future__ import annotations
 

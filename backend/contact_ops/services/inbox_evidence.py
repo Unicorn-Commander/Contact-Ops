@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -85,7 +84,6 @@ async def get_proposal_evidence(
         return None
 
     aggregate_id = uuid.UUID(str(row["aggregate_id"]))
-    aggregate_type = str(row["aggregate_type"])
     evidence_pack_id = (
         uuid.UUID(str(row["evidence_pack_id"])) if row["evidence_pack_id"] else None
     )

@@ -31,6 +31,7 @@ calibration histograms (the Calibration Daemon filters on
 ``decision_payload.tier_at_creation IS NOT NULL`` which we set, but
 the ``_seed`` marker is its filter to ignore demo data).
 """
+# ruff: noqa: E501, S311, T201, B007
 
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ import os
 import random
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -256,7 +257,7 @@ def _insert_action_event(
             "decision_payload": json.dumps(decision_payload, default=str),
             "reversibility": reversibility,
             "tier": tier,
-            "proposed_at": (proposed_at or datetime.now(timezone.utc)),
+            "proposed_at": (proposed_at or datetime.now(UTC)),
             "applied_at": applied_at,
             "snoozed_until": snoozed_until,
         },
@@ -291,7 +292,7 @@ def seed(tenant_id: uuid.UUID, *, reset: bool, owner_user_id: str) -> dict[str, 
             org = _ensure_demo_org(conn, tenant_id)
 
             n = 0
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             # 12 single-shot proposals, one per agent type, range of confidences
             confidences = [0.42, 0.55, 0.68, 0.73, 0.79, 0.82, 0.86, 0.88, 0.91, 0.94, 0.96, 0.98]
