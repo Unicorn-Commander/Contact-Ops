@@ -200,9 +200,13 @@ from contact_ops.models.acl_grant import AclGrant
 from contact_ops.models.agent_registry import AgentRegistry
 from contact_ops.models.address import PostalAddress
 from contact_ops.models.email import Email
+from contact_ops.models.fact import Fact
+from contact_ops.models.field_provenance import FieldProvenance
 from contact_ops.models.identifier import Identifier
 from contact_ops.models.im_handle import IMHandle
 from contact_ops.models.media_asset import MediaAsset
+from contact_ops.models.merge_candidate import MergeCandidate
+from contact_ops.models.merge_history import MergeHistory
 from contact_ops.models.organization_tenant_membership import OrganizationTenantMembership
 from contact_ops.models.person_alias import PersonAlias
 from contact_ops.models.person_org_role import PersonOrgRole
@@ -210,6 +214,8 @@ from contact_ops.models.person_person_relation import PersonPersonRelation
 from contact_ops.models.person_tenant_membership import PersonTenantMembership
 from contact_ops.models.phone import Phone
 from contact_ops.models.photo import Photo
+from contact_ops.models.prov_activity import ProvActivity
+from contact_ops.models.source import Source
 from contact_ops.models.tag import Tag
 from contact_ops.models.url import Url
 from contact_ops.models.voice_fingerprint import VoiceFingerprint
@@ -228,7 +234,11 @@ __all__ = [
     "PersonAlias",
     "PersonPersonRelation",
     "AgentRegistry",
+    "Fact",
+    "FieldProvenance",
     "MediaAsset",
+    "MergeCandidate",
+    "MergeHistory",
     "OrganizationTenantMembership",
     "PersonTenantMembership",
     "Photo",
@@ -236,6 +246,8 @@ __all__ = [
     "Identifier",
     "IMHandle",
     "PersonOrgRole",
+    "ProvActivity",
+    "Source",
     "Tag",
     "Url",
     "VoiceFingerprint",
