@@ -3,204 +3,85 @@ Health check endpoints for Contact-Ops API.
 
 Provides endpoints for Kubernetes probes and monitoring:
 - /health - Basic health check
-- /health/ready - Readiness probe (checks dependencies)
+- /health/ready - Readiness probe (checks all downstream dependencies)
 - /health/live - Liveness probe
 """
 
-from datetime import datetime
+from __future__ import annotations
+
+import time as _time
+from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import structlog
 from fastapi import APIRouter, Response, status
 
 from contact_ops.core.config import get_settings
+from contact_ops.core.database import engine
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
+_KEYCLOAK_CACHE: dict[str, Any] = {"data": None, "expires": 0.0}
+
 
 @router.get(
     "",
     summary="Basic health check",
-    description="Returns basic health status of the API service.",
     response_model=dict[str, Any],
 )
 async def health_check() -> dict[str, Any]:
-    """
-    Basic health check endpoint.
-
-    Returns the service status and basic information.
-    This endpoint does not check dependencies.
-    """
+    """Basic health check — no dependency probes."""
     settings = get_settings()
-
     return {
         "status": "healthy",
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
 @router.get(
     "/ready",
     summary="Readiness probe",
-    description="Checks if the service is ready to accept traffic. Validates database and Redis connections.",
     response_model=dict[str, Any],
 )
 async def readiness_check(response: Response) -> dict[str, Any]:
-    """
-    Readiness probe for Kubernetes.
+    """Readiness probe — checks all downstream dependencies.
 
-    Checks that all required dependencies are available:
-    - Database connection
-    - Redis connection
-
-    Returns 200 if ready, 503 if not ready.
+    Returns 200 if ready, 503 if any check fails.
     """
     settings = get_settings()
     checks: dict[str, dict[str, Any]] = {}
     all_healthy = True
 
-    # Check database connection
-    try:
-        # Import here to avoid circular imports and allow graceful degradation
-        from sqlalchemy import text
-        from sqlalchemy.ext.asyncio import create_async_engine
+    # Database — use shared engine, not a fresh one per call.
+    checks["database"] = await _check_postgres(engine)
 
-        engine = create_async_engine(
-            settings.DATABASE_URL,
-            pool_pre_ping=True,
-            pool_size=1,
-        )
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"), _connect_timeout=3)
-        await engine.dispose()
+    # Redis
+    checks["redis"] = await _check_redis(settings.REDIS_URL)
 
-        checks["database"] = {
-            "status": "healthy",
-            "latency_ms": None,  # Could add timing here
-        }
-    except Exception as e:
-        logger.error("Database health check failed", error=str(e))
-        checks["database"] = {
-            "status": "unhealthy",
-            "error": str(e),
-        }
-        all_healthy = False
+    # Qdrant
+    checks["qdrant"] = await _check_qdrant(settings.QDRANT_URL)
 
-    # Check Redis connection
-    try:
-        import redis.asyncio as aioredis
+    # FalkorDB
+    checks["falkordb"] = await _check_falkordb(settings.FALKORDB_URL)
 
-        redis_client = aioredis.from_url(
-            settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-        )
-        await redis_client.ping()
-        await redis_client.close()
+    # Garage
+    checks["garage"] = await _check_garage(
+        settings.GARAGE_ENDPOINT, settings.GARAGE_ADMIN_ENDPOINT
+    )
 
-        checks["redis"] = {
-            "status": "healthy",
-            "latency_ms": None,
-        }
-    except Exception as e:
-        logger.error("Redis health check failed", error=str(e))
-        checks["redis"] = {
-            "status": "unhealthy",
-            "error": str(e),
-        }
-        all_healthy = False
+    # Keycloak
+    if settings.KEYCLOAK_ISSUER:
+        checks["keycloak"] = await _check_keycloak(settings.KEYCLOAK_ISSUER)
 
-    # Check Qdrant vector search
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.QDRANT_URL}/health")
-            if resp.status_code == 200:
-                checks["qdrant"] = {"status": "healthy", "latency_ms": None}
-            else:
-                checks["qdrant"] = {"status": "unhealthy", "error": f"status={resp.status_code}"}
-                all_healthy = False
-    except Exception as e:
-        logger.error("Qdrant health check failed", error=str(e))
-        checks["qdrant"] = {
-            "status": "unhealthy",
-            "error": str(e),
-        }
-        all_healthy = False
-
-    # Check FalkorDB (Redis-based graph)
-    try:
-        import redis.asyncio as aioredis
-
-        falkor_db_num = 6  # FalkorDB typically uses db 6
-        falkor_url = settings.FALKORDB_URL.replace(":6379", f":6379/{falkor_db_num}")
-        falkor_client = aioredis.from_url(
-            falkor_url,
-            encoding="utf-8",
-            decode_responses=True,
-        )
-        await falkor_client.ping()
-        await falkor_client.close()
-
-        checks["falkor_db"] = {
-            "status": "healthy",
-            "latency_ms": None,
-        }
-    except Exception as e:
-        logger.error("FalkorDB health check failed", error=str(e))
-        checks["falkor_db"] = {
-            "status": "unhealthy",
-            "error": str(e),
-        }
-        all_healthy = False
-
-    # Check Garage object storage
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.GARAGE_ENDPOINT}/minio/health/")
-            if resp.status_code == 200:
-                checks["garage"] = {"status": "healthy", "latency_ms": None}
-            else:
-                checks["garage"] = {"status": "unhealthy", "error": f"status={resp.status_code}"}
-                all_healthy = False
-    except Exception as e:
-        logger.error("Garage health check failed", error=str(e))
-        checks["garage"] = {
-            "status": "unhealthy",
-            "error": str(e),
-        }
-        all_healthy = False
-
-    # Check Keycloak (if configured)
-    if settings.KEYCLOAK_REALM_URL:
-        try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(
-                    f"{settings.KEYCLOAK_REALM_URL}/.well-known/openid-configuration"
-                )
-                if resp.status_code == 200:
-                    checks["keycloak"] = {"status": "healthy", "latency_ms": None}
-                else:
-                    checks["keycloak"] = {"status": "unhealthy", "error": f"status={resp.status_code}"}
-                    all_healthy = False
-        except Exception as e:
-            logger.error("Keycloak health check failed", error=str(e))
-            checks["keycloak"] = {
-                "status": "unhealthy",
-                "error": str(e),
-            }
+    for v in checks.values():
+        if v.get("status") != "healthy":
             all_healthy = False
 
-    # Set response status based on health
     if not all_healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
@@ -208,24 +89,155 @@ async def readiness_check(response: Response) -> dict[str, Any]:
         "status": "ready" if all_healthy else "not_ready",
         "service": settings.APP_NAME,
         "checks": checks,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
 @router.get(
     "/live",
     summary="Liveness probe",
-    description="Simple liveness check. Returns 200 if the process is alive.",
     response_model=dict[str, Any],
 )
 async def liveness_check() -> dict[str, Any]:
-    """
-    Liveness probe for Kubernetes.
-
-    Simple check that the process is alive and responding.
-    This should always return 200 unless the process is deadlocked.
-    """
     return {
         "status": "alive",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-service check helpers
+# ---------------------------------------------------------------------------
+
+
+async def _check_postgres(db_engine) -> dict[str, Any]:
+    start = _time.monotonic()
+    try:
+        from sqlalchemy import text
+
+        async with db_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        return {"status": "healthy", "latency_ms": latency_ms}
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("database_health_check_failed", error=str(exc))
+        return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+
+async def _check_redis(redis_url: str) -> dict[str, Any]:
+    start = _time.monotonic()
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(redis_url, socket_connect_timeout=3)
+        await client.ping()
+        await client.close()
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        return {"status": "healthy", "latency_ms": latency_ms}
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("redis_health_check_failed", error=str(exc))
+        return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+
+async def _check_qdrant(qdrant_url: str) -> dict[str, Any]:
+    start = _time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{qdrant_url.rstrip('/')}/")
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        if resp.status_code == 200:
+            return {"status": "healthy", "latency_ms": latency_ms}
+        return {
+            "status": "unhealthy",
+            "error": f"status={resp.status_code}",
+            "latency_ms": latency_ms,
+        }
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("qdrant_health_check_failed", error=str(exc))
+        return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+
+async def _check_falkordb(falkordb_url: str) -> dict[str, Any]:
+    """FalkorDB is Redis with the GRAPH module — PING is universal.
+
+    Does NOT assume any specific db number.
+    """
+    start = _time.monotonic()
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(falkordb_url, socket_connect_timeout=3)
+        await client.ping()
+        await client.close()
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        return {"status": "healthy", "latency_ms": latency_ms}
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("falkordb_health_check_failed", error=str(exc))
+        return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+
+async def _check_garage(
+    s3_endpoint: str, admin_endpoint: str
+) -> dict[str, Any]:
+    """Check Garage health via admin port /health first, fall back to S3 HEAD."""
+    start = _time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{admin_endpoint.rstrip('/')}/health")
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        if resp.status_code == 200:
+            return {"status": "healthy", "latency_ms": latency_ms}
+    except Exception as exc:
+        logger.debug("garage_admin_health_failed_trying_s3", error=str(exc))
+
+    # Fallback: HEAD the S3 endpoint
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.head(f"{s3_endpoint.rstrip('/')}/")
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        if resp.status_code < 500:
+            return {"status": "healthy", "latency_ms": latency_ms}
+        return {
+            "status": "unhealthy",
+            "error": f"status={resp.status_code}",
+            "latency_ms": latency_ms,
+        }
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("garage_health_check_failed", error=str(exc))
+        return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+
+async def _check_keycloak(issuer_url: str) -> dict[str, Any]:
+    """Fetch .well-known/openid-configuration. Cache for 60s."""
+    global _KEYCLOAK_CACHE
+    now = _time.time()
+    if _KEYCLOAK_CACHE["data"] is not None and now < _KEYCLOAK_CACHE["expires"] - 5:
+        return _KEYCLOAK_CACHE["data"]  # type: ignore[return-value]
+
+    start = _time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(
+                f"{issuer_url.rstrip('/')}/.well-known/openid-configuration"
+            )
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        if resp.status_code == 200:
+            result = {"status": "healthy", "latency_ms": latency_ms}
+        else:
+            result = {
+                "status": "unhealthy",
+                "error": f"status={resp.status_code}",
+                "latency_ms": latency_ms,
+            }
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("keycloak_health_check_failed", error=str(exc))
+        result = {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+    _KEYCLOAK_CACHE = {"data": result, "expires": now + 60}
+    return result

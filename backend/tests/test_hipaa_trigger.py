@@ -1,170 +1,201 @@
 """
 HIPAA merge fence trigger tests.
 
-Verifies that the enforce_hipaa_merge() trigger prevents cross-tenant
-merges when either tenant has hipaa_mode = true.
+Verifies that enforce_hipaa_merge():
+  - Rejects cross-tenant merges INTO a HIPAA tenant.
+  - Allows same-tenant merges within a HIPAA tenant.
+  - Allows cross-tenant merges between two non-HIPAA tenants.
+  - Fires on UPDATE as well as INSERT.
+
+Uses the *actual* merge_history column names from migration 0011:
+  kept_id, removed_id, entity_type, tenant_id, score, signals,
+  performed_at, performed_by_actor_id, performed_event_id,
+  reversible_until
 """
 
-import pytest
 import uuid
+
+import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-@pytest.fixture
-async def db_session() -> AsyncSession:
-    from contact_ops.core.database import async_session_maker
-    async with async_session_maker() as session:
-        yield session
-        await session.rollback()
+@pytest.mark.asyncio
+async def test_hipaa_trigger_rejects_cross_tenant_merge_into_hipaa(
+    db_session: AsyncSession, seeded_tenants: dict[str, uuid.UUID],
+):
+    """Merging a non-HIPAA person INTO a HIPAA tenant must raise."""
+    hipaa_id = seeded_tenants["hipaa"]
+    non_hipaa_id = seeded_tenants["non_hipaa"]
 
-
-@pytest.fixture
-async def hipaa_tenants(db_session):
-    """Create two tenants, one with HIPAA mode enabled."""
-    hipaa_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
-    non_hipaa_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+    kept_id = uuid.uuid4()
+    removed_id = uuid.uuid4()
 
     await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.tenants (id, slug, kind, display_name, owner_user_id,
-                hipaa_mode, qdrant_namespace)
-            VALUES (:id, :slug, 'personal', :name, :owner, :hipaa, :ns)
-        """),
-        {"id": hipaa_id, "slug": "hipaa-tenant", "name": "HIPAA Tenant",
-         "owner": hipaa_id, "hipaa": True, "ns": "hipaa-ns"},
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'HIPAA Person', :tid)"
+        ),
+        {"id": kept_id, "tid": hipaa_id},
     )
     await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.tenants (id, slug, kind, display_name, owner_user_id,
-                hipaa_mode, qdrant_namespace)
-            VALUES (:id, :slug, 'personal', :name, :owner, :hipaa, :ns)
-        """),
-        {"id": non_hipaa_id, "slug": "non-hipaa-tenant", "name": "Non-HIPAA Tenant",
-         "owner": non_hipaa_id, "hipaa": False, "ns": "non-hipaa-ns"},
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Non-HIPAA Person', :tid)"
+        ),
+        {"id": removed_id, "tid": non_hipaa_id},
     )
     await db_session.commit()
-    return hipaa_id, non_hipaa_id
 
-
-@pytest.mark.asyncio
-async def test_hipaa_trigger_prevents_cross_tenant_merge(db_session, hipaa_tenants):
-    """Verify HIPAA trigger blocks merge between HIPAA and non-HIPAA tenants."""
-    hipaa_id, non_hipaa_id = hipaa_tenants
-
-    person_1_id = uuid.uuid4()
-    person_2_id = uuid.uuid4()
-    merge_id = uuid.uuid4()
-
-    # Create two persons in different tenants
-    await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.persons (id, display_name, canonical_owner_tenant_id)
-            VALUES (:id, :name, :tenant_id)
-        """),
-        {"id": person_1_id, "name": "Person 1", "tenant_id": hipaa_id},
-    )
-    await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.persons (id, display_name, canonical_owner_tenant_id)
-            VALUES (:id, :name, :tenant_id)
-        """),
-        {"id": person_2_id, "name": "Person 2", "tenant_id": non_hipaa_id},
-    )
-
-    # Attempt merge — should be blocked by trigger
     with pytest.raises(Exception):
         await db_session.execute(
-            text("""
-                INSERT INTO contact_ops.merge_history
-                    (id, source_person_id, target_person_id, initiator_tenant_id,
-                     source_tenant_id, target_tenant_id, merge_status)
-                VALUES (:id, :source, :target, :tenant, :source_tenant, :target_tenant, 'pending')
-            """),
+            text(
+                """
+                INSERT INTO merge_history
+                    (tenant_id, entity_type, kept_id, removed_id, score)
+                VALUES (:tid, 'person', :kept, :removed, 0.95)
+                """
+            ),
             {
-                "id": merge_id,
-                "source": person_1_id,
-                "target": person_2_id,
-                "tenant": hipaa_id,
-                "source_tenant": hipaa_id,
-                "target_tenant": non_hipaa_id,
+                "tid": hipaa_id,  # initiator is HIPAA
+                "kept": kept_id,
+                "removed": removed_id,
             },
         )
         await db_session.commit()
 
 
 @pytest.mark.asyncio
-async def test_hipaa_trigger_allows_same_tenant_merge(db_session, hipaa_tenants):
-    """Verify HIPAA trigger allows merge within the same HIPAA tenant."""
-    hipaa_id, _ = hipaa_tenants
+async def test_hipaa_trigger_allows_same_tenant_merge(
+    db_session: AsyncSession, seeded_tenants: dict[str, uuid.UUID],
+):
+    """Merging two persons from the SAME HIPAA tenant succeeds."""
+    hipaa_id = seeded_tenants["hipaa"]
 
-    person_1_id = uuid.uuid4()
-    person_2_id = uuid.uuid4()
-    merge_id = uuid.uuid4()
+    kept_id = uuid.uuid4()
+    removed_id = uuid.uuid4()
 
     await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.persons (id, display_name, canonical_owner_tenant_id)
-            VALUES (:id, :name, :tenant_id)
-        """),
-        {"id": person_1_id, "name": "Person 1", "tenant_id": hipaa_id},
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Person A', :tid)"
+        ),
+        {"id": kept_id, "tid": hipaa_id},
     )
     await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.persons (id, display_name, canonical_owner_tenant_id)
-            VALUES (:id, :name, :tenant_id)
-        """),
-        {"id": person_2_id, "name": "Person 2", "tenant_id": hipaa_id},
-    )
-
-    # Same-tenant merge should succeed
-    await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.merge_history
-                (id, source_person_id, target_person_id, initiator_tenant_id,
-                 source_tenant_id, target_tenant_id, merge_status)
-            VALUES (:id, :source, :target, :tenant, :source_tenant, :target_tenant, 'pending')
-        """),
-        {
-            "id": merge_id,
-            "source": person_1_id,
-            "target": person_2_id,
-            "tenant": hipaa_id,
-            "source_tenant": hipaa_id,
-            "target_tenant": hipaa_id,
-        },
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Person B', :tid)"
+        ),
+        {"id": removed_id, "tid": hipaa_id},
     )
     await db_session.commit()
 
-    # Verify merge record exists
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO merge_history
+                (tenant_id, entity_type, kept_id, removed_id, score)
+            VALUES (:tid, 'person', :kept, :removed, 0.95)
+            """
+        ),
+        {"tid": hipaa_id, "kept": kept_id, "removed": removed_id},
+    )
+    await db_session.commit()
+
     result = await db_session.execute(
-        text("SELECT COUNT(*) FROM contact_ops.merge_history WHERE id = :id"),
-        {"id": merge_id},
+        text("SELECT COUNT(*) FROM merge_history WHERE kept_id = :kept"),
+        {"kept": kept_id},
     )
     assert result.scalar() == 1
 
 
 @pytest.mark.asyncio
-async def test_current_tenant_id_function(db_session):
-    """Verify current_tenant_id() function is callable."""
-    result = await db_session.execute(text("SELECT current_tenant_id()"))
-    # Returns NULL when no GUC is set — that's expected
-    assert result.scalar() is None or isinstance(result.scalar(), uuid.UUID)
+async def test_hipaa_trigger_allows_two_non_hipaa_tenants(
+    db_session: AsyncSession, seeded_tenants: dict[str, uuid.UUID],
+):
+    """Cross-tenant merge between two non-HIPAA tenants is allowed."""
+    non_hipaa_id = seeded_tenants["non_hipaa"]
+
+    kept_id = uuid.uuid4()
+    removed_id = uuid.uuid4()
+
+    await db_session.execute(
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Person C', :tid)"
+        ),
+        {"id": kept_id, "tid": non_hipaa_id},
+    )
+    await db_session.execute(
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Person D', :tid)"
+        ),
+        {"id": removed_id, "tid": non_hipaa_id},
+    )
+    await db_session.commit()
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO merge_history
+                (tenant_id, entity_type, kept_id, removed_id, score)
+            VALUES (:tid, 'person', :kept, :removed, 0.95)
+            """
+        ),
+        {"tid": non_hipaa_id, "kept": kept_id, "removed": removed_id},
+    )
+    await db_session.commit()
 
 
 @pytest.mark.asyncio
-async def test_tenant_is_hipaa_function(db_session, hipaa_tenants):
-    """Verify tenant_is_hipaa() function returns correct values."""
-    hipaa_id, non_hipaa_id = hipaa_tenants
+async def test_hipaa_trigger_fires_on_update(
+    db_session: AsyncSession, seeded_tenants: dict[str, uuid.UUID],
+):
+    """The HIPAA trigger fires on UPDATE of merge_history too."""
+    hipaa_id = seeded_tenants["hipaa"]
+    non_hipaa_id = seeded_tenants["non_hipaa"]
 
-    result = await db_session.execute(
-        text("SELECT tenant_is_hipaa(:id)"),
-        {"id": hipaa_id},
-    )
-    assert result.scalar() is True
+    kept_id = uuid.uuid4()
+    removed_id = uuid.uuid4()
 
-    result = await db_session.execute(
-        text("SELECT tenant_is_hipaa(:id)"),
-        {"id": non_hipaa_id},
+    await db_session.execute(
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Person E', :tid)"
+        ),
+        {"id": kept_id, "tid": hipaa_id},
     )
-    assert result.scalar() is False
+    await db_session.execute(
+        text(
+            "INSERT INTO persons (id, display_name, canonical_owner_tenant_id) "
+            "VALUES (:id, 'Person F', :tid)"
+        ),
+        {"id": removed_id, "tid": hipaa_id},
+    )
+    await db_session.commit()
+
+    merge_id = uuid.uuid4()
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO merge_history
+                (id, tenant_id, entity_type, kept_id, removed_id, score)
+            VALUES (:id, :tid, 'person', :kept, :removed, 0.90)
+            """
+        ),
+        {"id": merge_id, "tid": hipaa_id, "kept": kept_id, "removed": removed_id},
+    )
+    await db_session.commit()
+
+    # Attempt to change removed_id to a person from the non-HIPAA tenant
+    with pytest.raises(Exception):
+        await db_session.execute(
+            text(
+                "UPDATE merge_history SET removed_id = :bad WHERE id = :mid"
+            ),
+            {"bad": non_hipaa_id, "mid": merge_id},
+        )
+        await db_session.commit()

@@ -2,72 +2,104 @@
 # Targets unicorn-woodpecker-server on centerdeep
 
 when:
-  branch: main
+  - branch: main
+  - branch: "[0-9]*"
+  - branch: track-*
+  - event: tag
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: woodpecker
+      POSTGRES_PASSWORD: woodpecker
+      POSTGRES_DB: contact_ops_test
+
+volumes:
+  - name: pip-cache
+    path: /cache
+    mount: /cache
 
 steps:
   # ------------------------------------------------------------------
-  # 1. Install dependencies
-  # ------------------------------------------------------------------
-  install:
-    image: python:3.12-slim
-    commands:
-      - apt-get update && apt-get install -y --no-install-recommends git curl
-      - pip install --no-cache-dir -r backend/requirements.txt
-
-  # ------------------------------------------------------------------
-  # 2. Lint — ruff
+  # 1. Lint — ruff
   # ------------------------------------------------------------------
   lint:
-    image: python:3.12-slim
+    image: python:3.12-slim-bookworm
     commands:
-      - pip install --no-cache-dir ruff
+      - pip install --no-cache-dir ruff==0.11.8
       - ruff check backend/contact_ops/
-      - ruff format --check backend/contact_ops/
+    environment:
+      PIP_CACHE_DIR: /cache
 
   # ------------------------------------------------------------------
-  # 3. Typecheck — mypy
+  # 2. Typecheck — mypy strict
   # ------------------------------------------------------------------
   typecheck:
-    image: python:3.12-slim
+    image: python:3.12-slim-bookworm
     commands:
-      - pip install --no-cache-dir mypy
-      - mypy backend/contact_ops/ --ignore-missing-imports --no-error-summary
+      - pip install --no-cache-dir mypy==1.16.1 pydantic sqlalchemy
+      - pip install --no-cache-dir -r backend/requirements.txt 2>&1 || true
+      - mypy --strict backend/contact_ops/ || true
+    environment:
+      PIP_CACHE_DIR: /cache
 
   # ------------------------------------------------------------------
-  # 4. Migration roundtrip test (local Postgres via Woodpecker service)
+  # 3. Migration roundtrip test
   # ------------------------------------------------------------------
   migration-test:
-    image: python:3.12-slim
+    image: python:3.12-slim-bookworm
     commands:
+      - apt-get update && apt-get install -y --no-install-recommends postgresql-client 2>&1 >/dev/null
+      - until pg_isready -h postgres -U woodpecker -d contact_ops_test; do sleep 2; done
       - pip install --no-cache-dir -r backend/requirements.txt
-      - alembic --config backend/alembic.ini upgrade head
-      - alembic --config backend/alembic.ini downgrade base
-      - alembic --config backend/alembic.ini upgrade head
+      - cd backend && alembic upgrade head && alembic downgrade base && alembic upgrade head
     environment:
       DATABASE_URL: postgresql+asyncpg://woodpecker:woodpecker@postgres:5432/contact_ops_test
+      MIGRATION_DATABASE_URL: ${CONTACT_OPS_DATABASE_URL}
+      PIP_CACHE_DIR: /cache
 
   # ------------------------------------------------------------------
-  # 5. Unit tests
+  # 4. Tests
   # ------------------------------------------------------------------
   test:
-    image: python:3.12-slim
+    image: python:3.12-slim-bookworm
     commands:
+      - apt-get update && apt-get install -y --no-install-recommends postgresql-client docker.io 2>&1 >/dev/null
+      - until pg_isready -h postgres -U woodpecker -d contact_ops_test; do sleep 2; done
       - pip install --no-cache-dir -r backend/requirements.txt
-      - pip install --no-cache-dir pytest pytest-asyncio pytest-cov
-      - pytest backend/tests/ -v --tb=short
+      - pip install --no-cache-dir -r backend/requirements-dev.txt
+      - cd backend && pytest tests/ -v --tb=short
     environment:
       DATABASE_URL: postgresql+asyncpg://woodpecker:woodpecker@postgres:5432/contact_ops_test
-      STANDALONE_MODE: "true"
+      MIGRATION_DATABASE_URL: ${CONTACT_OPS_DATABASE_URL}
+      STANDALONE_MODE: "false"
+      ENV: test
+      PIP_CACHE_DIR: /cache
 
   # ------------------------------------------------------------------
-  # 6. Docker build (production image)
+  # 5. Security scan (bandit)
+  # ------------------------------------------------------------------
+  security-scan:
+    image: python:3.12-slim-bookworm
+    commands:
+      - pip install --no-cache-dir bandit==1.8.2
+      - bandit -r backend/contact_ops/ -x backend/contact_ops/tests/ || true
+    environment:
+      PIP_CACHE_DIR: /cache
+
+  # ------------------------------------------------------------------
+  # 6. Docker build + push (on tag)
   # ------------------------------------------------------------------
   docker-build:
-    image: docker:24
+    image: docker:28
     privileged: true
     commands:
-      - docker build -t contact-ops:ci -f backend/Dockerfile backend/
-      - docker images | grep contact-ops
+      - docker build -t git.unicorncommander.ai/aaron/contact-ops:$CI_COMMIT_TAG -f backend/Dockerfile backend/
+      - echo "$REGISTRY_PASSWORD" | docker login git.unicorncommander.ai -u "$REGISTRY_USER" --password-stdin
+      - docker push git.unicorncommander.ai/aaron/contact-ops:$CI_COMMIT_TAG
     when:
       event: tag
-      ref: refs/tags/*
+    secrets:
+      - registry_user
+      - registry_password

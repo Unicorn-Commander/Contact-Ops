@@ -1,89 +1,207 @@
 """
 Append-only action_event tests.
 
-Verifies that the contact_ops_app role cannot UPDATE or DELETE
-from the action_event table (enforced by the migration DDL).
+Verifies that:
+  - The action_event table has the correct columns per the design doc.
+  - The contact_ops_app role can INSERT into action_event.
+  - The contact_ops_app role CANNOT UPDATE or DELETE (append-only enforcement).
+  - All expected indexes from migration 0010 exist.
 """
+
+import uuid as _uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+TEST_TENANT = _uuid.UUID("00000000-0000-0000-0000-000000000001")
 
-@pytest.fixture
-async def db_session() -> AsyncSession:
-    """Create a test database session."""
-    from contact_ops.core.database import async_session_maker
-    async with async_session_maker() as session:
-        yield session
-        await session.rollback()
+REQUIRED_COLUMNS: set[str] = {
+    "event_id", "event_type", "event_version", "tenant_id",
+    "aggregate_type", "aggregate_id", "affected_ids", "payload",
+    "actor", "actor_type", "human_authority", "confidence",
+    "evidence", "rationale", "status", "proposed_at", "applied_at",
+    "approved_by", "reverted_by_event_id", "supersedes_event_id",
+    "valid_from", "valid_to", "content_hash", "prev_event_hash",
+    "signature",
+}
+
+REQUIRED_INDEXES: set[str] = {
+    "ae_tenant_time_idx", "ae_aggregate_idx", "ae_status_idx",
+    "ae_event_type_idx", "ae_actor_gin", "ae_evidence_gin",
+    "ae_human_authority_idx", "ae_inbox_idx", "ae_low_conf_idx",
+    "ae_affected_gin", "ae_supersedes_idx",
+}
 
 
 @pytest.mark.asyncio
-async def test_action_event_table_exists(db_session):
-    """Verify action_event table was created."""
+async def test_action_event_columns_match_design_doc(db_session: AsyncSession):
+    """Every column from the design doc must exist on action_event."""
     result = await db_session.execute(
-        text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'action_event')")
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'action_event'"
+        )
     )
-    assert result.scalar() is True
+    actual = {row[0] for row in result.fetchall()}
+    assert REQUIRED_COLUMNS == actual, (
+        f"Missing: {REQUIRED_COLUMNS - actual}, "
+        f"Extra: {actual - REQUIRED_COLUMNS}"
+    )
+
+
+async def _seed_test_tenant(db_engine):
+    """Ensure the test tenant exists (idempotent). Uses a fresh connection."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+    async with db_engine.connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO tenants (id, slug, kind, display_name, owner_user_id,"
+                " qdrant_namespace, garage_bucket_prefix) VALUES "
+                "(:id, 'test-ae', 'brand', 'AE Test', :owner, 'ae-ns', 'ae-bkt') "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": TEST_TENANT, "owner": TEST_TENANT},
+        )
+        await conn.commit()
 
 
 @pytest.mark.asyncio
-async def test_action_event_insert_works(db_session):
-    """Verify INSERT into action_event works with app role."""
-    import uuid
-    await db_session.execute(
-        text("""
-            INSERT INTO contact_ops.action_event (id, event_type, tenant_id, metadata)
-            VALUES (:id, :event_type, :tenant_id, :metadata)
-        """),
+async def test_action_event_insert_as_audit_role_succeeds(
+    db_engine, db_session_as_audit_role: AsyncSession,
+):
+    """contact_ops_audit can INSERT a fully-populated action_event row."""
+    await _seed_test_tenant(db_engine)
+
+    event_id = _uuid.uuid4()
+    agg_id = _uuid.uuid4()
+    payload = '{"op": "test", "data": 42}'
+    content_hash = b"\x00" * 32
+
+    await db_session_as_audit_role.execute(
+        text(
+            """
+            INSERT INTO action_event
+                (event_id, event_type, event_version, tenant_id,
+                 aggregate_type, aggregate_id, payload, actor, actor_type,
+                 content_hash)
+            VALUES
+                (:eid, 'test.insert', 1, :tid,
+                 'person', :aid, CAST(:payload AS jsonb),
+                 CAST(:actor AS jsonb), 'automation_rule', :hash)
+            """
+        ),
         {
-            "id": uuid.uuid4(),
-            "event_type": "test_insert",
-            "tenant_id": uuid.UUID("00000000-0000-0000-0000-000000000001"),
-            "metadata": {"test": True},
+            "eid": event_id,
+            "tid": TEST_TENANT,
+            "aid": agg_id,
+            "payload": payload,
+            "actor": '{"sub": "test-sys"}',
+            "hash": content_hash,
         },
     )
-    await db_session.commit()
+    await db_session_as_audit_role.commit()
 
-    result = await db_session.execute(
-        text("SELECT COUNT(*) FROM contact_ops.action_event WHERE event_type = 'test_insert'")
+    result = await db_session_as_audit_role.execute(
+        text("SELECT event_id, event_type FROM action_event WHERE event_id = :eid"),
+        {"eid": event_id},
     )
-    assert result.scalar() > 0
+    row = result.fetchone()
+    assert row is not None
+    assert row.event_type == "test.insert"
 
 
 @pytest.mark.asyncio
-async def test_action_event_has_indexes(db_session):
-    """Verify action_event has the expected indexes."""
-    result = await db_session.execute(
-        text("""
-            SELECT indexname
-            FROM pg_indexes
-            WHERE tablename = 'action_event'
-              AND schemaname = 'contact_ops'
-            ORDER BY indexname
-        """)
-    )
-    indexes = {row[0] for row in result.fetchall()}
+async def test_action_event_update_as_app_role_fails(
+    db_engine, db_session_as_app_role: AsyncSession,
+):
+    """contact_ops_app cannot UPDATE action_event — append-only enforcement."""
+    await _seed_test_tenant(db_engine)
 
-    # Core indexes from migration 0010
-    assert "ix_action_event_actor_id" in indexes
-    assert "ix_action_event_created_at" in indexes
-    assert "ix_action_event_event_type" in indexes
-    assert "ix_action_event_tenant_id" in indexes
-    assert "ix_action_event_tenant_event_created" in indexes
+    event_id = _uuid.uuid4()
+    agg_id = _uuid.uuid4()
+
+    await db_session_as_app_role.execute(
+        text(
+            """
+            INSERT INTO action_event
+                (event_id, event_type, event_version, tenant_id,
+                 aggregate_type, aggregate_id, payload, actor, actor_type,
+                 content_hash)
+            VALUES
+                (:eid, 'test.insert', 1, :tid,
+                 'person', :aid, CAST(:payload AS jsonb),
+                 CAST(:actor AS jsonb), 'automation_rule', :hash)
+            """
+        ),
+        {"eid": event_id, "tid": TEST_TENANT, "aid": agg_id,
+         "payload": "{}", "actor": '{"sub":"test"}',
+         "hash": b"\x00" * 32},
+    )
+    await db_session_as_app_role.commit()
+
+    with pytest.raises(ProgrammingError) as exc_info:
+        await db_session_as_app_role.execute(
+            text(
+                "UPDATE action_event SET event_type = 'modified' WHERE event_id = :eid"
+            ),
+            {"eid": event_id},
+        )
+        await db_session_as_app_role.commit()
+
+    assert "42501" in str(exc_info.value) or "permission denied" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
-async def test_action_event_roles_exist(db_session):
-    """Verify audit and app roles were created."""
-    result = await db_session.execute(
-        text("""
-            SELECT rolname FROM pg_roles
-            WHERE rolname IN ('contact_ops_app', 'contact_ops_audit')
-            ORDER BY rolname
-        """)
+async def test_action_event_delete_as_app_role_fails(
+    db_engine, db_session_as_app_role: AsyncSession,
+):
+    """contact_ops_app cannot DELETE from action_event — append-only enforcement."""
+    await _seed_test_tenant(db_engine)
+
+    event_id = _uuid.uuid4()
+    agg_id = _uuid.uuid4()
+
+    await db_session_as_app_role.execute(
+        text(
+            """
+            INSERT INTO action_event
+                (event_id, event_type, event_version, tenant_id,
+                 aggregate_type, aggregate_id, payload, actor, actor_type,
+                 content_hash)
+            VALUES
+                (:eid, 'test.insert', 1, :tid,
+                 'person', :aid, CAST(:payload AS jsonb),
+                 CAST(:actor AS jsonb), 'automation_rule', :hash)
+            """
+        ),
+        {"eid": event_id, "tid": TEST_TENANT, "aid": agg_id,
+         "payload": "{}", "actor": '{"sub":"test"}',
+         "hash": b"\x00" * 32},
     )
-    roles = {row[0] for row in result.fetchall()}
-    assert "contact_ops_app" in roles
-    assert "contact_ops_audit" in roles
+    await db_session_as_app_role.commit()
+
+    with pytest.raises(ProgrammingError) as exc_info:
+        await db_session_as_app_role.execute(
+            text("DELETE FROM action_event WHERE event_id = :eid"),
+            {"eid": event_id},
+        )
+        await db_session_as_app_role.commit()
+
+    assert "42501" in str(exc_info.value) or "permission denied" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_action_event_indexes_exist(db_session: AsyncSession):
+    """All required indexes from migration 0010 exist."""
+    result = await db_session.execute(
+        text(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename = 'action_event' AND schemaname = 'public'"
+        )
+    )
+    actual = {row[0] for row in result.fetchall()}
+    # Only check our known indexes (the PK index is named differently)
+    missing = REQUIRED_INDEXES - actual
+    assert not missing, f"Missing indexes: {missing}"
