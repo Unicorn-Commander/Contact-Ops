@@ -107,7 +107,7 @@ def test_mcp_unknown_method(client):
 
 
 def test_mcp_tools_list(client):
-    """tools/list returns empty list in Phase 0."""
+    """tools/list returns the Phase 1 Contact-Ops tool surface."""
     payload = {
         "jsonrpc": "2.0",
         "method": "tools/list",
@@ -120,7 +120,9 @@ def test_mcp_tools_list(client):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["result"]["tools"] == []
+    names = {tool["name"] for tool in body["result"]["tools"]}
+    assert len(names) >= 16
+    assert {"create_person", "get_person", "link_relationship", "bulk_link_relationships"} <= names
 
 
 def test_mcp_parse_error(client):
