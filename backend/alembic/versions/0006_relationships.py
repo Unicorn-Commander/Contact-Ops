@@ -28,8 +28,8 @@ def upgrade() -> None:
             department        text,
             seniority         seniority_level NOT NULL DEFAULT 'unknown',
             is_primary        boolean NOT NULL DEFAULT false,
-            started_at        date,
-            ended_at          date,
+            started_at        timestamptz,
+            ended_at          timestamptz,
             employment_type   employment_type,
             ownership_percent numeric(6,3),
             equity_class      text,
@@ -46,11 +46,18 @@ def upgrade() -> None:
     op.execute("CREATE INDEX por_role_idx ON person_org_role(role_type)")
     op.execute("CREATE INDEX por_active_idx ON person_org_role(person_id, organization_id) WHERE ended_at IS NULL")
     op.execute("CREATE INDEX por_time_btree ON person_org_role(started_at, ended_at)")
-    op.execute("CREATE INDEX por_time_gist ON person_org_role USING gist (tstzrange(
-        coalesce(started_at::timestamptz, '-infinity'::timestamptz),
-        coalesce(ended_at::timestamptz, 'infinity'::timestamptz),
-        '[)'))")
+    op.execute("""
+        CREATE INDEX por_time_gist ON person_org_role USING gist (tstzrange(
+            coalesce(started_at, '-infinity'::timestamptz),
+            coalesce(ended_at, 'infinity'::timestamptz),
+            '[)'
+        ))
+    """)
     op.execute("CREATE UNIQUE INDEX por_primary_uniq ON person_org_role(person_id) WHERE is_primary AND ended_at IS NULL")
+    op.execute("""
+        ALTER TABLE persons ADD CONSTRAINT persons_current_org_role_fk
+            FOREIGN KEY (current_org_role_id) REFERENCES person_org_role(id) ON DELETE SET NULL
+    """)
 
     # person_person_relation
     op.execute("""
@@ -103,6 +110,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE persons DROP CONSTRAINT IF EXISTS persons_current_org_role_fk")
     op.execute("DROP TABLE IF EXISTS org_org_relation")
     op.execute("DROP TABLE IF EXISTS person_person_relation")
     op.execute("DROP TABLE IF EXISTS person_org_role")

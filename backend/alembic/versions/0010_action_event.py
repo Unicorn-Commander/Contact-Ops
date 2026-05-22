@@ -52,6 +52,16 @@ def upgrade() -> None:
     op.execute("REVOKE UPDATE, DELETE ON action_event FROM contact_ops_app")
     op.execute("GRANT INSERT, SELECT ON action_event TO contact_ops_app")
     op.execute("GRANT INSERT, SELECT ON action_event TO contact_ops_audit")
+    op.execute("""
+        ALTER TABLE action_event
+            ADD CONSTRAINT ae_reverted_by_fk
+            FOREIGN KEY (reverted_by_event_id) REFERENCES action_event(event_id) ON DELETE SET NULL
+    """)
+    op.execute("""
+        ALTER TABLE action_event
+            ADD CONSTRAINT ae_supersedes_fk
+            FOREIGN KEY (supersedes_event_id) REFERENCES action_event(event_id) ON DELETE SET NULL
+    """)
 
     op.execute("CREATE INDEX ae_tenant_time_idx ON action_event(tenant_id, proposed_at DESC)")
     op.execute("CREATE INDEX ae_aggregate_idx ON action_event(aggregate_type, aggregate_id, proposed_at DESC)")
@@ -71,10 +81,14 @@ def upgrade() -> None:
         ALTER TABLE field_provenance
             ADD CONSTRAINT fp_event_fk FOREIGN KEY (set_by_event_id) REFERENCES action_event(event_id)
     """)
+    op.execute("ALTER TABLE field_provenance ALTER COLUMN set_by_event_id SET NOT NULL")
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE field_provenance ALTER COLUMN set_by_event_id DROP NOT NULL")
     op.execute("ALTER TABLE field_provenance DROP CONSTRAINT IF EXISTS fp_event_fk")
+    op.execute("ALTER TABLE action_event DROP CONSTRAINT IF EXISTS ae_supersedes_fk")
+    op.execute("ALTER TABLE action_event DROP CONSTRAINT IF EXISTS ae_reverted_by_fk")
     op.execute("REVOKE INSERT, SELECT ON action_event FROM contact_ops_app")
     op.execute("REVOKE INSERT, SELECT ON action_event FROM contact_ops_audit")
     op.execute("GRANT UPDATE, DELETE ON action_event TO contact_ops_app")

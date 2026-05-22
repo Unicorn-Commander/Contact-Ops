@@ -37,7 +37,7 @@ def upgrade() -> None:
     """)
     op.execute("CREATE INDEX merge_history_kept_idx ON merge_history(entity_type, kept_id)")
     op.execute("CREATE INDEX merge_history_removed_idx ON merge_history(entity_type, removed_id)")
-    op.execute("CREATE INDEX merge_history_reversible_idx ON merge_history(reversible_until) WHERE reverted_at IS NULL AND reversible_until > now()")
+    op.execute("CREATE INDEX merge_history_reversible_idx ON merge_history(reversible_until) WHERE reverted_at IS NULL")
 
     # person_alias
     op.execute("""

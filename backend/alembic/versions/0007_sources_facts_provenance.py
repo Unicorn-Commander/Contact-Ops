@@ -89,8 +89,43 @@ def upgrade() -> None:
     op.execute("CREATE INDEX fp_set_by_event_idx ON field_provenance(set_by_event_id)")
     op.execute("CREATE INDEX fp_low_confidence_idx ON field_provenance(entity_type, entity_id) WHERE confidence < 0.75")
 
+    source_fk_tables = [
+        "emails",
+        "phones",
+        "postal_addresses",
+        "identifiers",
+        "im_handles",
+        "urls",
+        "person_org_role",
+        "person_person_relation",
+        "org_org_relation",
+        "voice_samples",
+        "photos",
+    ]
+    for tbl in source_fk_tables:
+        op.execute(f"""
+            ALTER TABLE {tbl}
+                ADD CONSTRAINT {tbl}_source_fk
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE SET NULL
+        """)
+
 
 def downgrade() -> None:
+    source_fk_tables = [
+        "emails",
+        "phones",
+        "postal_addresses",
+        "identifiers",
+        "im_handles",
+        "urls",
+        "person_org_role",
+        "person_person_relation",
+        "org_org_relation",
+        "voice_samples",
+        "photos",
+    ]
+    for tbl in source_fk_tables:
+        op.execute(f"ALTER TABLE {tbl} DROP CONSTRAINT IF EXISTS {tbl}_source_fk")
     op.execute("DROP TABLE IF EXISTS field_provenance")
     op.execute("DROP TABLE IF EXISTS facts")
     op.execute("DROP TABLE IF EXISTS sources")

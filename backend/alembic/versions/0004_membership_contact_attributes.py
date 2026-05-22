@@ -98,7 +98,7 @@ def upgrade() -> None:
             id                uuid PRIMARY KEY DEFAULT uuidv7_generate(),
             person_id         uuid REFERENCES persons(id) ON DELETE CASCADE,
             organization_id   uuid REFERENCES organizations(id) ON DELETE CASCADE,
-            e164              text NOT NULL CHECK (e164 ~ '^\+[1-9][0-9]{6,15}$'),
+            e164              text NOT NULL CHECK (e164 ~ '^[+][1-9][0-9]{6,15}$'),
             extension         text,
             type              phone_type NOT NULL DEFAULT 'other',
             label             text,
@@ -243,6 +243,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE organizations DROP CONSTRAINT IF EXISTS orgs_hq_fk")
     op.execute("DROP TABLE IF EXISTS urls")
     op.execute("DROP TABLE IF EXISTS im_handles")
     op.execute("DROP TABLE IF EXISTS identifiers")
