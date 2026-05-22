@@ -154,7 +154,7 @@ async def approve_proposal(
     proposal_id: uuid.UUID,
     tier_assigned: Tier,
     typed_phrase: str | None,
-    field_choices: dict[str, str] | None,
+    field_choices: dict[str, Any] | None,
     custom_values: dict[str, Any] | None,
     time_to_decide_sec: int | None,
     keyboard_path: bool,

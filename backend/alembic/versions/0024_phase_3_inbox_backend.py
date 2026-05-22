@@ -152,12 +152,16 @@ def _create_agent_suppression_rules() -> None:
         )
         """
     )
+    # Lookup index: queries filter by tenant + agent + (optionally
+    # aggregate + field). The "WHERE expires_at > now()" partial-index
+    # predicate is not allowed (now() is not IMMUTABLE). Callers add the
+    # expiry filter at query time; the standalone expiry_idx below
+    # supports the snoozed-flipper sweeper.
     op.execute(
         """
         CREATE INDEX agent_suppression_rules_lookup_idx
             ON agent_suppression_rules
             (tenant_id, agent_slug, aggregate_id, field_name)
-            WHERE expires_at > now()
         """
     )
     op.execute(
@@ -198,25 +202,15 @@ def _install_agent_suppression_rules_rls() -> None:
 def _extend_inbox_decisions_check() -> None:
     """Drop the Foundation CHECK and recreate with ``undo`` + ``revert`` added.
 
-    Constraint name from Foundation isn't fixed in source (Postgres auto-names
-    inline CHECKs), so we look it up by introspection.
+    Postgres auto-names inline column CHECK constraints as
+    ``<table>_<column>_check``, so we can drop by name directly. The
+    earlier introspection query did not work because Postgres rewrites
+    ``decision IN (...)`` into ``decision = ANY (ARRAY[...])`` at parse
+    time, so the LIKE pattern never matched.
     """
     op.execute(
-        """
-        DO $$
-        DECLARE
-            cn TEXT;
-        BEGIN
-            SELECT conname INTO cn
-            FROM pg_constraint
-            WHERE conrelid = 'inbox_decisions'::regclass
-              AND contype = 'c'
-              AND pg_get_constraintdef(oid) LIKE '%decision%IN%';
-            IF cn IS NOT NULL THEN
-                EXECUTE format('ALTER TABLE inbox_decisions DROP CONSTRAINT %I', cn);
-            END IF;
-        END $$;
-        """
+        "ALTER TABLE inbox_decisions DROP CONSTRAINT IF EXISTS "
+        "inbox_decisions_decision_check"
     )
     op.execute(
         """
@@ -228,9 +222,37 @@ def _extend_inbox_decisions_check() -> None:
             ))
         """
     )
+    # Foundation's tier_assigned CHECK is ``BETWEEN 1 AND 4`` (human
+    # decisions only). ``revert`` of a T0 auto-apply legitimately writes
+    # tier 0; widen the constraint here so the new decision values can
+    # coexist with their natural tier.
+    op.execute(
+        "ALTER TABLE inbox_decisions DROP CONSTRAINT IF EXISTS "
+        "inbox_decisions_tier_assigned_check"
+    )
+    op.execute(
+        """
+        ALTER TABLE inbox_decisions
+            ADD CONSTRAINT inbox_decisions_tier_assigned_check
+            CHECK (tier_assigned BETWEEN 0 AND 4)
+        """
+    )
 
 
 def _restore_inbox_decisions_check() -> None:
+    op.execute(
+        """
+        ALTER TABLE inbox_decisions
+            DROP CONSTRAINT IF EXISTS inbox_decisions_tier_assigned_check
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE inbox_decisions
+            ADD CONSTRAINT inbox_decisions_tier_assigned_check
+            CHECK (tier_assigned BETWEEN 1 AND 4)
+        """
+    )
     op.execute(
         """
         ALTER TABLE inbox_decisions

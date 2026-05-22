@@ -164,7 +164,8 @@ async def delete_suppression_rule(
         ),
         {"id": str(rule_id), "tenant": str(tenant_id)},
     )
-    return (result.rowcount or 0) > 0
+    rowcount = getattr(result, "rowcount", 0) or 0
+    return int(rowcount) > 0
 
 
 __all__ = [

@@ -124,7 +124,10 @@ def _classify_action(event_type: str) -> dict[str, bool | int]:
     return {"is_dedup": is_dedup, "is_edge": is_edge, "is_delete": is_delete}
 
 
-def _fields_changed(payload_before: dict | None, payload_after: dict) -> int:
+def _fields_changed(
+    payload_before: dict[str, Any] | None,
+    payload_after: dict[str, Any],
+) -> int:
     """Count symmetric diff of top-level keys.
 
     A field counts as 'changed' if its key is present in only one side OR
@@ -141,7 +144,7 @@ def _fields_changed(payload_before: dict | None, payload_after: dict) -> int:
     return changed
 
 
-def _bulk_count(payload_after: dict) -> int:
+def _bulk_count(payload_after: dict[str, Any]) -> int:
     targets = payload_after.get("target_ids")
     if isinstance(targets, list) and targets:
         return len(targets)
@@ -243,7 +246,7 @@ async def list_pending_proposals(
         LEFT JOIN persons p
                ON p.id = ae.aggregate_id AND ae.aggregate_type = 'person'
         LEFT JOIN organizations o
-               ON o.id = ae.aggregate_id AND ae.aggregate_type = 'org'
+               ON o.id = ae.aggregate_id AND ae.aggregate_type = 'organization'
         LEFT JOIN LATERAL (
             SELECT id FROM photos
             WHERE person_id = ae.aggregate_id
@@ -368,7 +371,7 @@ async def list_pending_proposals(
             confidence=float(row["confidence"] or 0.0),
             reversibility_class=row["reversibility_class"] or "reversible",
             compliance=compliance,
-            trust_tier_at_creation=int(row["trust_tier_at_creation"] or 0),  # type: ignore[arg-type]
+            trust_tier_at_creation=int(row["trust_tier_at_creation"] or 0),
             trace_id=row["trace_id"],
             evidence_pack_id=(
                 uuid.UUID(str(row["evidence_pack_id"]))
@@ -385,9 +388,9 @@ async def list_pending_proposals(
             touches_case_file=touches_case_file,
             case_file_links=case_file_links,
             fields_changed=_fields_changed(payload_before, payload_after),
-            is_dedup=classify["is_dedup"],  # type: ignore[arg-type]
-            is_edge=classify["is_edge"],  # type: ignore[arg-type]
-            is_delete=classify["is_delete"],  # type: ignore[arg-type]
+            is_dedup=bool(classify["is_dedup"]),
+            is_edge=bool(classify["is_edge"]),
+            is_delete=bool(classify["is_delete"]),
             bulk_count=_bulk_count(payload_after),
             cluster_id=cluster_id,
         )
@@ -436,7 +439,7 @@ def _derive_compliance(*, tenant_hipaa_mode: bool, tags: list[str]) -> ProposalC
     # "none" — minimum baseline is "low" for the trust-ladder math.
     if tenant_hipaa_mode and exposure == "none":
         exposure = _DEFAULT_EXPOSURE
-    return ProposalCompliance(hipaa=tenant_hipaa_mode, exposure=exposure)  # type: ignore[arg-type]
+    return ProposalCompliance(hipaa=tenant_hipaa_mode, exposure=exposure)
 
 
 async def _fetch_tags_for(

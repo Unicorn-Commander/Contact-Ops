@@ -12,6 +12,7 @@ runtime uses, with hyphens swapped to underscores per the existing routing.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import structlog
 from celery import shared_task
@@ -30,12 +31,12 @@ def _sync_db_url() -> str:
     )
 
 
-@shared_task(
+@shared_task(  # type: ignore[misc]
     name="contact_ops.agents.tasks.run_inbox_snooze_flipper",
     bind=True,
     acks_late=True,
 )
-def flip_expired_snoozes(self, agent_slug: str = "inbox-snooze-flipper") -> dict[str, int]:  # type: ignore[no-untyped-def]
+def flip_expired_snoozes(self: Any, agent_slug: str = "inbox-snooze-flipper") -> dict[str, int]:
     """Clear ``snoozed_until`` for every action_event whose snooze expired.
 
     Returns ``{"flipped": <count>}`` for observability. The Calibration
