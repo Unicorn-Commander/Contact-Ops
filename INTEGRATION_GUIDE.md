@@ -26,11 +26,11 @@ Each of your app's references to a person also creates an `identifier` row in Co
 
 Contact-Ops trusts five categories of MCP clients in the `uchub` realm on commander:
 
-- `contact-ops-app` — human UI (you don't use this).
-- `contact-ops-mcp` — your service's standard MCP client.
-- `contact-ops-carddav` — CardDAV adapter (you don't use this).
-- `contact-ops-publisher` — outbound to Data Intel (you don't use this).
-- `contact-ops-bridge-inbound` — inbound from Data Intel (you don't use this).
+- `contact-ops-app`, human UI (you don't use this).
+- `contact-ops-mcp`, your service's standard MCP client.
+- `contact-ops-carddav`, CardDAV adapter (you don't use this).
+- `contact-ops-publisher`, outbound to Data Intel (you don't use this).
+- `contact-ops-bridge-inbound`, inbound from Data Intel (you don't use this).
 
 For your ecosystem app, register a confidential OIDC client in the `uchub` realm following the Keycloak client bootstrap procedure. The client config should include:
 
@@ -169,9 +169,9 @@ JSON-RPC transport errors (malformed envelope, server crash) come back as HTTP 4
 
 Phase 0 has **no tools registered**. The MCP server responds to:
 
-- `initialize` — handshake, returns server info and capabilities.
-- `tools/list` — returns an empty list.
-- `tools/call` — returns `isError: true` with code `TOOL_NOT_FOUND` for any name.
+- `initialize`, handshake, returns server info and capabilities.
+- `tools/list`, returns an empty list.
+- `tools/call`, returns `isError: true` with code `TOOL_NOT_FOUND` for any name.
 
 Phase 1 lights up the core read + write tools (people, orgs, employment, identifiers, emails, phones, addresses, tags, search). Watch the design doc §5 for the full tool surface as it lands.
 
@@ -585,7 +585,7 @@ curl -X POST https://mcp.contacts.magicunicorn.dev/mcp \
 
 ## 8. OAuth scopes you'll need
 
-Request scopes that match what your service actually does. Don't ask for the kitchen sink — Contact-Ops audits scope usage. Common scope sets:
+Request scopes that match what your service actually does. Don't ask for the kitchen sink, Contact-Ops audits scope usage. Common scope sets:
 
 | Use case | Scopes |
 |----------|--------|
@@ -658,7 +658,7 @@ When Phase 5 of Contact-Ops lands, ecosystem apps migrate to use Contact-Ops as 
 7. **Nextcloud address book** (~3 days): CardDAV pull.
 8. **iOS contacts** (~3 days, manual one-shot): Aaron exports vCard, runs `import_vcard`.
 
-If you're working on one of these apps, coordinate with the orchestrator (Aaron via Claude) before starting your migration — schema-touching changes in your service should pair with Contact-Ops federation work.
+If you're working on one of these apps, coordinate with the orchestrator (Aaron via Claude) before starting your migration, schema-touching changes in your service should pair with Contact-Ops federation work.
 
 ---
 
