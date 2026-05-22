@@ -218,6 +218,7 @@ from contact_ops.models.prov_activity import ProvActivity
 from contact_ops.models.source import Source
 from contact_ops.models.tag import Tag
 from contact_ops.models.url import Url
+from contact_ops.models.voice_consent import VoiceConsent
 from contact_ops.models.voice_fingerprint import VoiceFingerprint
 from contact_ops.models.voice_sample import VoiceSample
 
@@ -250,6 +251,7 @@ __all__ = [
     "Source",
     "Tag",
     "Url",
+    "VoiceConsent",
     "VoiceFingerprint",
     "VoiceSample",
 ]

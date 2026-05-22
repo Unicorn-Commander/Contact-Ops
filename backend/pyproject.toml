@@ -44,5 +44,13 @@ module = [
     "prometheus_client",
     "opentelemetry",
     "opentelemetry.*",
+    # Phase 3.2 Voice Match: ML libs without bundled stubs.
+    "torch",
+    "pyannote",
+    "pyannote.*",
+    "modelscope",
+    "modelscope.*",
+    "pgvector",
+    "pgvector.*",
 ]
 ignore_missing_imports = true
