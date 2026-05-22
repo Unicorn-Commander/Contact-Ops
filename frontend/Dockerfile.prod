@@ -12,6 +12,13 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+ARG VITE_MCP_BASE_URL=https://mcp.contacts.magicunicorn.dev
+ARG VITE_KEYCLOAK_ISSUER=https://auth.unicorncommander.ai/realms/uchub
+ARG VITE_KEYCLOAK_CLIENT_ID=contact-ops-app
+ENV VITE_MCP_BASE_URL=$VITE_MCP_BASE_URL
+ENV VITE_KEYCLOAK_ISSUER=$VITE_KEYCLOAK_ISSUER
+ENV VITE_KEYCLOAK_CLIENT_ID=$VITE_KEYCLOAK_CLIENT_ID
+
 # Build the application
 RUN npm run build
 
@@ -26,7 +33,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:80/nginx-health || exit 1
 
 # Expose port
 EXPOSE 80
