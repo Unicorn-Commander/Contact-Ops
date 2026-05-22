@@ -179,9 +179,15 @@ def _install_rls_policies() -> None:
     # migration 0015, but we force it to be safe).
     op.execute("ALTER TABLE voice_fingerprints ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE voice_fingerprints FORCE ROW LEVEL SECURITY")
+    # Postgres doesn't support `CREATE POLICY IF NOT EXISTS`; drop-then-create
+    # is the idiomatic way to be idempotent. The Foundation policies on
+    # voice_fingerprints predate this migration so we explicitly replace.
+    op.execute(
+        "DROP POLICY IF EXISTS tenant_isolation ON voice_fingerprints"
+    )
     op.execute(
         """
-        CREATE POLICY IF NOT EXISTS tenant_isolation ON voice_fingerprints
+        CREATE POLICY tenant_isolation ON voice_fingerprints
             USING (person_id IN (
                 SELECT id FROM persons WHERE canonical_owner_tenant_id = current_tenant_id()
             ))
