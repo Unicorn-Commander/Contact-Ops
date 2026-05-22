@@ -191,6 +191,7 @@ class BaseAgent(ABC):
         evidence: dict[str, Any],
         rationale: str,
         allow_replay: bool = True,
+        target_tenant_id: UUID | None = None,
     ) -> ProposedAction:
         """Emit an ``action_event``. Auto-apply when policy permits.
 
@@ -203,6 +204,17 @@ class BaseAgent(ABC):
         Auto-apply policy:
             * ``Reversibility.IRREVERSIBLE`` -> never auto-apply.
             * Otherwise see ``_should_auto_apply``.
+
+        Phase 3.3a additions: after the proposal is persisted, runs a
+        conflict-detection query against other ``status='proposed'`` rows
+        on the same aggregate within the last hour. Any overlap on
+        ``payload_after`` top-level keys inserts a ``proposal_conflict``
+        row, and the DB trigger ``proposal_conflict_clear_snooze_trg``
+        clears any active snooze on both involved proposals.
+
+        ``target_tenant_id`` is for cross-tenant agents (CardDAV
+        reconciliation, Data Intel bridge). Populated, it drives the
+        ``cross_tenant`` derived flag the inbox UI reads.
         """
         if not 0.0 <= confidence <= 1.0:
             raise ValueError(f"confidence must be in [0, 1]; got {confidence}")
@@ -270,7 +282,7 @@ class BaseAgent(ABC):
                 """
                 INSERT INTO action_event (
                     event_type, event_version,
-                    tenant_id, aggregate_type, aggregate_id,
+                    tenant_id, target_tenant_id, aggregate_type, aggregate_id,
                     payload, actor, actor_type,
                     confidence, evidence, rationale,
                     status, content_hash,
@@ -279,6 +291,7 @@ class BaseAgent(ABC):
                 ) VALUES (
                     :event_type, 1,
                     CAST(:tenant_id AS uuid),
+                    CAST(:target_tenant_id AS uuid),
                     CAST(:aggregate_type AS entity_kind),
                     CAST(:aggregate_id AS uuid),
                     CAST(:payload AS jsonb), CAST(:actor AS jsonb), 'agent'::actor_type,
@@ -293,6 +306,7 @@ class BaseAgent(ABC):
             {
                 "event_type": event_type,
                 "tenant_id": str(ctx.tenant_id),
+                "target_tenant_id": str(target_tenant_id) if target_tenant_id else None,
                 "aggregate_type": aggregate_type,
                 "aggregate_id": str(aggregate_id),
                 "payload": json.dumps(payload_after, sort_keys=True, default=str),
@@ -325,6 +339,17 @@ class BaseAgent(ABC):
                 ),
                 {"id": str(event_id)},
             )
+        else:
+            # Phase 3.3a (C6): only proposed (non-auto-applied) rows can
+            # conflict against another inbox item. Auto-applied rows are
+            # already resolved and don't surface a ConflictBanner.
+            await self._detect_and_record_conflict(
+                ctx=ctx,
+                new_event_id=event_id,
+                aggregate_id=aggregate_id,
+                payload_after=payload_after,
+            )
+
         await ctx.audit_db.commit()
 
         return ProposedAction(
@@ -337,6 +362,81 @@ class BaseAgent(ABC):
         )
 
     # ---- internals ----
+
+    async def _detect_and_record_conflict(
+        self,
+        *,
+        ctx: AgentContext,
+        new_event_id: UUID,
+        aggregate_id: UUID,
+        payload_after: dict[str, Any],
+    ) -> None:
+        """C6: find a conflicting proposal in last 1h and insert proposal_conflict.
+
+        "Conflict" = same aggregate + status='proposed' + shares any
+        top-level ``payload_after`` JSON key. The first overlapping key
+        becomes ``proposal_conflict.field_name`` for the UI to highlight.
+        Skipped for empty payloads. Caps lookback at 20 rows; cascade of
+        many-vs-one would be enriched in a future calibration sweep.
+        """
+        candidate_keys = list((payload_after or {}).keys())
+        if not candidate_keys:
+            return
+
+        result = await ctx.audit_db.execute(
+            text(
+                """
+                SELECT event_id, decision_payload
+                FROM action_event
+                WHERE aggregate_id = CAST(:agg AS uuid)
+                  AND tenant_id = CAST(:tenant AS uuid)
+                  AND event_id != CAST(:self AS uuid)
+                  AND status = 'proposed'
+                  AND proposed_at > now() - INTERVAL '1 hour'
+                ORDER BY proposed_at DESC
+                LIMIT 20
+                """
+            ),
+            {
+                "agg": str(aggregate_id),
+                "tenant": str(ctx.tenant_id),
+                "self": str(new_event_id),
+            },
+        )
+        new_keys = set(candidate_keys)
+        for row in result.mappings():
+            other_payload_after: dict[str, Any] = {}
+            decision_payload = row["decision_payload"] or {}
+            if isinstance(decision_payload, dict):
+                pa = decision_payload.get("payload_after")
+                if isinstance(pa, dict):
+                    other_payload_after = pa
+            overlap = sorted(new_keys & set(other_payload_after.keys()))
+            if not overlap:
+                continue
+            await ctx.audit_db.execute(
+                text(
+                    """
+                    INSERT INTO proposal_conflict (
+                        tenant_id, primary_proposal_id, conflicting_proposal_id,
+                        conflict_type, entity_id, field_name
+                    ) VALUES (
+                        CAST(:tenant AS uuid),
+                        CAST(:primary AS uuid), CAST(:conflicting AS uuid),
+                        'contradicting_field_value',
+                        CAST(:entity AS uuid), :field
+                    )
+                    """
+                ),
+                {
+                    "tenant": str(ctx.tenant_id),
+                    "primary": str(new_event_id),
+                    "conflicting": str(row["event_id"]),
+                    "entity": str(aggregate_id),
+                    "field": overlap[0],
+                },
+            )
+            return
 
     def _should_auto_apply(
         self,
