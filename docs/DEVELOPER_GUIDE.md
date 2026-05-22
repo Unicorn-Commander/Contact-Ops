@@ -1,10 +1,10 @@
-# Data Intel Developer Integration Guide
+# Contact-Ops Developer Integration Guide
 
-This guide explains how to integrate your application with Center Deep Data Intel for email verification and data cataloguing.
+This guide explains how to integrate your application with Contact-Ops for email verification and data cataloguing.
 
 ## Overview
 
-Data Intel provides two main capabilities for your apps:
+Contact-Ops provides two main capabilities for your apps:
 
 1. **Email Verification** - Verify emails before sending or storing
 2. **Data Cataloguing** - Submit enriched company/contact data to the central database
@@ -13,7 +13,7 @@ Data Intel provides two main capabilities for your apps:
 
 ### Option 1: Via Ops-Center Admin
 
-1. Go to Ops-Center → Settings → Data Intel
+1. Go to Ops-Center → Settings → Contact-Ops
 2. Click "API Keys" tab
 3. Click "Create API Key"
 4. Enter your app name and settings
@@ -60,7 +60,7 @@ X-API-Key: sk-your-api-key-here
 |-------------|-----|
 | Production | https://verify.centerdeep.online |
 | Development | http://localhost:8501 |
-| Docker Network | http://dataintel-backend:8501 |
+| Docker Network | http://contact-ops-backend:8501 |
 
 ---
 
@@ -435,7 +435,7 @@ contact = save_contact(email)
 verify_later(contact.email)
 
 # Good: Verify first, then store
-result = await dataintel.verify_email(email)
+result = await contact-ops.verify_email(email)
 if result['score'] >= 70:
     save_contact(email, verification=result)
 ```
@@ -526,4 +526,4 @@ Full API documentation with try-it-out functionality:
 
 - **Health Check**: GET https://verify.centerdeep.online/health
 - **Admin API Info**: GET https://verify.centerdeep.online/api/v1/admin/info
-- **Issues**: Contact Center Deep administrator
+- **Issues**: Contact Contact-Ops administrator

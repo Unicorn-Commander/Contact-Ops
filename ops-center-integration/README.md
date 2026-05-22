@@ -1,6 +1,6 @@
-# Data Intel - Ops-Center Integration
+# Contact-Ops - Ops-Center Integration
 
-This directory contains everything needed to integrate Data Intel into Ops-Center's admin panel.
+This directory contains everything needed to integrate Contact-Ops into Ops-Center's admin panel.
 
 ## What You Get
 
@@ -48,7 +48,7 @@ import DataIntelSettings from './pages/admin/settings/DataIntelSettings';
 
 // In your routes array:
 {
-  path: '/admin/settings/data-intel',
+  path: '/admin/settings/contact-ops',
   element: <DataIntelSettings />,
 }
 ```
@@ -61,8 +61,8 @@ If using hardcoded menu, add to the settings sidebar:
 
 ```tsx
 {
-  name: 'Data Intel',
-  path: '/admin/settings/data-intel',
+  name: 'Contact-Ops',
+  path: '/admin/settings/contact-ops',
   icon: <MailIcon />,
 }
 ```
@@ -72,12 +72,12 @@ If using hardcoded menu, add to the settings sidebar:
 Add to Ops-Center's `.env`:
 
 ```bash
-VITE_DATAINTEL_API_URL=http://dataintel-backend:8501
+VITE_CONTACT_OPS_API_URL=http://contact-ops-backend:8501
 ```
 
 For production:
 ```bash
-VITE_DATAINTEL_API_URL=https://verify.centerdeep.online
+VITE_CONTACT_OPS_API_URL=https://verify.centerdeep.online
 ```
 
 ### Step 6: Rebuild Frontend
@@ -90,7 +90,7 @@ docker compose restart ops-center-frontend
 
 ## API Endpoints Used
 
-The component calls these Data Intel admin endpoints:
+The component calls these Contact-Ops admin endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -112,7 +112,7 @@ The integration provides:
 ```
 Ops-Center Admin
 └── Settings
-    └── Data Intel
+    └── Contact-Ops
         ├── Overview Tab
         │   ├── Stats cards (companies, contacts, emails, etc.)
         │   ├── Source apps breakdown table
@@ -135,13 +135,13 @@ Ops-Center Admin
 
 ### "Failed to fetch data" error
 
-1. Check Data Intel is running: `curl http://localhost:8501/health`
-2. Check network connectivity between Ops-Center and Data Intel
-3. Verify `VITE_DATAINTEL_API_URL` is set correctly
+1. Check Contact-Ops is running: `curl http://localhost:8501/health`
+2. Check network connectivity between Ops-Center and Contact-Ops
+3. Verify `VITE_CONTACT_OPS_API_URL` is set correctly
 
 ### CORS errors
 
-Data Intel allows all origins by default. For production, configure CORS in Data Intel's `.env`:
+Contact-Ops allows all origins by default. For production, configure CORS in Contact-Ops's `.env`:
 
 ```bash
 CORS_ORIGINS=https://ops.centerdeep.online

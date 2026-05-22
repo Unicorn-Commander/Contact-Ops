@@ -68,8 +68,8 @@ export default function Layout({ children }: LayoutProps) {
               <span className="text-white font-bold text-lg">CD</span>
             </div>
             <div>
-              <h1 className="font-bold text-white">Center Deep</h1>
-              <p className="text-xs text-gray-500">Data Intel</p>
+              <h1 className="font-bold text-white">Contact-Ops</h1>
+              <p className="text-xs text-gray-500">Contact-Ops</p>
             </div>
           </div>
         </div>

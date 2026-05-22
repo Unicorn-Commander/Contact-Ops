@@ -1,7 +1,7 @@
--- Center Deep Data Intel - Ops-Center Admin Integration
+-- Contact-Ops - Ops-Center Admin Integration
 -- Run this against the Ops-Center database (unicorn_db)
 --
--- This adds Data Intel to the Settings section with admin capabilities
+-- This adds Contact-Ops to the Settings section with admin capabilities
 
 -- ============================================================================
 -- 1. Add to add_ons table (Apps Marketplace)
@@ -18,13 +18,13 @@ INSERT INTO add_ons (
     is_active,
     features
 ) VALUES (
-    'Data Intel',
-    'data-intel',
+    'Contact-Ops',
+    'contact-ops',
     'Email verification and enriched data cataloguing service. Verify emails via SMTP, catalogue company and contact data from all your apps, and build a unified intelligence database.',
     'https://verify.centerdeep.online',
     'tools',
-    'dataintel',
-    '/logos/dataintel-logo.svg',
+    'contact-ops',
+    '/logos/contact-ops-logo.svg',
     true,
     '[
         "SMTP email verification",
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS integration_configs (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Add Data Intel integration config
+-- Add Contact-Ops integration config
 INSERT INTO integration_configs (
     slug,
     name,
@@ -75,10 +75,10 @@ INSERT INTO integration_configs (
     is_enabled,
     config
 ) VALUES (
-    'data-intel',
-    'Data Intel',
+    'contact-ops',
+    'Contact-Ops',
     'Email verification and data cataloguing service',
-    'http://dataintel-backend:8501',
+    'http://contact-ops-backend:8501',
     true,
     '{
         "admin_endpoints": {
@@ -92,7 +92,7 @@ INSERT INTO integration_configs (
             "single": "/api/v1/verify/email",
             "batch": "/api/v1/verify/batch"
         },
-        "settings_page": "/admin/settings/data-intel"
+        "settings_page": "/admin/settings/contact-ops"
     }'::jsonb
 ) ON CONFLICT (slug) DO UPDATE SET
     api_url = EXCLUDED.api_url,
@@ -105,35 +105,35 @@ INSERT INTO integration_configs (
 
 -- Enable for VIP Founder tier (tier_features)
 INSERT INTO tier_features (tier_id, feature_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code = 'vip_founder'
 ON CONFLICT DO NOTHING;
 
 -- Enable for VIP Founder tier (tier_apps - controls dashboard visibility)
 INSERT INTO tier_apps (tier_id, app_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code = 'vip_founder'
 ON CONFLICT (tier_id, app_key) DO UPDATE SET enabled = true;
 
 -- Enable for Founder Friend tier
 INSERT INTO tier_features (tier_id, feature_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code = 'founder_friend'
 ON CONFLICT DO NOTHING;
 
 -- Enable for BYOK and higher tiers (tier_features)
 INSERT INTO tier_features (tier_id, feature_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code IN ('byok', 'managed', 'professional', 'enterprise')
 ON CONFLICT DO NOTHING;
 
 -- Enable for BYOK and higher tiers (tier_apps)
 INSERT INTO tier_apps (tier_id, app_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code IN ('byok', 'managed', 'professional', 'enterprise')
 ON CONFLICT (tier_id, app_key) DO UPDATE SET enabled = true;
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS settings_menu (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Add Data Intel to settings menu
+-- Add Contact-Ops to settings menu
 INSERT INTO settings_menu (
     slug,
     name,
@@ -165,13 +165,13 @@ INSERT INTO settings_menu (
     is_active,
     requires_feature
 ) VALUES (
-    'data-intel',
-    'Data Intel',
+    'contact-ops',
+    'Contact-Ops',
     'Mail',
-    '/admin/settings/data-intel',
+    '/admin/settings/contact-ops',
     50,
     true,
-    'dataintel'
+    'contact-ops'
 ) ON CONFLICT (slug) DO UPDATE SET
     name = EXCLUDED.name,
     path = EXCLUDED.path,
@@ -181,7 +181,7 @@ INSERT INTO settings_menu (
 -- 5. Verify installation
 -- ============================================================================
 
-SELECT 'Data Intel integration added!' as status;
+SELECT 'Contact-Ops integration added!' as status;
 
 SELECT
     name,
@@ -189,7 +189,7 @@ SELECT
     is_active,
     jsonb_array_length(features) as feature_count
 FROM add_ons
-WHERE slug = 'data-intel';
+WHERE slug = 'contact-ops';
 
 SELECT
     slug,
@@ -197,4 +197,4 @@ SELECT
     is_enabled,
     api_url
 FROM integration_configs
-WHERE slug = 'data-intel';
+WHERE slug = 'contact-ops';

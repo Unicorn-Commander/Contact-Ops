@@ -1,7 +1,7 @@
--- Center Deep Data Intel - Ops-Center Integration
--- Run this against the Ops-Center database (unicorn_db) to add Data Intel to the Apps Marketplace
+-- Contact-Ops - Ops-Center Integration
+-- Run this against the Ops-Center database (unicorn_db) to add Contact-Ops to the Apps Marketplace
 
--- Add Data Intel to the add_ons table
+-- Add Contact-Ops to the add_ons table
 INSERT INTO add_ons (
     name,
     slug,
@@ -13,13 +13,13 @@ INSERT INTO add_ons (
     is_active,
     features
 ) VALUES (
-    'Data Intel',
-    'data-intel',
+    'Contact-Ops',
+    'contact-ops',
     'Email verification and enriched data cataloguing service. Verify emails via SMTP, catalogue company and contact data from all your apps, and build a unified intelligence database.',
     'https://verify.centerdeep.online',
     'tools',
-    'dataintel',
-    '/logos/dataintel-logo.svg',
+    'contact-ops',
+    '/logos/contact-ops-logo.svg',
     true,
     '[
         "SMTP email verification",
@@ -44,21 +44,21 @@ INSERT INTO add_ons (
 
 -- Enable for VIP Founder tier
 INSERT INTO tier_features (tier_id, feature_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code = 'vip_founder'
 ON CONFLICT DO NOTHING;
 
 -- Enable for Founder Friend tier
 INSERT INTO tier_features (tier_id, feature_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code = 'founder_friend'
 ON CONFLICT DO NOTHING;
 
 -- Enable for BYOK tier
 INSERT INTO tier_features (tier_id, feature_key, enabled)
-SELECT id, 'dataintel', true
+SELECT id, 'contact-ops', true
 FROM subscription_tiers
 WHERE tier_code IN ('byok', 'managed', 'professional', 'enterprise')
 ON CONFLICT DO NOTHING;
@@ -71,6 +71,6 @@ SELECT
     is_active,
     jsonb_array_length(features) as feature_count
 FROM add_ons
-WHERE slug = 'data-intel';
+WHERE slug = 'contact-ops';
 
-SELECT 'Data Intel added to Ops-Center Apps Marketplace!' as status;
+SELECT 'Contact-Ops added to Ops-Center Apps Marketplace!' as status;

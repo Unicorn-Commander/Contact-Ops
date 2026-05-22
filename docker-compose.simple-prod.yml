@@ -1,9 +1,9 @@
 services:
-  dataintel-backend:
+  contact-ops-backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: dataintel-backend
+    container_name: contact-ops-backend
     restart: unless-stopped
     expose:
       - "8501"
@@ -23,9 +23,9 @@ services:
       retries: 3
       start_period: 10s
 
-  dataintel-frontend:
+  contact-ops-frontend:
     image: nginx:alpine
-    container_name: dataintel-frontend
+    container_name: contact-ops-frontend
     restart: unless-stopped
     expose:
       - "80"
@@ -39,11 +39,11 @@ services:
       - web
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dataintel.rule=Host(`verify.centerdeep.online`)"
-      - "traefik.http.routers.dataintel.entrypoints=websecure"
-      - "traefik.http.routers.dataintel.tls=true"
-      - "traefik.http.routers.dataintel.tls.certresolver=cloudflare"
-      - "traefik.http.services.dataintel.loadbalancer.server.port=80"
+      - "traefik.http.routers.contact-ops.rule=Host(`verify.centerdeep.online`)"
+      - "traefik.http.routers.contact-ops.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops.tls=true"
+      - "traefik.http.routers.contact-ops.tls.certresolver=cloudflare"
+      - "traefik.http.services.contact-ops.loadbalancer.server.port=80"
       - "traefik.docker.network=web"
 
 networks:

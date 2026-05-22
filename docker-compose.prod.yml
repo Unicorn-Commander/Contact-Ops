@@ -1,12 +1,12 @@
-# Center Deep Data Intel - Production Docker Compose
+# Contact-Ops - Production Docker Compose
 # OAuth2 Proxy with Keycloak OIDC authentication
 
 services:
-  dataintel-backend:
+  contact-ops-backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: dataintel-backend
+    container_name: contact-ops-backend
     restart: unless-stopped
     expose:
       - "8501"
@@ -33,18 +33,18 @@ services:
           cpus: '0.5'
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dataintel-api.rule=Host(`api.verify.centerdeep.online`)"
-      - "traefik.http.routers.dataintel-api.entrypoints=websecure"
-      - "traefik.http.routers.dataintel-api.tls=true"
-      - "traefik.http.routers.dataintel-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.dataintel-api.loadbalancer.server.port=8501"
+      - "traefik.http.routers.contact-ops-api.rule=Host(`api.verify.centerdeep.online`)"
+      - "traefik.http.routers.contact-ops-api.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-api.tls=true"
+      - "traefik.http.routers.contact-ops-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.contact-ops-api.loadbalancer.server.port=8501"
       - "traefik.docker.network=web"
 
-  dataintel-frontend:
+  contact-ops-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
-    container_name: dataintel-frontend
+    container_name: contact-ops-frontend
     restart: unless-stopped
     expose:
       - "80"
@@ -66,9 +66,9 @@ services:
           memory: 128M
           cpus: '0.25'
 
-  oauth2-proxy-dataintel:
+  oauth2-proxy-contact-ops:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
-    container_name: oauth2-proxy-dataintel
+    container_name: oauth2-proxy-contact-ops
     restart: unless-stopped
     expose:
       - "4180"
@@ -88,12 +88,12 @@ services:
       - OAUTH2_PROXY_COOKIE_DOMAINS=.centerdeep.online
       - OAUTH2_PROXY_COOKIE_SECURE=true
       - OAUTH2_PROXY_COOKIE_SAMESITE=lax
-      - OAUTH2_PROXY_COOKIE_NAME=_oauth2_proxy_dataintel
+      - OAUTH2_PROXY_COOKIE_NAME=_oauth2_proxy_contact_ops
       - OAUTH2_PROXY_COOKIE_EXPIRE=168h
       - OAUTH2_PROXY_COOKIE_REFRESH=1h
 
       # Upstream Configuration
-      - OAUTH2_PROXY_UPSTREAMS=http://dataintel-frontend:80
+      - OAUTH2_PROXY_UPSTREAMS=http://contact-ops-frontend:80
       - OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180
 
       # Email/User Configuration
@@ -123,6 +123,9 @@ services:
       - OAUTH2_PROXY_OIDC_EMAIL_CLAIM=email
       - OAUTH2_PROXY_OIDC_GROUPS_CLAIM=groups
       - OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=true
+
+      # Pass JWT claims as custom headers
+      - OAUTH2_PROXY_EXTRA_JWT_ISSUERS=https://auth.centerdeep.online/realms/uchub=contact-ops
     healthcheck:
       test: ["CMD", "/bin/oauth2-proxy", "--version"]
       interval: 30s
@@ -139,12 +142,12 @@ services:
           cpus: '0.1'
     labels:
       - "traefik.enable=true"
-      # Route both verify and dataintel subdomains to OAuth2 proxy
-      - "traefik.http.routers.dataintel.rule=Host(`verify.centerdeep.online`) || Host(`dataintel.centerdeep.online`)"
-      - "traefik.http.routers.dataintel.entrypoints=websecure"
-      - "traefik.http.routers.dataintel.tls=true"
-      - "traefik.http.routers.dataintel.tls.certresolver=letsencrypt"
-      - "traefik.http.services.dataintel.loadbalancer.server.port=4180"
+      # Route both verify and contact-ops subdomains to OAuth2 proxy
+      - "traefik.http.routers.contact-ops.rule=Host(`verify.centerdeep.online`) || Host(`contact-ops.centerdeep.online`)"
+      - "traefik.http.routers.contact-ops.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops.tls=true"
+      - "traefik.http.routers.contact-ops.tls.certresolver=letsencrypt"
+      - "traefik.http.services.contact-ops.loadbalancer.server.port=4180"
       - "traefik.docker.network=web"
 
 networks:

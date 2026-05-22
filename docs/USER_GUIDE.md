@@ -1,10 +1,10 @@
-# Data Intel User Guide
+# Contact-Ops User Guide
 
-Welcome to Center Deep Data Intel - your email verification and data intelligence service.
+Welcome to Contact-Ops - your email verification and data intelligence service.
 
-## What is Data Intel?
+## What is Contact-Ops?
 
-Data Intel helps you:
+Contact-Ops helps you:
 - **Verify email addresses** before sending campaigns
 - **Catalogue company and contact data** from all your apps
 - **Build a unified database** of verified leads
@@ -15,7 +15,7 @@ Data Intel helps you:
 
 1. Log in to Ops-Center
 2. Click "Apps" in the sidebar
-3. Click "Data Intel" to launch
+3. Click "Contact-Ops" to launch
 
 ### Access Directly
 
@@ -98,14 +98,14 @@ The dashboard shows:
 
 ### Before Email Campaigns
 
-1. Upload your list to Data Intel
+1. Upload your list to Contact-Ops
 2. Remove emails with score > 50
 3. Be cautious with catch-all domains
 4. Avoid role-based addresses for personalized outreach
 
 ### Building Your Database
 
-1. Connect your apps to Data Intel
+1. Connect your apps to Contact-Ops
 2. All enriched data flows into the catalogue
 3. Search across all sources from one place
 4. Track which app provided each data point
@@ -120,5 +120,5 @@ The dashboard shows:
 ## Need Help?
 
 - **API Documentation**: https://verify.centerdeep.online/docs
-- **Admin Settings**: Ops-Center → Settings → Data Intel
-- **Support**: Contact your Center Deep administrator
+- **Admin Settings**: Ops-Center → Settings → Contact-Ops
+- **Support**: Contact your Contact-Ops administrator

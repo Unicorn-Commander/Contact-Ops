@@ -1,5 +1,5 @@
 #!/bin/bash
-# Center Deep Data Intel - Setup Script
+# Contact-Ops - Setup Script
 
 set -e
 
@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 echo "========================================"
-echo "Center Deep Data Intel - Setup"
+echo "Contact-Ops - Setup"
 echo "========================================"
 
 # Colors
@@ -36,15 +36,15 @@ fi
 
 # Step 2: Create database
 echo -e "\n${YELLOW}Step 2: Database Setup${NC}"
-echo "Creating dataintel_db database..."
+echo "Creating contact_ops_db database..."
 
-docker exec unicorn-postgresql psql -U unicorn -c "CREATE DATABASE dataintel_db OWNER unicorn;" 2>/dev/null || {
+docker exec unicorn-postgresql psql -U unicorn -c "CREATE DATABASE contact_ops_db OWNER unicorn;" 2>/dev/null || {
     echo -e "${GREEN}Database already exists or created${NC}"
 }
 
 # Step 3: Run database migrations
 echo "Running database initialization..."
-docker exec -i unicorn-postgresql psql -U unicorn -d dataintel_db < scripts/init_db.sql
+docker exec -i unicorn-postgresql psql -U unicorn -d contact_ops_db < scripts/init_db.sql
 
 echo -e "${GREEN}Database tables created${NC}"
 
@@ -75,7 +75,7 @@ fi
 
 # Step 5: Ops-Center integration (optional)
 echo -e "\n${YELLOW}Step 4: Ops-Center Integration (Optional)${NC}"
-read -p "Add Data Intel to Ops-Center Apps Marketplace? (y/N) " -n 1 -r
+read -p "Add Contact-Ops to Ops-Center Apps Marketplace? (y/N) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     docker exec -i unicorn-postgresql psql -U unicorn -d unicorn_db < scripts/ops_center_integration.sql
@@ -96,7 +96,7 @@ if curl -s "$HEALTH_URL" | grep -q "healthy"; then
     echo -e "${GREEN}Service is healthy!${NC}"
 else
     echo -e "${YELLOW}Service may still be starting. Check logs with:${NC}"
-    echo "docker compose logs -f dataintel-backend"
+    echo "docker compose logs -f contact-ops-backend"
 fi
 
 echo -e "\n${GREEN}========================================"

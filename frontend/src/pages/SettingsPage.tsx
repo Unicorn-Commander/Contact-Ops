@@ -189,7 +189,7 @@ export default function SettingsPage() {
           <div>
             <h2 className="text-lg font-semibold text-white">API Keys</h2>
             <p className="text-sm text-gray-400 mt-1">
-              Use API keys to authenticate requests to the Center Deep Verify API
+              Use API keys to authenticate requests to the Contact-Ops API
             </p>
           </div>
           <button
@@ -278,7 +278,7 @@ export default function SettingsPage() {
           <div className="flex-1">
             <h3 className="font-medium text-white">API Documentation</h3>
             <p className="text-sm text-gray-400">
-              Learn how to integrate the Center Deep Verify API into your applications
+              Learn how to integrate the Contact-Ops API into your applications
             </p>
           </div>
           <a
