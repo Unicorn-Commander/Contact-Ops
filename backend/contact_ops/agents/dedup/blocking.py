@@ -103,11 +103,9 @@ async def stage1_deterministic_blocking(
     """)
     result = await db_session.execute(sql_name_meta, {"tenant": tenant_id})
     for row in result:
-        dma1, dmb1 = jellyfish.double_metaphone(row.fn1)
-        dma2, dmb2 = jellyfish.double_metaphone(row.fn2)
-        prim_match = bool(dma1 and dma2 and dma1 == dma2)
-        sec_match = bool(dmb1 and dmb2 and dmb1 == dmb2)
-        if not (prim_match or sec_match):
+        meta1 = jellyfish.metaphone(row.fn1)
+        meta2 = jellyfish.metaphone(row.fn2)
+        if not (meta1 and meta2 and meta1 == meta2):
             continue
         first_initial1 = row.gn1[0].upper() if row.gn1 else ""
         first_initial2 = row.gn2[0].upper() if row.gn2 else ""
@@ -258,7 +256,10 @@ async def run_blocking_pipeline(
     seen: set[tuple[UUID, UUID]] = set()
     union: list[CandidatePair] = []
     for pair in stage1 + stage2:
-        a, b = (pair.person_a_id, pair.person_b_id) if pair.person_a_id < pair.person_b_id else (pair.person_b_id, pair.person_a_id)
+        if pair.person_a_id < pair.person_b_id:
+            a, b = pair.person_a_id, pair.person_b_id
+        else:
+            a, b = pair.person_b_id, pair.person_a_id
         key = (a, b)
         if key not in seen:
             seen.add(key)

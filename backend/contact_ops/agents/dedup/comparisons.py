@@ -7,7 +7,6 @@ import jellyfish
 
 from contact_ops.agents.dedup.normalizers import (
     apply_nickname_map,
-    normalize_address,
     normalize_email,
     normalize_phone_e164,
 )
@@ -22,7 +21,7 @@ class FactRef:
 
 @dataclass(frozen=True)
 class ComparisonOutcome:
-    level_name: str  # 'strong' | 'fuzzy' | 'nickname' | 'exact' | 'day_off' | 'partial' | 'disagree' | 'null_exclude'
+    level_name: str
     raw_bits: float
     contributing_facts: tuple[FactRef, ...] = ()
 
@@ -60,23 +59,25 @@ def compare_first_name(
     a_norm = _normalize_name(a)
     b_norm = _normalize_name(b)
 
-    # Nickname map
+    # Jaro-Winkler strong match (>= 0.95)
+    sim = jellyfish.jaro_winkler_similarity(a_norm, b_norm)
+    if sim >= 0.95:
+        return ComparisonOutcome("strong", 7.0, a_facts + b_facts)
+
+    # Nickname map (only check if not already strong match)
     nicknames_a = apply_nickname_map(a_norm)
     nicknames_b = apply_nickname_map(b_norm)
     if b_norm in nicknames_a or a_norm in nicknames_b:
         return ComparisonOutcome("nickname", 5.0, a_facts + b_facts)
 
-    # Jaro-Winkler
-    sim = jellyfish.jaro_winkler_similarity(a_norm, b_norm)
-    if sim >= 0.95:
-        return ComparisonOutcome("strong", 7.0, a_facts + b_facts)
+    # Jaro-Winkler fuzzy match (>= 0.85)
     if sim >= 0.85:
         return ComparisonOutcome("fuzzy", 3.0, a_facts + b_facts)
 
-    # Phonetic (Double Metaphone)
-    prim_a, sec_a = jellyfish.double_metaphone(a_norm)
-    prim_b, sec_b = jellyfish.double_metaphone(b_norm)
-    if (prim_a and prim_b and prim_a == prim_b) or (sec_a and sec_b and sec_a == sec_b):
+    # Phonetic (Metaphone)
+    meta_a = jellyfish.metaphone(a_norm)
+    meta_b = jellyfish.metaphone(b_norm)
+    if meta_a and meta_b and meta_a == meta_b:
         return ComparisonOutcome("fuzzy", 3.0, a_facts + b_facts)
 
     return ComparisonOutcome("disagree", -4.0, a_facts + b_facts)
@@ -89,7 +90,8 @@ def compare_first_name(
 def compare_last_name(
     a: str | None, b: str | None,
     *,
-    tf_a: float = 1.0, tf_b: float = 1.0,
+    tf_a: float = 1.0,
+    tf_b: float = 1.0,
     a_facts: tuple[FactRef, ...] = (),
     b_facts: tuple[FactRef, ...] = (),
 ) -> ComparisonOutcome:
@@ -99,19 +101,20 @@ def compare_last_name(
     a_norm = _normalize_name(a)
     b_norm = _normalize_name(b)
 
-    # Jaro-Winkler strong match (TF-adjusted)
     sim = jellyfish.jaro_winkler_similarity(a_norm, b_norm)
-    if sim >= 0.95:
-        tf = min(tf_a, tf_b)
-        bits = 9.0 * tf
-        return ComparisonOutcome("strong", bits, a_facts + b_facts)
+    tf_mult = min(tf_a, tf_b)
 
-    # Damerau-Levenshtein + Double Metaphone fuzzy match
+    if sim >= 0.95:
+        return ComparisonOutcome("strong", 9.0 * tf_mult, a_facts + b_facts)
+
+    # Damerau-Levenshtein + phonetic
     dl_dist = jellyfish.damerau_levenshtein_distance(a_norm, b_norm)
-    prim_a, sec_a = jellyfish.double_metaphone(a_norm)
-    prim_b, sec_b = jellyfish.double_metaphone(b_norm)
-    dm_match = (prim_a and prim_b and prim_a == prim_b) or (sec_a and sec_b and sec_a == sec_b)
-    if dl_dist <= 2 and dm_match:
+    meta_a = jellyfish.metaphone(a_norm)
+    meta_b = jellyfish.metaphone(b_norm)
+    if dl_dist <= 2 and meta_a and meta_b and meta_a == meta_b:
+        return ComparisonOutcome("fuzzy", 3.0, a_facts + b_facts)
+
+    if meta_a and meta_b and meta_a == meta_b:
         return ComparisonOutcome("fuzzy", 3.0, a_facts + b_facts)
 
     return ComparisonOutcome("disagree", -4.0, a_facts + b_facts)
@@ -214,10 +217,16 @@ def compare_address(
     if a is None or b is None:
         return ComparisonOutcome("null_exclude", 0.0)
 
-    a_norm = normalize_address(a)
-    b_norm = normalize_address(b)
+    if isinstance(a, dict):
+        a_str = " ".join(str(v) for v in a.values() if v)
+    else:
+        a_str = a
+    if isinstance(b, dict):
+        b_str = " ".join(str(v) for v in b.values() if v)
+    else:
+        b_str = b
 
-    sim = jellyfish.jaro_winkler_similarity(a_norm, b_norm)
+    sim = jellyfish.jaro_winkler_similarity(a_str, b_str)
     if sim >= 0.9:
         return ComparisonOutcome("strong", 14.0, a_facts + b_facts)
     if sim >= 0.7:

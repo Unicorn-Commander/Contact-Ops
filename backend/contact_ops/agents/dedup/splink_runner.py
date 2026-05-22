@@ -270,7 +270,9 @@ def _name_embedding_comparison() -> dict[str, Any]:
             _level_cosine("name_embedding", 0.85, "Fuzzy"),
             _level_cosine("name_embedding", 0.70, "Weak"),
             {
-                "sql_condition": "list_cosine_similarity(name_embedding_l, name_embedding_r) < 0.70",
+                "sql_condition": (
+                    "list_cosine_similarity(name_embedding_l, name_embedding_r) < 0.70"
+                ),
                 "label_for_charts": "Disagree",
             },
         ],
@@ -285,7 +287,9 @@ def _face_embedding_comparison() -> dict[str, Any]:
             _level_cosine("face_embedding", 0.75, "Strong"),
             _level_cosine("face_embedding", 0.60, "Fuzzy"),
             {
-                "sql_condition": "list_cosine_similarity(face_embedding_l, face_embedding_r) < 0.60",
+                "sql_condition": (
+                    "list_cosine_similarity(face_embedding_l, face_embedding_r) < 0.60"
+                ),
                 "label_for_charts": "Disagree",
             },
         ],
@@ -300,7 +304,10 @@ def _voice_fingerprint_comparison() -> dict[str, Any]:
             _level_cosine("voice_fingerprint", 0.80, "Strong"),
             _level_cosine("voice_fingerprint", 0.65, "Fuzzy"),
             {
-                "sql_condition": "list_cosine_similarity(voice_fingerprint_l, voice_fingerprint_r) < 0.65",
+                "sql_condition": (
+                    "list_cosine_similarity(voice_fingerprint_l, voice_fingerprint_r)"
+                    " < 0.65"
+                ),
                 "label_for_charts": "Disagree",
             },
         ],

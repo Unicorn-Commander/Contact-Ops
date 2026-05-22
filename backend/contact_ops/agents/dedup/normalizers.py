@@ -105,11 +105,10 @@ def apply_nickname_map(given_name: str | None) -> list[str]:
         return []
     name = given_name.strip().lower()
     nicknames = _load_nicknames()
-    result: list[str] = []
+    result: list[str] = [name]
     for n1, n2 in nicknames:
         if n1 == name:
-            result.append(n2.capitalize())
-    result.append(given_name.strip())
+            result.append(n2.lower())
     seen: set[str] = set()
     deduped: list[str] = []
     for item in result:

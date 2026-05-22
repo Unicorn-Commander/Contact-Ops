@@ -97,7 +97,7 @@ class TestScoreViaFallback:
         })
 
         mock_session = AsyncMock()
-        mock_result = AsyncMock()
+        mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = 1.0
         mock_session.execute.return_value = mock_result
 

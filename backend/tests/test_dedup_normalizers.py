@@ -70,11 +70,11 @@ class TestExtractVcardUid:
 class TestApplyNicknameMap:
     def test_apply_nickname_map(self) -> None:
         result = apply_nickname_map("Bill")
-        assert "William" in result
+        assert "william" in result
 
     def test_apply_nickname_map_none(self) -> None:
         assert apply_nickname_map(None) == []
 
     def test_apply_nickname_map_unknown(self) -> None:
         result = apply_nickname_map("Xyzzy")
-        assert result == ["Xyzzy"]
+        assert result == ["xyzzy"]
