@@ -48,6 +48,10 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         "/redoc",
         "/openapi.json",
         "/",
+        # Prometheus scrape of the agent-fleet metrics registry. The endpoint
+        # is read-only and exposes only ``contactops_agent_*`` series. Network
+        # ACLs on the scrape source remain the enforcement boundary.
+        "/metrics",
     })
 
     # Prefix-based bypass. CardDAV runs HTTP Basic auth against per-device

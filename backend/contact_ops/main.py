@@ -19,6 +19,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from contact_ops.agents.observability.metrics import metrics_endpoint
+from contact_ops.agents.observability.otel import init_otel
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
@@ -62,6 +64,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "standalone_mode_active",
             note="JWT validation is bypassed. Use only in dev/test environments.",
         )
+
+    # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is
+    # missing (e.g. dev without OTel installed).
+    init_otel(service_name=f"{settings.APP_NAME.lower()}-api")
 
     yield
 
@@ -114,6 +120,16 @@ def create_application() -> FastAPI:
     # The JWT middleware skips /carddav and /.well-known/carddav via
     # JWTValidationMiddleware.SKIP_PREFIXES — see middleware/jwt_validation.py.
     app.include_router(carddav_router)
+
+    # Prometheus scrape endpoint for the agent-fleet metrics registry.
+    # Stays unauthenticated (Prom scrape) but is read-only and exposes only
+    # ``contactops_agent_*`` metrics — no caller-supplied input.
+    app.add_api_route(
+        "/metrics",
+        metrics_endpoint,
+        methods=["GET"],
+        include_in_schema=False,
+    )
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, Any]:
