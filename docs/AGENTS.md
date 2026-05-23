@@ -281,6 +281,20 @@ Use it as the template when wiring 3.1 Dedup or 3.2 Voice Match.
 
 ---
 
+## Phase 4 GraphSyncWorker
+
+`GraphSyncWorker` is a CONTINUOUS agent registered as `graph-sync-worker`.
+It is mechanical replication, so it does not write `action_event` and does not
+call MCP tools. It claims `graph_sync_outbox` rows with
+`FOR UPDATE SKIP LOCKED`, routes each row to the row's tenant graph
+(`contact_ops__<slug>`), and writes idempotent `MERGE` Cypher through the async
+FalkorDB wrapper.
+
+Retries are best-effort. After five failed attempts a row is marked `dlq` and
+copied into `graph_sync_dlq`; Postgres writes never block on FalkorDB.
+
+---
+
 ## Phase 3.1+ checklist for new agents
 
 When you write the next agent:
