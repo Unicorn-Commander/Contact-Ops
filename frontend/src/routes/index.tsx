@@ -13,6 +13,10 @@ import { TagsRoute } from "@/routes/pages/Tags";
 import { TenantsRoute } from "@/routes/pages/Tenants";
 import { SettingsRoute } from "@/routes/pages/Settings";
 
+const GraphRoute = lazy(() =>
+  import("@/routes/pages/Graph").then((m) => ({ default: m.GraphRoute }))
+);
+
 // Lazy-load /inbox so its heavy deps (cmdk, framer-motion, react-virtual,
 // react-resizable-panels) do not weigh down the auth-gated landing page.
 // Lighthouse Performance on the unauth landing improves from 62 to ~85+
@@ -31,6 +35,14 @@ function LazyInboxRoute() {
       }
     >
       <InboxRoute />
+    </Suspense>
+  );
+}
+
+function LazyGraphRoute() {
+  return (
+    <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+      <GraphRoute />
     </Suspense>
   );
 }
@@ -121,12 +133,14 @@ const appRoute = createRoute({
 const indexRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: DashboardRoute });
 const peopleRoute = createRoute({ getParentRoute: () => appRoute, path: "/people", component: PeopleRoute });
 const personRoute = createRoute({ getParentRoute: () => appRoute, path: "/people/$id", component: PersonDetailRoute });
+const personGraphRoute = createRoute({ getParentRoute: () => appRoute, path: "/people/$id/graph", component: LazyGraphRoute });
 const orgsRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs", component: OrgsRoute });
 const orgRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs/$id", component: OrgDetailRoute });
 const tagsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tags", component: TagsRoute });
 const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox", component: LazyInboxRoute });
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
+const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
@@ -149,7 +163,7 @@ function CallbackRoute() {
 }
 
 export const routeTree = rootRoute.addChildren([
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, orgsRoute, orgRoute, tagsRoute, inboxRoute, tenantsRoute, settingsRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, inboxRoute, tenantsRoute, settingsRoute, graphRoute]),
   callbackRoute
 ]);
 
