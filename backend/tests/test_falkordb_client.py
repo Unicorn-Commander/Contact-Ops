@@ -21,10 +21,21 @@ def test_validate_graph_name_rejects_cross_tenant_injection() -> None:
         validate_graph_name("contact_ops__aaron MATCH (n) RETURN n")
 
 
-def test_query_uses_graph_argument_not_cypher_interpolation() -> None:
+def test_render_cypher_value_handles_uuid_and_quotes() -> None:
+    """FalkorDB inline-param prefix renders UUIDs as quoted strings and
+    escapes embedded single quotes. Regression test for the broken
+    redis-PARAMS implementation (live FalkorDB rejected it as
+    DataError: 'Invalid input of type: list')."""
+    from contact_ops.agents.graph_sync.falkordb_client import _render_cypher_value
+
     client = FalkorDBGraphClient.__new__(FalkorDBGraphClient)
-    encoded = client._encode_params({"person_id": uuid.UUID(int=1)})
-    assert encoded == ["person_id", "00000000-0000-0000-0000-000000000001"]
+    coerced = client._coerce_param(uuid.UUID(int=1))
+    assert coerced == "00000000-0000-0000-0000-000000000001"
+    assert _render_cypher_value(coerced) == "'00000000-0000-0000-0000-000000000001'"
+    assert _render_cypher_value("O'Brien") == r"'O\'Brien'"
+    assert _render_cypher_value(True) == "true"
+    assert _render_cypher_value(42) == "42"
+    assert _render_cypher_value(None) == "null"
 
 
 def test_tenant_graph_requires_per_tenant_mode() -> None:

@@ -91,17 +91,35 @@ class FalkorDBGraphClient:
         *,
         timeout_ms: int = 10_000,
     ) -> GraphQueryResult:
-        """Run one parameterized query against exactly one tenant graph."""
+        """Run one parameterized query against exactly one tenant graph.
+
+        FalkorDB does NOT accept a separate ``PARAMS`` Redis arg. The
+        parameters are prefixed inline to the Cypher query as
+        ``CYPHER key1=value1 key2=value2 ... MATCH ...``. This is the
+        wire format both falkordb-py and the official Redis CLI use.
+        """
         graph_name = validate_graph_name(tenant_graph.graph_name)
         if tenant_graph.graph_mode not in {"per_org_graph", "per_org_instance"}:
             raise ValueError("Phase 4 graph queries require per-tenant graph routing")
         await self.connect()
         assert self._redis is not None
 
-        args: list[Any] = ["GRAPH.QUERY", graph_name, cypher, "--compact"]
+        full_query = cypher
         if params:
-            args.extend(["PARAMS", self._encode_params(params)])
-        args.extend(["TIMEOUT", str(timeout_ms)])
+            param_prefix = "CYPHER " + " ".join(
+                f"{key}={_render_cypher_value(self._coerce_param(value))}"
+                for key, value in params.items()
+            )
+            full_query = f"{param_prefix} {cypher}"
+
+        args: list[Any] = [
+            "GRAPH.QUERY",
+            graph_name,
+            full_query,
+            "--compact",
+            "TIMEOUT",
+            str(timeout_ms),
+        ]
         raw = await cast(Any, self._redis.execute_command)(*args)
         return self._parse_result(raw)
 
@@ -125,12 +143,6 @@ class FalkorDBGraphClient:
                     cypher=cypher,
                     error=str(exc),
                 )
-
-    def _encode_params(self, params: dict[str, Any]) -> list[Any]:
-        encoded: list[Any] = []
-        for key, value in params.items():
-            encoded.extend([key, self._coerce_param(value)])
-        return encoded
 
     def _coerce_param(self, value: Any) -> Any:
         if isinstance(value, UUID):
@@ -160,3 +172,27 @@ class FalkorDBGraphClient:
 def falkor_host_port(url: str) -> tuple[str, int]:
     parsed = urlparse(url)
     return parsed.hostname or "localhost", parsed.port or 6379
+
+
+def _render_cypher_value(value: Any) -> str:
+    """Render a parameter value as a Cypher literal (FalkorDB inline params).
+
+    FalkorDB's ``CYPHER k=v`` prefix expects Cypher-formatted values:
+    strings are single-quoted with backslash-escaped quotes, lists are
+    bracketed, numbers and booleans are bare.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_render_cypher_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        body = ", ".join(
+            f"{k}: {_render_cypher_value(v)}" for k, v in value.items()
+        )
+        return "{" + body + "}"
+    text = str(value).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{text}'"
