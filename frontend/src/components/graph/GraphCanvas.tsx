@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraphMethods } from "react-force-graph-3d";
 import { Box, Network } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -255,25 +255,31 @@ export function GraphCanvas({
       .filter(Boolean) as ScreenLabel[];
   }, [engineTick, hoveredNodeId, labels, selectedNodeId, size.height, size.width]);
 
-  const edgeColor = (link: GraphLink) => {
-    const confidence = Math.max(0.15, Math.min(1, link.strength ?? 0.6));
-    const channel = isProposeOnlyRelationship(link.type) ? "confidence-amber" : "info";
-    return canvasColors.edge(channel, confidence);
-  };
+  const edgeColor = useCallback(
+    (link: GraphLink) => {
+      const confidence = Math.max(0.15, Math.min(1, link.strength ?? 0.6));
+      const channel = isProposeOnlyRelationship(link.type) ? "confidence-amber" : "info";
+      return canvasColors.edge(channel, confidence);
+    },
+    [canvasColors]
+  );
 
-  const edgeWidth = (link: GraphLink) => {
+  const edgeWidth = useCallback((link: GraphLink) => {
     const confidence = Math.max(0.25, Math.min(1.6, (link.strength ?? 0.6) * 1.6));
     return isProposeOnlyRelationship(link.type) ? Math.max(0.8, confidence * 0.75) : confidence;
-  };
+  }, []);
 
-  const edgeParticles = (link: GraphLink) => {
-    const source = resolveNodeId(link.source as string | GraphNode | undefined);
-    const target = resolveNodeId(link.target as string | GraphNode | undefined);
-    const active = source === selectedNodeId || target === selectedNodeId || source === hoveredNodeId || target === hoveredNodeId;
-    return active ? (isProposeOnlyRelationship(link.type) ? 2 : 1) : 0;
-  };
+  const edgeParticles = useCallback(
+    (link: GraphLink) => {
+      const source = resolveNodeId(link.source as string | GraphNode | undefined);
+      const target = resolveNodeId(link.target as string | GraphNode | undefined);
+      const active = source === selectedNodeId || target === selectedNodeId || source === hoveredNodeId || target === hoveredNodeId;
+      return active ? (isProposeOnlyRelationship(link.type) ? 2 : 1) : 0;
+    },
+    [selectedNodeId, hoveredNodeId]
+  );
 
-  const edgeParticleColor = (link: GraphLink) => edgeColor(link);
+  const edgeParticleColor = useCallback((link: GraphLink) => edgeColor(link), [edgeColor]);
 
   const highlightedNodeSet = useMemo(() => {
     const set = new Set<string>();
@@ -283,6 +289,32 @@ export function GraphCanvas({
     for (const id of incidentNodeIds) set.add(id);
     return set;
   }, [incidentNodeIds, hoveredNodeId, rootPersonId, selectedNodeId]);
+
+  // Stable accessor identities: react-force-graph re-applies any prop whose
+  // reference changes, and onEngineTick re-renders every simulation tick, so
+  // inline accessors would be re-applied to the graph every frame during layout.
+  const nodeColorAccessor = useCallback((node: GraphNode) => canvasColors.node(node.kind), [canvasColors]);
+  const nodeValAccessor = useCallback(
+    (node: GraphNode) => {
+      const highlighted = highlightedNodeSet.has(node.id);
+      return (node.val ?? 4) * (highlighted ? 1.6 : 1);
+    },
+    [highlightedNodeSet]
+  );
+  const nodeLabelAccessor = useCallback((node: GraphNode) => nodeTooltip(node), []);
+  const linkColorAccessor = useCallback((link: GraphLink) => edgeColor(link), [edgeColor]);
+  const linkWidthAccessor = useCallback((link: GraphLink) => edgeWidth(link), [edgeWidth]);
+  const linkCurvatureAccessor = useCallback((link: GraphLink) => (isProposeOnlyRelationship(link.type) ? 0.12 : 0.04), []);
+  const linkArrowLengthAccessor = useCallback((link: GraphLink) => (isProposeOnlyRelationship(link.type) ? 4 : 0), []);
+  const linkArrowColorAccessor = useCallback((link: GraphLink) => edgeColor(link), [edgeColor]);
+  const linkParticlesAccessor = useCallback((link: GraphLink) => edgeParticles(link), [edgeParticles]);
+  const linkParticleWidthAccessor = useCallback((link: GraphLink) => (isProposeOnlyRelationship(link.type) ? 1.5 : 1), []);
+  const linkParticleColorAccessor = useCallback((link: GraphLink) => edgeParticleColor(link), [edgeParticleColor]);
+  const linkLabelAccessor = useCallback((link: GraphLink) => linkLabel(link), []);
+  const handleNodeClick = useCallback((node: GraphNode) => onNodeClick(node), [onNodeClick]);
+  const handleNodeHover = useCallback((node: GraphNode | null) => setHoveredNodeId(node ? node.id : null), []);
+  const handleBackgroundClick = useCallback(() => setHoveredNodeId(null), []);
+  const handleEngineTick = useCallback(() => setEngineTick((value) => value + 1), []);
 
   const svgNodes = useMemo<SvgLayoutNode[]>(() => {
     if (!graph || data.nodes.length === 0) return [];
@@ -439,36 +471,32 @@ export function GraphCanvas({
         backgroundColor="transparent"
         nodeId="id"
         numDimensions={3}
-        nodeLabel={(node) => nodeTooltip(node as GraphNode)}
-        nodeColor={(node) => canvasColors.node((node as GraphNode).kind)}
-        nodeVal={(node) => {
-          const graphNode = node as GraphNode;
-          const highlighted = highlightedNodeSet.has(graphNode.id);
-          return (graphNode.val ?? 4) * (highlighted ? 1.6 : 1);
-        }}
+        nodeLabel={nodeLabelAccessor}
+        nodeColor={nodeColorAccessor}
+        nodeVal={nodeValAccessor}
         nodeOpacity={0.96}
         nodeResolution={16}
-        linkColor={(link) => edgeColor(link as GraphLink)}
+        linkColor={linkColorAccessor}
         linkOpacity={0.78}
-        linkWidth={(link) => edgeWidth(link as GraphLink)}
-        linkCurvature={(link) => (isProposeOnlyRelationship((link as GraphLink).type) ? 0.12 : 0.04)}
-        linkDirectionalArrowLength={(link) => (isProposeOnlyRelationship((link as GraphLink).type) ? 4 : 0)}
-        linkDirectionalArrowColor={(link) => edgeColor(link as GraphLink)}
+        linkWidth={linkWidthAccessor}
+        linkCurvature={linkCurvatureAccessor}
+        linkDirectionalArrowLength={linkArrowLengthAccessor}
+        linkDirectionalArrowColor={linkArrowColorAccessor}
         linkDirectionalArrowRelPos={0.92}
-        linkDirectionalParticles={(link) => edgeParticles(link as GraphLink)}
+        linkDirectionalParticles={linkParticlesAccessor}
         linkDirectionalParticleSpeed={0.004}
-        linkDirectionalParticleWidth={(link) => (isProposeOnlyRelationship((link as GraphLink).type) ? 1.5 : 1)}
-        linkDirectionalParticleColor={(link) => edgeParticleColor(link as GraphLink)}
-        linkLabel={(link) => linkLabel(link as GraphLink)}
+        linkDirectionalParticleWidth={linkParticleWidthAccessor}
+        linkDirectionalParticleColor={linkParticleColorAccessor}
+        linkLabel={linkLabelAccessor}
         showNavInfo={false}
         enableNavigationControls
         enablePointerInteraction
         cooldownTicks={forceConfig.cooldownTicks}
         warmupTicks={forceConfig.warmupTicks}
-        onEngineTick={() => setEngineTick((value) => value + 1)}
-        onNodeClick={(node) => onNodeClick(node as GraphNode)}
-        onNodeHover={(node) => setHoveredNodeId(node ? (node as GraphNode).id : null)}
-        onBackgroundClick={() => setHoveredNodeId(null)}
+        onEngineTick={handleEngineTick}
+        onNodeClick={handleNodeClick}
+        onNodeHover={handleNodeHover}
+        onBackgroundClick={handleBackgroundClick}
       />
       <div className="pointer-events-none absolute inset-0">
         {projectedLabels.map((label) => (

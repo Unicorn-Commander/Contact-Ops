@@ -805,7 +805,7 @@ function ListPane({
       <div ref={scrollRef} className="co-scrollbar h-full overflow-y-auto p-co-16" aria-live="polite">
         {isLoading ? (
           <p className="flex items-center gap-co-8 text-13 text-muted-foreground">
-            <Spinner size="sm" />
+            <Spinner size="sm" label="" />
             <span>Loading proposals...</span>
           </p>
         ) : (
