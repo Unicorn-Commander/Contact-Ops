@@ -469,6 +469,7 @@ function InboxCockpit() {
               d.setHours(9, 0, 0, 0);
               doSnooze(p, d, false);
             }}
+            mobileSwipe
           />
         )}
       </div>
@@ -849,6 +850,7 @@ type MobileListProps = {
   onApprove: (p: Proposal) => void;
   onReject: (p: Proposal) => void;
   onSnoozeDefault: (p: Proposal) => void;
+  mobileSwipe?: boolean;
 };
 
 function MobileList({
@@ -858,17 +860,19 @@ function MobileList({
   onApprove,
   onReject,
   onSnoozeDefault,
+  mobileSwipe = false,
 }: MobileListProps) {
   void onSnoozeDefault; // wired via swipe gestures
   return (
     <div className="space-y-3">
       {clusters.map((cluster) => (
         <ClusterCard
-          key={cluster.cluster_id}
-          cluster={cluster}
-          proposals={cluster.proposals}
-          expanded={expandedClusters.has(cluster.cluster_id)}
-          onToggle={() => onToggleCluster(cluster.cluster_id)}
+            key={cluster.cluster_id}
+            cluster={cluster}
+            proposals={cluster.proposals}
+            expanded={expandedClusters.has(cluster.cluster_id)}
+            onToggle={() => onToggleCluster(cluster.cluster_id)}
+            mobileSwipe={mobileSwipe}
           onQuickApprove={(p) => {
             const tier = selectTier(p, { tenantAutoApprove: {} });
             if (tier >= 3 || p.compliance.hipaa) {
