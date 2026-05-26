@@ -1,26 +1,27 @@
 export const graphColors: Record<string, string> = {
-  Person: "#22c55e",
-  Organization: "#38bdf8",
-  Topic: "#f59e0b",
-  Tag: "#a78bfa",
-  Email: "#f472b6",
-  Phone: "#14b8a6",
-  Entity: "#94a3b8"
+  Person: "oklch(var(--primary))",
+  Organization: "oklch(var(--info))",
+  Topic: "oklch(var(--warning))",
+  Tag: "oklch(var(--confidence-rose))",
+  Email: "oklch(var(--confidence-sky))",
+  Phone: "oklch(var(--confidence-emerald))",
+  Agent: "oklch(var(--confidence-amber))",
+  Entity: "oklch(var(--muted-foreground))"
 };
 
 export const edgeColors: Record<string, string> = {
-  WORKS_AT: "#38bdf8",
-  KNOWS: "#22c55e",
-  FAMILY_OF: "#f472b6",
-  REPORTS_TO: "#f59e0b",
-  COUNSEL_FOR: "#ef4444",
-  WITNESS_FOR: "#fb7185",
-  PARTY_TO: "#a78bfa",
-  MENTIONED_IN: "#94a3b8",
-  DUPLICATE_OF: "#f97316",
-  TAGGED: "#a78bfa",
-  HAS_EMAIL: "#f472b6",
-  HAS_PHONE: "#14b8a6"
+  WORKS_AT: "oklch(var(--info))",
+  KNOWS: "oklch(var(--success))",
+  FAMILY_OF: "oklch(var(--confidence-rose))",
+  REPORTS_TO: "oklch(var(--warning))",
+  COUNSEL_FOR: "oklch(var(--destructive))",
+  WITNESS_FOR: "oklch(var(--destructive))",
+  PARTY_TO: "oklch(var(--confidence-sky))",
+  MENTIONED_IN: "oklch(var(--muted-foreground))",
+  DUPLICATE_OF: "oklch(var(--confidence-amber))",
+  TAGGED: "oklch(var(--confidence-rose))",
+  HAS_EMAIL: "oklch(var(--confidence-sky))",
+  HAS_PHONE: "oklch(var(--confidence-emerald))"
 };
 
 export function colorForNode(kind: string) {
@@ -28,5 +29,17 @@ export function colorForNode(kind: string) {
 }
 
 export function colorForEdge(kind: string) {
-  return edgeColors[kind] ?? "#64748b";
+  return edgeColors[kind] ?? "oklch(var(--muted-foreground))";
+}
+
+const proposeOnlyEdgeKinds = new Set([
+  "COUNSEL_FOR",
+  "WITNESS_FOR",
+  "FAMILY_OF",
+  "PARTY_TO",
+  "DUPLICATE_OF"
+]);
+
+export function isProposeOnlyRelationship(kind: string) {
+  return proposeOnlyEdgeKinds.has(kind);
 }
