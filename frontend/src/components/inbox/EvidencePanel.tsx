@@ -79,7 +79,7 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
           {query.isPending && (
             <div className="space-y-co-8">
               <div className="flex items-center gap-co-6 text-12 text-muted-foreground">
-                <Spinner size="sm" />
+                <Spinner size="sm" label="" />
                 <span>Loading evidence</span>
               </div>
               <Skeleton className="h-4 w-3/4" />

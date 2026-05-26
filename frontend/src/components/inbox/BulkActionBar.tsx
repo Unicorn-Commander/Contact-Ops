@@ -104,7 +104,7 @@ export function BulkActionBar({
                 onClick={onApproveAll}
                 title="Approve all eligible"
               >
-                {busy ? <Spinner size="sm" /> : null}
+                {busy ? <Spinner size="sm" label="" /> : null}
                 Approve eligible
                 <MonoNumeric tone="strong" className="text-success-foreground">({eligibleCount})</MonoNumeric>
               </Button>

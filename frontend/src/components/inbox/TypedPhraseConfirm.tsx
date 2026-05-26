@@ -145,7 +145,7 @@ export function TypedPhraseConfirm({
             onClick={handleConfirm}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            {busy ? <Spinner size="sm" /> : null}
+            {busy ? <Spinner size="sm" label="" /> : null}
             Confirm
             <KeyboardHint
               keys="Enter"

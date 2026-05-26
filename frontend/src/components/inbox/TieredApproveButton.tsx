@@ -82,7 +82,7 @@ export function TieredApproveButton({
           disabled={busy}
           onClick={() => setConfirmOpen(true)}
         >
-          {busy ? <Spinner size="sm" /> : null}
+          {busy ? <Spinner size="sm" label="" /> : null}
           Type to approve
         </Button>
         {phrase && (
@@ -121,7 +121,7 @@ export function TieredApproveButton({
       >
         {diffReady ? (
           <>
-            {busy ? <Spinner size="sm" /> : null}
+            {busy ? <Spinner size="sm" label="" /> : null}
             Approve
             <KeyboardHint
               keys="Y"
@@ -153,7 +153,7 @@ export function TieredApproveButton({
       >
         {evidenceSeen ? (
           <>
-            {busy ? <Spinner size="sm" /> : null}
+            {busy ? <Spinner size="sm" label="" /> : null}
             Approve
             <KeyboardHint
               keys="Y"
@@ -175,7 +175,7 @@ export function TieredApproveButton({
       disabled={busy}
       onClick={() => onApprove(null)}
     >
-      {busy ? <Spinner size="sm" /> : null}
+      {busy ? <Spinner size="sm" label="" /> : null}
       Approve
       <KeyboardHint
         keys="Y"
