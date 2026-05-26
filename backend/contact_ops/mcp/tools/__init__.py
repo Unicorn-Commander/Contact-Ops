@@ -48,6 +48,7 @@ _PHASE_3_MODULES = (
     "voice_match_admin",
     "inbox",
     "calibration_admin",
+    "consumer_webhooks",
 )
 
 
