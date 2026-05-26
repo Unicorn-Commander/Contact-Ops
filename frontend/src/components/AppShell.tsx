@@ -61,7 +61,7 @@ export function AppShell() {
                 to={item.to}
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-                  active && "bg-violet-500/10 text-violet-500 border-l-2 border-violet-500"
+                  active && "bg-primary/10 text-foreground border-l-2 border-primary"
                 )}
               >
                 <Icon className="h-4 w-4" />

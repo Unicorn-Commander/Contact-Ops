@@ -79,6 +79,7 @@ export function ConfidenceIndicator({
       )}
       style={style}
       title={detail}
+      role="img"
       aria-label={detail}
       data-confidence-tier={tier}
       data-confidence-mode={mode}
