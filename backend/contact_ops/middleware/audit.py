@@ -123,9 +123,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
                             content_hash
                         ) VALUES (
                             :event_type, 1,
-                            :tenant_id::uuid, 'interaction'::entity_kind, :aggregate_id::uuid,
+                            CAST(:tenant_id AS uuid), 'interaction'::entity_kind,
+                            CAST(:aggregate_id AS uuid),
                             CAST(:payload AS jsonb), CAST(:actor AS jsonb), 'human'::actor_type,
-                            :human_authority::uuid,
+                            CAST(:human_authority AS uuid),
                             CAST(:evidence AS jsonb), CAST(:status AS event_status),
                             :content_hash
                         )
@@ -139,9 +140,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
                         "actor": json.dumps(actor_chain, sort_keys=True, separators=(",", ":")),
                         "human_authority": str(human_authority) if human_authority else None,
                         "evidence": json.dumps(
-                            {"source": "http_audit", "client_id": claims.get("azp") or claims.get("aud")},
-                            sort_keys=True,
-                            separators=(",", ":"),
+                            {"source": "http_audit",
+                             "client_id": claims.get("azp") or claims.get("aud")},
+                            sort_keys=True, separators=(",", ":"),
                         ),
                         "status": event_status,
                         "content_hash": content_hash,
