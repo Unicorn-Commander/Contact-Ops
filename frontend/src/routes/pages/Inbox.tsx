@@ -19,12 +19,11 @@
  * detail · Y approve · N reject · H snooze · M mute · D dismiss · Esc
  * clear · ⌘A select all · ⌘K command palette · ⌘. focus mode · ⌘Z undo.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
 import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
-import { AlertTriangle, Bell, ExternalLink } from "lucide-react";
+import { AlertTriangle, Bell, ExternalLink, Monitor } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -56,6 +55,7 @@ import {
   useSnoozeMutation,
   type InboxFilters,
 } from "@/hooks/useInbox";
+import { TypedPhraseConfirm } from "@/components/inbox/TypedPhraseConfirm";
 import { useFocusMode } from "@/hooks/useFocusMode";
 import { applyFocusMode, hydrateClusters } from "@/lib/inbox/clusterGrouping";
 import { selectTier } from "@/lib/inbox/tierSelector";
@@ -91,12 +91,46 @@ function InboxCockpit() {
   const [fieldChoicesByProposal, setFieldChoicesByProposal] = useState<
     Record<string, Record<string, FieldChoice>>
   >({});
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkConfirmCount, setBulkConfirmCount] = useState(0);
+  const [conflictsOnly, setConflictsOnly] = useState(false);
+  const [tenantIds, setTenantIds] = useState<string[] | undefined>(undefined);
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const [hipaaOnlyFromUrl, setHipaaOnlyFromUrl] = useState(false);
 
   const focusMode = useFocusMode();
 
+  function readUrlParams() {
+    const params = new URLSearchParams(window.location.search);
+    const tenantParam = params.get("tenant");
+    const agentParam = params.get("agent");
+    const hipaaParam = params.get("hipaa_only");
+    setTenantIds(tenantParam ? [tenantParam] : undefined);
+    setAgentFilter(agentParam);
+    setHipaaOnlyFromUrl(hipaaParam === "true");
+  }
+
+  // Read URL params on mount
+  useEffect(() => {
+    readUrlParams();
+  }, []);
+
+  // Keep URL params in sync
+  useEffect(() => {
+    const handler = readUrlParams;
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
+
   const filters: InboxFilters = useMemo(
-    () => ({ status: view === "needs-review" ? "proposed" : view === "snoozed" ? "snoozed" : "resolved" }),
-    [view],
+    () => ({
+      status: view === "needs-review" ? "proposed" : view === "snoozed" ? "snoozed" : "resolved",
+      conflictsOnly: conflictsOnly || undefined,
+      tenantIds: tenantIds,
+      agentSlugs: agentFilter ? [agentFilter] : undefined,
+      hipaaOnly: hipaaOnlyFromUrl || undefined,
+    }),
+    [view, conflictsOnly, tenantIds, agentFilter, hipaaOnlyFromUrl],
   );
   const list = useInboxList(filters);
   const approve = useApproveMutation(filters);
@@ -327,24 +361,49 @@ function InboxCockpit() {
         return fieldChoices[e.field] !== undefined || e.agentRecommendation != null;
       });
 
+  // ---- dynamic agent slugs from the current inbox list ----
+  const agentSlugs = useMemo(() => {
+    const slugs = new Set<string>();
+    for (const p of allProposalsRaw) {
+      if (p.agent_id && p.agent_id !== "unknown") slugs.add(p.agent_id);
+    }
+    return Array.from(slugs).sort();
+  }, [allProposalsRaw]);
+
   // ---- command palette actions ----
   const paletteActions = useMemo(
-    () => [
-      { id: "approve", group: "Actions" as const, label: "Approve focused", shortcut: "Y", onRun: () => doApprove(focusedProposal, false), hidden: !focusedProposal },
-      { id: "reject", group: "Actions" as const, label: "Reject focused", shortcut: "N", onRun: () => doReject(focusedProposal, false), hidden: !focusedProposal },
-      { id: "mute", group: "Actions" as const, label: "Mute agent for this entity", shortcut: "M", onRun: () => doMute(focusedProposal), hidden: !focusedProposal },
-      { id: "dismiss", group: "Actions" as const, label: "Dismiss as duplicate", shortcut: "D", onRun: () => doDismiss(focusedProposal), hidden: !focusedProposal },
-      { id: "nav-review", group: "Navigate" as const, label: "Jump to needs-review", onRun: () => setView("needs-review") },
-      { id: "nav-snoozed", group: "Navigate" as const, label: "Jump to snoozed", onRun: () => setView("snoozed") },
-      { id: "nav-resolved", group: "Navigate" as const, label: "Jump to recently resolved", onRun: () => setView("resolved") },
-      { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "⌘.", onRun: () => focusMode.toggle() },
-      { id: "settings-auto", group: "Settings" as const, label: "Open auto-approve thresholds", onRun: () => navigate({ to: "/settings" }) },
-    ],
-    // doApprove/doReject/doMute/doDismiss are stable for the lifetime of
-    // a focusedProposal; including them here would trigger recreation on
-    // every parent render. Linter exhaustive-deps disabled intentionally.
+    () => {
+      const agentFilterEntries = agentSlugs.map((slug) => ({
+        id: `agent-filter-${slug}`,
+        group: "Filter" as const,
+        label: `Filter by ${slug}`,
+        onRun: () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("agent", slug);
+          window.history.replaceState({}, "", url);
+        },
+      }));
+
+      return [
+        { id: "approve", group: "Actions" as const, label: "Approve focused", shortcut: "Y", onRun: () => doApprove(focusedProposal, false), hidden: !focusedProposal },
+        { id: "reject", group: "Actions" as const, label: "Reject focused", shortcut: "N", onRun: () => doReject(focusedProposal, false), hidden: !focusedProposal },
+        { id: "mute", group: "Actions" as const, label: "Mute agent for this entity", shortcut: "M", onRun: () => doMute(focusedProposal), hidden: !focusedProposal },
+        { id: "dismiss", group: "Actions" as const, label: "Dismiss as duplicate", shortcut: "D", onRun: () => doDismiss(focusedProposal), hidden: !focusedProposal },
+        { id: "nav-review", group: "Navigate" as const, label: "Jump to needs-review", onRun: () => setView("needs-review") },
+        { id: "nav-snoozed", group: "Navigate" as const, label: "Jump to snoozed", onRun: () => setView("snoozed") },
+        { id: "nav-resolved", group: "Navigate" as const, label: "Jump to recently resolved", onRun: () => setView("resolved") },
+        { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "⌘.", onRun: () => focusMode.toggle() },
+        { id: "hipaa-only", group: "Filter" as const, label: "HIPAA only", onRun: () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("hipaa_only", "true");
+          window.history.replaceState({}, "", url);
+        }},
+        ...agentFilterEntries,
+        { id: "settings-auto", group: "Settings" as const, label: "Open auto-approve thresholds", onRun: () => navigate({ to: "/settings" }) },
+      ];
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [focusedProposal, focusMode, navigate],
+    [focusedProposal, focusMode, navigate, agentSlugs],
   );
 
   // ---- render ----
@@ -356,6 +415,8 @@ function InboxCockpit() {
         focusMode={focusMode.enabled}
         onToggleFocusMode={focusMode.toggle}
         totals={totals}
+        conflictsOnly={conflictsOnly}
+        onToggleConflicts={() => setConflictsOnly((v) => !v)}
       />
 
       {/* Desktop 3-pane */}
@@ -469,6 +530,7 @@ function InboxCockpit() {
               d.setHours(9, 0, 0, 0);
               doSnooze(p, d, false);
             }}
+            mobileSwipe
           />
         )}
       </div>
@@ -491,9 +553,8 @@ function InboxCockpit() {
             .map((p) => p.proposal_id);
           if (eligibleIds.length === 0) return;
           if (eligibleIds.length > 10) {
-            const phrase = window.prompt(`Type "approve ${eligibleIds.length} items" to confirm:`);
-            if (phrase === null) return;
-            bulkApprove.mutate({ proposalIds: eligibleIds, typedPhrase: phrase, tier: 1 });
+            setBulkConfirmCount(eligibleIds.length);
+            setBulkConfirmOpen(true);
             return;
           }
           bulkApprove.mutate({ proposalIds: eligibleIds, tier: 1 });
@@ -516,6 +577,37 @@ function InboxCockpit() {
         onClear={() => setSelectedIds(new Set())}
       />
 
+      {/* Bulk typed-phrase confirm modal (>10 items) */}
+      <TypedPhraseConfirm
+        open={bulkConfirmOpen}
+        onOpenChange={setBulkConfirmOpen}
+        expectedPhrase={`approve ${bulkConfirmCount} items`}
+        policyExplanation={`Approve ${bulkConfirmCount} proposals at once.`}
+        policyDetail="Bulk approval applies to all eligible (T1/T2, non-HIPAA, non-cross-tenant) selected proposals."
+        busy={bulkApprove.isPending}
+        onConfirm={(typed) => {
+          const eligibleIds = visibleProposals
+            .filter((p) => selectedIds.has(p.proposal_id))
+            .filter((p) => {
+              const tier = selectTier(p, { tenantAutoApprove: {} });
+              return tier <= 2 && !p.compliance.hipaa && !p.cross_tenant;
+            })
+            .map((p) => p.proposal_id);
+          if (eligibleIds.length === 0) return;
+          bulkApprove.mutate({ proposalIds: eligibleIds, typedPhrase: typed, tier: 1 });
+        }}
+        onOfferSnooze={() => {
+          const ids = Array.from(selectedIds);
+          if (ids.length === 0) return;
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(9, 0, 0, 0);
+          for (const id of ids) {
+            snooze.mutate({ proposalId: id, snoozeUntil: tomorrow, reason: "tomorrow" });
+          }
+        }}
+      />
+
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -533,18 +625,45 @@ type HeaderProps = {
   focusMode: boolean;
   onToggleFocusMode: () => void;
   totals: { today: number; approved: number; rejected: number; snoozed: number };
+  conflictsOnly: boolean;
+  onToggleConflicts: () => void;
 };
 
-function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals }: HeaderProps) {
+function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals, conflictsOnly, onToggleConflicts }: HeaderProps) {
   void view;
   void onViewChange;
+  const handleSendToDesktop = useCallback(() => {
+    const url = import.meta.env.VITE_DESKTOP_HANDOFF_URL;
+    if (!url) return;
+    const currentUrl = window.location.href;
+    window.open(`${url}?url=${encodeURIComponent(currentUrl)}`, "_blank");
+  }, []);
+
   return (
     <header className="flex flex-wrap items-center gap-3 border-b bg-card/70 px-4 py-2.5">
       <span className="font-mono text-sm tabular-nums text-muted-foreground">
         {totals.today} today · {totals.approved} approved · {totals.rejected} rejected · {totals.snoozed} snoozed
       </span>
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="gap-1.5" title="Filter: conflicts only">
+        {import.meta.env.VITE_DESKTOP_HANDOFF_URL && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleSendToDesktop}
+            title="Send link to desktop app"
+          >
+            <Monitor className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Desktop</span>
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn("gap-1.5", conflictsOnly && "bg-amber-500/10 text-amber-600")}
+          onClick={onToggleConflicts}
+          title="Filter: conflicts only"
+          aria-pressed={conflictsOnly}
+        >
           <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
           <span className="hidden sm:inline">Conflicts</span>
         </Button>
@@ -696,7 +815,7 @@ function ListPane({
                     const first = cluster.proposals[0];
                     if (first) onSelectProposal(first);
                   }}
-                  hasConflict={cluster.proposals.some(() => false /* per-proposal conflict signal would slot here */)}
+                  hasConflict={cluster.hasConflict}
                 />
               </div>
             </div>
@@ -849,6 +968,7 @@ type MobileListProps = {
   onApprove: (p: Proposal) => void;
   onReject: (p: Proposal) => void;
   onSnoozeDefault: (p: Proposal) => void;
+  mobileSwipe?: boolean;
 };
 
 function MobileList({
@@ -858,17 +978,19 @@ function MobileList({
   onApprove,
   onReject,
   onSnoozeDefault,
+  mobileSwipe = false,
 }: MobileListProps) {
   void onSnoozeDefault; // wired via swipe gestures
   return (
     <div className="space-y-3">
       {clusters.map((cluster) => (
         <ClusterCard
-          key={cluster.cluster_id}
-          cluster={cluster}
-          proposals={cluster.proposals}
-          expanded={expandedClusters.has(cluster.cluster_id)}
-          onToggle={() => onToggleCluster(cluster.cluster_id)}
+            key={cluster.cluster_id}
+            cluster={cluster}
+            proposals={cluster.proposals}
+            expanded={expandedClusters.has(cluster.cluster_id)}
+            onToggle={() => onToggleCluster(cluster.cluster_id)}
+            mobileSwipe={mobileSwipe}
           onQuickApprove={(p) => {
             const tier = selectTier(p, { tenantAutoApprove: {} });
             if (tier >= 3 || p.compliance.hipaa) {

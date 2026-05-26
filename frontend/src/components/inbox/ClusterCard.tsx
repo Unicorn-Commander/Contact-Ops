@@ -24,6 +24,7 @@ import { Card } from "@/components/ui/card";
 import { AgentBadge } from "@/components/inbox/AgentBadge";
 import { ConfidenceDots } from "@/components/inbox/ConfidenceDots";
 import { ProposalRow } from "@/components/inbox/ProposalRow";
+import { SwipeableProposalRow } from "@/components/inbox/SwipeableProposalRow";
 
 const MAX_INLINE = 12;
 
@@ -45,6 +46,8 @@ export type ClusterCardProps = {
   showTenantBadge?: boolean;
   tenantSlug?: string;
   hasConflict?: boolean;
+  /** When true, render SwipeableProposalRow for mobile swipe gestures. */
+  mobileSwipe?: boolean;
 };
 
 export function ClusterCard({
@@ -64,6 +67,7 @@ export function ClusterCard({
   showTenantBadge = false,
   tenantSlug,
   hasConflict = false,
+  mobileSwipe = false,
 }: ClusterCardProps) {
   const prefersReduced = useReducedMotion();
   const visible = proposals.slice(0, MAX_INLINE);
@@ -118,7 +122,9 @@ export function ClusterCard({
             </span>
           )}
           {hasConflict && (
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-label="Has conflict" />
+            <span title={`${proposals.length} proposals in this cluster conflict; review in detail pane`}>
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-label="Has conflict" />
+            </span>
           )}
         </div>
         <Badge variant="outline" className="font-mono text-[10px]" aria-label={`${proposals.length} proposals`}>
@@ -154,18 +160,31 @@ export function ClusterCard({
             className="overflow-hidden border-t bg-card/40"
           >
             <div className="space-y-1 p-2">
-              {visible.map((p) => (
-                <ProposalRow
-                  key={p.proposal_id}
-                  proposal={p}
-                  focused={focusedProposalId === p.proposal_id}
-                  selected={selectedProposalIds?.has(p.proposal_id) ?? false}
-                  onSelect={() => onSelectProposal?.(p)}
-                  onFocus={() => onFocusProposal?.(p)}
-                  onApprove={() => onQuickApprove?.(p)}
-                  onReject={() => onQuickReject?.(p)}
-                />
-              ))}
+              {visible.map((p) =>
+                mobileSwipe ? (
+                  <SwipeableProposalRow
+                    key={p.proposal_id}
+                    proposal={p}
+                    focused={focusedProposalId === p.proposal_id}
+                    selected={selectedProposalIds?.has(p.proposal_id) ?? false}
+                    onSelect={() => onSelectProposal?.(p)}
+                    onFocus={() => onFocusProposal?.(p)}
+                    onApprove={() => onQuickApprove?.(p)}
+                    onReject={() => onQuickReject?.(p)}
+                  />
+                ) : (
+                  <ProposalRow
+                    key={p.proposal_id}
+                    proposal={p}
+                    focused={focusedProposalId === p.proposal_id}
+                    selected={selectedProposalIds?.has(p.proposal_id) ?? false}
+                    onSelect={() => onSelectProposal?.(p)}
+                    onFocus={() => onFocusProposal?.(p)}
+                    onApprove={() => onQuickApprove?.(p)}
+                    onReject={() => onQuickReject?.(p)}
+                  />
+                ),
+              )}
               {overflow > 0 && (
                 <p className="px-3 py-1 text-xs text-muted-foreground">
                   +{overflow} more in this cluster — open detail to review

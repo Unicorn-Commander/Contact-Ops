@@ -62,6 +62,7 @@ class Proposal(BaseModel):
     agent_id: str  # agent slug
     agent_version: str
     tenant_id: uuid.UUID
+    tenant_slug: str
     entity_id: uuid.UUID
     entity_kind: EntityKind
     entity_display_name: str

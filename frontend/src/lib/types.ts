@@ -181,6 +181,7 @@ export type Proposal = {
   agent_id: string;
   agent_version: string;
   tenant_id: UUID;
+  tenant_slug: string;
   entity_id: UUID;
   entity_kind: EntityKind;
   entity_display_name: string;
