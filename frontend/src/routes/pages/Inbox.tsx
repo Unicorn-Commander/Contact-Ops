@@ -19,11 +19,11 @@
  * detail · Y approve · N reject · H snooze · M mute · D dismiss · Esc
  * clear · ⌘A select all · ⌘K command palette · ⌘. focus mode · ⌘Z undo.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
 import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertTriangle, Bell, ExternalLink } from "lucide-react";
+import { AlertTriangle, Bell, ExternalLink, Monitor } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -632,12 +632,30 @@ type HeaderProps = {
 function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals, conflictsOnly, onToggleConflicts }: HeaderProps) {
   void view;
   void onViewChange;
+  const handleSendToDesktop = useCallback(() => {
+    const url = import.meta.env.VITE_DESKTOP_HANDOFF_URL;
+    if (!url) return;
+    const currentUrl = window.location.href;
+    window.open(`${url}?url=${encodeURIComponent(currentUrl)}`, "_blank");
+  }, []);
+
   return (
     <header className="flex flex-wrap items-center gap-3 border-b bg-card/70 px-4 py-2.5">
       <span className="font-mono text-sm tabular-nums text-muted-foreground">
         {totals.today} today · {totals.approved} approved · {totals.rejected} rejected · {totals.snoozed} snoozed
       </span>
       <div className="ml-auto flex items-center gap-2">
+        {import.meta.env.VITE_DESKTOP_HANDOFF_URL && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleSendToDesktop}
+            title="Send link to desktop app"
+          >
+            <Monitor className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Desktop</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
