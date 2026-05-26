@@ -95,25 +95,29 @@ function InboxCockpit() {
   const [bulkConfirmCount, setBulkConfirmCount] = useState(0);
   const [conflictsOnly, setConflictsOnly] = useState(false);
   const [tenantIds, setTenantIds] = useState<string[] | undefined>(undefined);
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const [hipaaOnlyFromUrl, setHipaaOnlyFromUrl] = useState(false);
 
   const focusMode = useFocusMode();
 
-  // Read ?tenant=<uuid> from URL (written by TenantSwitcher)
-  useEffect(() => {
+  function readUrlParams() {
     const params = new URLSearchParams(window.location.search);
     const tenantParam = params.get("tenant");
-    if (tenantParam) {
-      setTenantIds([tenantParam]);
-    }
+    const agentParam = params.get("agent");
+    const hipaaParam = params.get("hipaa_only");
+    setTenantIds(tenantParam ? [tenantParam] : undefined);
+    setAgentFilter(agentParam);
+    setHipaaOnlyFromUrl(hipaaParam === "true");
+  }
+
+  // Read URL params on mount
+  useEffect(() => {
+    readUrlParams();
   }, []);
 
-  // Keep tenantIds in sync if URL changes
+  // Keep URL params in sync
   useEffect(() => {
-    const handler = () => {
-      const params = new URLSearchParams(window.location.search);
-      const tenantParam = params.get("tenant");
-      setTenantIds(tenantParam ? [tenantParam] : undefined);
-    };
+    const handler = readUrlParams;
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
   }, []);
@@ -123,8 +127,10 @@ function InboxCockpit() {
       status: view === "needs-review" ? "proposed" : view === "snoozed" ? "snoozed" : "resolved",
       conflictsOnly: conflictsOnly || undefined,
       tenantIds: tenantIds,
+      agentSlugs: agentFilter ? [agentFilter] : undefined,
+      hipaaOnly: hipaaOnlyFromUrl || undefined,
     }),
-    [view, conflictsOnly, tenantIds],
+    [view, conflictsOnly, tenantIds, agentFilter, hipaaOnlyFromUrl],
   );
   const list = useInboxList(filters);
   const approve = useApproveMutation(filters);
@@ -355,24 +361,49 @@ function InboxCockpit() {
         return fieldChoices[e.field] !== undefined || e.agentRecommendation != null;
       });
 
+  // ---- dynamic agent slugs from the current inbox list ----
+  const agentSlugs = useMemo(() => {
+    const slugs = new Set<string>();
+    for (const p of allProposalsRaw) {
+      if (p.agent_id && p.agent_id !== "unknown") slugs.add(p.agent_id);
+    }
+    return Array.from(slugs).sort();
+  }, [allProposalsRaw]);
+
   // ---- command palette actions ----
   const paletteActions = useMemo(
-    () => [
-      { id: "approve", group: "Actions" as const, label: "Approve focused", shortcut: "Y", onRun: () => doApprove(focusedProposal, false), hidden: !focusedProposal },
-      { id: "reject", group: "Actions" as const, label: "Reject focused", shortcut: "N", onRun: () => doReject(focusedProposal, false), hidden: !focusedProposal },
-      { id: "mute", group: "Actions" as const, label: "Mute agent for this entity", shortcut: "M", onRun: () => doMute(focusedProposal), hidden: !focusedProposal },
-      { id: "dismiss", group: "Actions" as const, label: "Dismiss as duplicate", shortcut: "D", onRun: () => doDismiss(focusedProposal), hidden: !focusedProposal },
-      { id: "nav-review", group: "Navigate" as const, label: "Jump to needs-review", onRun: () => setView("needs-review") },
-      { id: "nav-snoozed", group: "Navigate" as const, label: "Jump to snoozed", onRun: () => setView("snoozed") },
-      { id: "nav-resolved", group: "Navigate" as const, label: "Jump to recently resolved", onRun: () => setView("resolved") },
-      { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "⌘.", onRun: () => focusMode.toggle() },
-      { id: "settings-auto", group: "Settings" as const, label: "Open auto-approve thresholds", onRun: () => navigate({ to: "/settings" }) },
-    ],
-    // doApprove/doReject/doMute/doDismiss are stable for the lifetime of
-    // a focusedProposal; including them here would trigger recreation on
-    // every parent render. Linter exhaustive-deps disabled intentionally.
+    () => {
+      const agentFilterEntries = agentSlugs.map((slug) => ({
+        id: `agent-filter-${slug}`,
+        group: "Filter" as const,
+        label: `Filter by ${slug}`,
+        onRun: () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("agent", slug);
+          window.history.replaceState({}, "", url);
+        },
+      }));
+
+      return [
+        { id: "approve", group: "Actions" as const, label: "Approve focused", shortcut: "Y", onRun: () => doApprove(focusedProposal, false), hidden: !focusedProposal },
+        { id: "reject", group: "Actions" as const, label: "Reject focused", shortcut: "N", onRun: () => doReject(focusedProposal, false), hidden: !focusedProposal },
+        { id: "mute", group: "Actions" as const, label: "Mute agent for this entity", shortcut: "M", onRun: () => doMute(focusedProposal), hidden: !focusedProposal },
+        { id: "dismiss", group: "Actions" as const, label: "Dismiss as duplicate", shortcut: "D", onRun: () => doDismiss(focusedProposal), hidden: !focusedProposal },
+        { id: "nav-review", group: "Navigate" as const, label: "Jump to needs-review", onRun: () => setView("needs-review") },
+        { id: "nav-snoozed", group: "Navigate" as const, label: "Jump to snoozed", onRun: () => setView("snoozed") },
+        { id: "nav-resolved", group: "Navigate" as const, label: "Jump to recently resolved", onRun: () => setView("resolved") },
+        { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "⌘.", onRun: () => focusMode.toggle() },
+        { id: "hipaa-only", group: "Filter" as const, label: "HIPAA only", onRun: () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("hipaa_only", "true");
+          window.history.replaceState({}, "", url);
+        }},
+        ...agentFilterEntries,
+        { id: "settings-auto", group: "Settings" as const, label: "Open auto-approve thresholds", onRun: () => navigate({ to: "/settings" }) },
+      ];
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [focusedProposal, focusMode, navigate],
+    [focusedProposal, focusMode, navigate, agentSlugs],
   );
 
   // ---- render ----
