@@ -19,11 +19,10 @@
  * detail · Y approve · N reject · H snooze · M mute · D dismiss · Esc
  * clear · ⌘A select all · ⌘K command palette · ⌘. focus mode · ⌘Z undo.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
 import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
 import { AlertTriangle, Bell, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
@@ -94,12 +93,38 @@ function InboxCockpit() {
   >({});
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmCount, setBulkConfirmCount] = useState(0);
+  const [conflictsOnly, setConflictsOnly] = useState(false);
+  const [tenantIds, setTenantIds] = useState<string[] | undefined>(undefined);
 
   const focusMode = useFocusMode();
 
+  // Read ?tenant=<uuid> from URL (written by TenantSwitcher)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tenantParam = params.get("tenant");
+    if (tenantParam) {
+      setTenantIds([tenantParam]);
+    }
+  }, []);
+
+  // Keep tenantIds in sync if URL changes
+  useEffect(() => {
+    const handler = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tenantParam = params.get("tenant");
+      setTenantIds(tenantParam ? [tenantParam] : undefined);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
+
   const filters: InboxFilters = useMemo(
-    () => ({ status: view === "needs-review" ? "proposed" : view === "snoozed" ? "snoozed" : "resolved" }),
-    [view],
+    () => ({
+      status: view === "needs-review" ? "proposed" : view === "snoozed" ? "snoozed" : "resolved",
+      conflictsOnly: conflictsOnly || undefined,
+      tenantIds: tenantIds,
+    }),
+    [view, conflictsOnly, tenantIds],
   );
   const list = useInboxList(filters);
   const approve = useApproveMutation(filters);
@@ -359,6 +384,8 @@ function InboxCockpit() {
         focusMode={focusMode.enabled}
         onToggleFocusMode={focusMode.toggle}
         totals={totals}
+        conflictsOnly={conflictsOnly}
+        onToggleConflicts={() => setConflictsOnly((v) => !v)}
       />
 
       {/* Desktop 3-pane */}
@@ -567,9 +594,11 @@ type HeaderProps = {
   focusMode: boolean;
   onToggleFocusMode: () => void;
   totals: { today: number; approved: number; rejected: number; snoozed: number };
+  conflictsOnly: boolean;
+  onToggleConflicts: () => void;
 };
 
-function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals }: HeaderProps) {
+function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals, conflictsOnly, onToggleConflicts }: HeaderProps) {
   void view;
   void onViewChange;
   return (
@@ -578,7 +607,14 @@ function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals 
         {totals.today} today · {totals.approved} approved · {totals.rejected} rejected · {totals.snoozed} snoozed
       </span>
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="gap-1.5" title="Filter: conflicts only">
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn("gap-1.5", conflictsOnly && "bg-amber-500/10 text-amber-600")}
+          onClick={onToggleConflicts}
+          title="Filter: conflicts only"
+          aria-pressed={conflictsOnly}
+        >
           <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
           <span className="hidden sm:inline">Conflicts</span>
         </Button>
@@ -730,7 +766,7 @@ function ListPane({
                     const first = cluster.proposals[0];
                     if (first) onSelectProposal(first);
                   }}
-                  hasConflict={cluster.proposals.some(() => false /* per-proposal conflict signal would slot here */)}
+                  hasConflict={cluster.hasConflict}
                 />
               </div>
             </div>
