@@ -25,6 +25,10 @@ const InboxRoute = lazy(() =>
   import("@/routes/pages/Inbox").then((m) => ({ default: m.InboxRoute }))
 );
 
+const DesignSystemRoute = import.meta.env.DEV
+  ? lazy(() => import("@/design-system/Showcase").then((m) => ({ default: m.DesignSystemShowcase })))
+  : null;
+
 function LazyInboxRoute() {
   return (
     <Suspense
@@ -43,6 +47,21 @@ function LazyGraphRoute() {
   return (
     <Suspense fallback={<Skeleton className="h-96 w-full" />}>
       <GraphRoute />
+    </Suspense>
+  );
+}
+
+function LazyDesignSystemRoute() {
+  if (!DesignSystemRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <DesignSystemRoute />
     </Suspense>
   );
 }
@@ -141,6 +160,13 @@ const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox",
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
+const designSystemRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system",
+      component: LazyDesignSystemRoute
+    })
+  : null;
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
@@ -163,6 +189,7 @@ function CallbackRoute() {
 }
 
 export const routeTree = rootRoute.addChildren([
+  ...(designSystemRoute ? [designSystemRoute] : []),
   appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, inboxRoute, tenantsRoute, settingsRoute, graphRoute]),
   callbackRoute
 ]);
