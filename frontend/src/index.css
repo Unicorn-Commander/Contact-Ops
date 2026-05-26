@@ -8,8 +8,8 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-sans);
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background-color: oklch(var(--background));
+  color: oklch(var(--foreground));
 }
 
 /* Custom scrollbar */
@@ -19,21 +19,14 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(var(--background));
+  background: oklch(var(--background));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--primary));
+  background: oklch(var(--border));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--primary-foreground));
-}
-
-/* Ensure proper dark mode transitions */
-* {
-  transition-property: color, background-color, border-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+  background: oklch(var(--muted-foreground));
 }

@@ -10,9 +10,26 @@
     <meta property="og:description" content="Canonical contact registry by Magic Unicorn" />
     <meta property="og:type" content="website" />
     <title>Contact-Ops — Magic Unicorn</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <script>
+      // Apply the resolved theme before first paint to avoid a flash of the
+      // wrong color scheme. Mirrors getThemePreference()/applyThemePreference()
+      // in src/design-system/tokens.ts. Does not persist — only an explicit
+      // toggle writes localStorage.
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+          var prefersDark =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme =
+            stored === "light" || stored === "dark" ? stored : prefersDark ? "dark" : "light";
+          var root = document.documentElement;
+          root.dataset.theme = theme;
+          root.classList.toggle("dark", theme === "dark");
+          root.classList.toggle("light", theme === "light");
+          root.style.colorScheme = theme;
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

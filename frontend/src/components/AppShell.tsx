@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
+import {
+  applyThemePreference,
+  getStoredTheme,
+  getThemePreference,
+  setThemePreference,
+  subscribeSystemTheme,
+  type ThemeMode
+} from "@/design-system/tokens";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: Home },
@@ -19,12 +27,20 @@ const nav = [
 
 export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light");
+  const [theme, setTheme] = useState<ThemeMode>(() => getThemePreference());
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("theme", dark ? "dark" : "light");
-  }, [dark]);
+    applyThemePreference(theme);
+  }, [theme]);
+
+  // Follow OS color-scheme changes until the user picks an explicit theme.
+  useEffect(() => {
+    return subscribeSystemTheme((systemTheme) => {
+      if (getStoredTheme() === null) setTheme(systemTheme);
+    });
+  }, []);
+
+  const dark = theme === "dark";
 
   return (
     <div className="min-h-screen bg-background">
@@ -64,7 +80,18 @@ export function AppShell() {
             <Button variant="ghost" size="icon" title="Notifications">
               <Bell className="h-4 w-4" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => setDark((value) => !value)} title="Toggle dark mode">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const next = theme === "dark" ? "light" : "dark";
+                setThemePreference(next);
+                setTheme(next);
+              }}
+              title="Toggle color mode"
+              aria-label="Toggle color mode"
+              aria-pressed={dark}
+            >
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
             <UserMenu />
