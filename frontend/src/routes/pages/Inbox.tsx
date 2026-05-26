@@ -56,6 +56,7 @@ import {
   useSnoozeMutation,
   type InboxFilters,
 } from "@/hooks/useInbox";
+import { TypedPhraseConfirm } from "@/components/inbox/TypedPhraseConfirm";
 import { useFocusMode } from "@/hooks/useFocusMode";
 import { applyFocusMode, hydrateClusters } from "@/lib/inbox/clusterGrouping";
 import { selectTier } from "@/lib/inbox/tierSelector";
@@ -91,6 +92,8 @@ function InboxCockpit() {
   const [fieldChoicesByProposal, setFieldChoicesByProposal] = useState<
     Record<string, Record<string, FieldChoice>>
   >({});
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkConfirmCount, setBulkConfirmCount] = useState(0);
 
   const focusMode = useFocusMode();
 
@@ -492,9 +495,8 @@ function InboxCockpit() {
             .map((p) => p.proposal_id);
           if (eligibleIds.length === 0) return;
           if (eligibleIds.length > 10) {
-            const phrase = window.prompt(`Type "approve ${eligibleIds.length} items" to confirm:`);
-            if (phrase === null) return;
-            bulkApprove.mutate({ proposalIds: eligibleIds, typedPhrase: phrase, tier: 1 });
+            setBulkConfirmCount(eligibleIds.length);
+            setBulkConfirmOpen(true);
             return;
           }
           bulkApprove.mutate({ proposalIds: eligibleIds, tier: 1 });
@@ -515,6 +517,37 @@ function InboxCockpit() {
           }
         }}
         onClear={() => setSelectedIds(new Set())}
+      />
+
+      {/* Bulk typed-phrase confirm modal (>10 items) */}
+      <TypedPhraseConfirm
+        open={bulkConfirmOpen}
+        onOpenChange={setBulkConfirmOpen}
+        expectedPhrase={`approve ${bulkConfirmCount} items`}
+        policyExplanation={`Approve ${bulkConfirmCount} proposals at once.`}
+        policyDetail="Bulk approval applies to all eligible (T1/T2, non-HIPAA, non-cross-tenant) selected proposals."
+        busy={bulkApprove.isPending}
+        onConfirm={(typed) => {
+          const eligibleIds = visibleProposals
+            .filter((p) => selectedIds.has(p.proposal_id))
+            .filter((p) => {
+              const tier = selectTier(p, { tenantAutoApprove: {} });
+              return tier <= 2 && !p.compliance.hipaa && !p.cross_tenant;
+            })
+            .map((p) => p.proposal_id);
+          if (eligibleIds.length === 0) return;
+          bulkApprove.mutate({ proposalIds: eligibleIds, typedPhrase: typed, tier: 1 });
+        }}
+        onOfferSnooze={() => {
+          const ids = Array.from(selectedIds);
+          if (ids.length === 0) return;
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(9, 0, 0, 0);
+          for (const id of ids) {
+            snooze.mutate({ proposalId: id, snoozeUntil: tomorrow, reason: "tomorrow" });
+          }
+        }}
       />
 
       <CommandPalette
