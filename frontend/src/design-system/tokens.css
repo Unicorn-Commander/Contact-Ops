@@ -43,6 +43,7 @@
   --co-brand-200: 0.841 0.096 318;
   --co-brand-300: 0.739 0.139 318;
   --co-brand-500: 0.617 0.19 318;
+  --co-brand-600: 0.55 0.18 318;
   --co-brand-700: 0.492 0.17 318;
   --co-brand-900: 0.355 0.12 318;
   --co-brand-950: 0.244 0.082 318;
@@ -89,7 +90,7 @@
   --card-foreground: var(--foreground);
   --popover: 0.156 0.01 76;
   --popover-foreground: var(--foreground);
-  --primary: var(--co-brand-500);
+  --primary: var(--co-brand-600);
   --primary-foreground: 0.985 0.004 76;
   --secondary: 0.218 0.011 76;
   --secondary-foreground: 0.91 0.006 76;
