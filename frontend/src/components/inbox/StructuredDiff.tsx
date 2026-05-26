@@ -1,5 +1,5 @@
 /**
- * StructuredDiff — three-column field diff for dedup + multi-field enrich.
+ * StructuredDiff - three-column field diff for dedup + multi-field enrich.
  *
  * Columns: master | proposed | choice (radio per-field for T3; accept/reject
  * for T2 and below).
@@ -18,6 +18,7 @@
  */
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MonoNumeric } from "@/design-system";
 
 export type FieldChoice = "master" | "proposed" | "custom";
 
@@ -32,7 +33,7 @@ export type StructuredFieldEntry = {
 };
 
 function formatValue(v: unknown): string {
-  if (v === null || v === undefined) return "—";
+  if (v === null || v === undefined) return "-";
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   try {
@@ -40,6 +41,22 @@ function formatValue(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+function shouldUseMono(field: string, value: unknown): boolean {
+  if (typeof value === "number") return true;
+  const normalized = field.toLowerCase();
+  if (/(^|_)(id|ids|count|score|confidence|tokens?|cost|rank|index)$/.test(normalized)) return true;
+  if (typeof value !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f-]{13,}$/i.test(value) || /^\+?\d[\d\s().-]+$/.test(value);
+}
+
+function FormattedValue({ field, value }: { field: string; value: unknown }) {
+  const formatted = formatValue(value);
+  if (shouldUseMono(field, value)) {
+    return <MonoNumeric className="break-all">{formatted}</MonoNumeric>;
+  }
+  return <>{formatted}</>;
 }
 
 function classify(entry: StructuredFieldEntry): {
@@ -74,18 +91,18 @@ export function StructuredDiff({
 }: StructuredDiffProps) {
   if (fields.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground italic">
+      <p className="text-13 text-muted-foreground italic">
         No structured changes proposed.
       </p>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-md border">
-      <div className="grid grid-cols-[1fr_1fr_min-content] border-b bg-muted/40 text-xs font-medium text-muted-foreground">
-        <div className="px-3 py-2">master (current)</div>
-        <div className="px-3 py-2 border-l">proposed</div>
-        <div className="px-3 py-2 border-l">choice</div>
+    <div className="overflow-hidden rounded-md border border-border bg-card shadow-[var(--shadow-1)]">
+      <div className="grid grid-cols-[1fr_1fr_min-content] border-b border-border bg-muted/45 text-12 font-medium text-muted-foreground">
+        <div className="px-co-12 py-co-8">master (current)</div>
+        <div className="border-l border-border px-co-12 py-co-8">proposed</div>
+        <div className="border-l border-border px-co-12 py-co-8">choice</div>
       </div>
       {fields.map((entry) => {
         const { isAutoMerged, isConflict, isDecideRequired } = classify(entry);
@@ -94,35 +111,34 @@ export function StructuredDiff({
           <div
             key={entry.field}
             className={cn(
-              "group grid grid-cols-[1fr_1fr_min-content] items-stretch text-sm relative",
+              "group relative grid grid-cols-[1fr_1fr_min-content] items-stretch text-13",
               isConflict
-                ? "bg-amber-100/60 dark:bg-amber-900/30"
+                ? "bg-warning/10"
                 : "bg-background",
-              isAutoMerged && "opacity-80",
-              isDecideRequired && "border-l-4 border-l-amber-500",
+              isDecideRequired && "border-l-4 border-l-warning",
             )}
           >
-            <div className="px-3 py-2">
-              <p className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+            <div className="px-co-12 py-co-8">
+              <p className="font-mono text-11 uppercase text-muted-foreground">
                 {entry.field}
               </p>
               <p className={cn(
-                "mt-0.5 break-words",
+                "mt-co-2 break-words",
                 isConflict && chosen === "master" && "font-semibold",
               )}>
-                {formatValue(entry.masterValue)}
+                <FormattedValue field={entry.field} value={entry.masterValue} />
               </p>
             </div>
-            <div className="border-l px-3 py-2 flex items-start gap-2">
+            <div className="flex items-start gap-co-8 border-l border-border px-co-12 py-co-8">
               <div className="flex-1">
                 <p className={cn(
                   "break-words",
                   isConflict && chosen === "proposed" && "font-semibold",
                 )}>
-                  {formatValue(entry.proposedValue)}
+                  <FormattedValue field={entry.field} value={entry.proposedValue} />
                 </p>
                 {entry.agentRecommendation && (
-                  <p className="mt-1 inline-flex items-center gap-0.5 text-[10px] text-violet-600">
+                  <p className="mt-co-4 inline-flex items-center gap-co-2 rounded-[var(--radius-sm)] border border-primary/30 bg-primary/10 px-co-4 py-co-2 font-mono text-11 text-primary">
                     <span>agent</span>
                     <ArrowRight className="h-2.5 w-2.5" />
                     <span>{entry.agentRecommendation}</span>
@@ -130,15 +146,15 @@ export function StructuredDiff({
                 )}
               </div>
             </div>
-            <div className="border-l px-3 py-2 flex items-center gap-1.5">
+            <div className="flex items-center gap-co-6 border-l border-border px-co-12 py-co-8">
               {isAutoMerged ? (
-                <span className="text-[10px] text-muted-foreground italic">auto</span>
+                <span className="text-11 text-muted-foreground italic">auto</span>
               ) : isDecideRequired ? (
-                <span className="text-[10px] font-medium text-amber-600">decide</span>
+                <span className="text-11 font-medium text-warning">decide</span>
               ) : null}
               {perFieldChoice && !isAutoMerged && (
                 <fieldset
-                  className="inline-flex gap-1.5 text-[10px]"
+                  className="inline-flex gap-co-6 text-11"
                   disabled={readOnly}
                   aria-label={`Choice for field ${entry.field}`}
                 >
@@ -149,7 +165,7 @@ export function StructuredDiff({
                       value="master"
                       checked={chosen === "master"}
                       onChange={() => onChange?.(entry.field, "master")}
-                      className="h-3 w-3"
+                      className="h-3 w-3 accent-primary"
                     />
                     M
                   </label>
@@ -160,7 +176,7 @@ export function StructuredDiff({
                       value="proposed"
                       checked={chosen === "proposed"}
                       onChange={() => onChange?.(entry.field, "proposed")}
-                      className="h-3 w-3"
+                      className="h-3 w-3 accent-primary"
                     />
                     P
                   </label>
@@ -168,7 +184,7 @@ export function StructuredDiff({
               )}
             </div>
             {entry.evidenceLabel && (
-              <div className="pointer-events-none absolute left-3 top-full z-10 mt-1 hidden rounded-md border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md group-hover:block">
+              <div className="pointer-events-none absolute left-co-12 top-full z-10 mt-co-4 hidden rounded-md border border-border bg-popover px-co-8 py-co-4 text-11 text-popover-foreground shadow-[var(--shadow-2)] group-hover:block">
                 {entry.evidenceLabel}
               </div>
             )}

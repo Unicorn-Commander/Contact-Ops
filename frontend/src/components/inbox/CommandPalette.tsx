@@ -17,11 +17,13 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { AgentBadge, KeyboardHint } from "@/design-system";
 
 export type CommandPaletteAction = {
   id: string;
   label: string;
   shortcut?: string;
+  agentSlug?: string;
   /** Group for visual separation. */
   group: "Actions" | "Navigate" | "Filter" | "View" | "Settings";
   onRun: () => void;
@@ -61,32 +63,36 @@ export function CommandPalette({ open, onOpenChange, actions }: CommandPalettePr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent className="overflow-hidden rounded-[var(--radius-lg)] border-border bg-popover p-0 shadow-[var(--shadow-4)] sm:max-w-xl">
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
           Type to filter actions, then press Enter to run.
         </DialogDescription>
         <Command
-          className="overflow-hidden"
+          className="overflow-hidden bg-popover"
           loop
           shouldFilter
           label="Command palette"
         >
           <Command.Input
-            placeholder="Type a command or search…"
+            placeholder="Type a command or search..."
             className={cn(
-              "w-full border-b bg-transparent px-4 py-3 text-sm outline-none placeholder:text-muted-foreground",
+              "w-full border-b border-border bg-transparent px-co-16 py-co-12 text-14 outline-none placeholder:text-muted-foreground",
             )}
           />
-          <Command.List className="max-h-96 overflow-y-auto p-2">
-            <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">
+          <Command.List className="co-scrollbar max-h-96 overflow-y-auto p-co-8">
+            <Command.Empty className="px-co-12 py-co-24 text-center text-13 text-muted-foreground">
               No matching commands.
             </Command.Empty>
             {groupOrder.map((group) => {
               const items = grouped[group];
               if (!items?.length) return null;
               return (
-                <Command.Group key={group} heading={group} className="text-xs text-muted-foreground">
+                <Command.Group
+                  key={group}
+                  heading={group}
+                  className="pb-co-4 text-12 text-muted-foreground [&_[cmdk-group-heading]]:px-co-8 [&_[cmdk-group-heading]]:pb-co-4 [&_[cmdk-group-heading]]:pt-co-8 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-11 [&_[cmdk-group-heading]]:uppercase"
+                >
                   {items.map((a) => (
                     <Command.Item
                       key={a.id}
@@ -96,15 +102,22 @@ export function CommandPalette({ open, onOpenChange, actions }: CommandPalettePr
                         a.onRun();
                       }}
                       className={cn(
-                        "flex cursor-pointer items-center gap-2 rounded px-3 py-2 text-sm",
-                        "aria-selected:bg-violet-500/10 aria-selected:text-violet-500",
+                        "flex cursor-pointer items-center gap-co-8 rounded-[var(--radius-sm)] px-co-8 py-co-8 text-13 text-foreground",
+                        "aria-selected:bg-primary/10 aria-selected:text-primary",
                       )}
                     >
-                      <span className="flex-1">{a.label}</span>
+                      <span className="flex flex-1 items-center gap-co-6">
+                        {a.agentSlug ? (
+                          <>
+                            <span>Filter by</span>
+                            <AgentBadge slug={a.agentSlug} size="xs" />
+                          </>
+                        ) : (
+                          a.label
+                        )}
+                      </span>
                       {a.shortcut && (
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {a.shortcut}
-                        </span>
+                        <KeyboardHint keys={a.shortcut} label={`${a.label} shortcut`} />
                       )}
                     </Command.Item>
                   ))}

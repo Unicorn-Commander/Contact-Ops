@@ -1,5 +1,5 @@
 /**
- * TieredApproveButton — single button, behavior switches by tier.
+ * TieredApproveButton - single button, behavior switches by tier.
  *
  * Tier semantics (server is source of truth; this is local UX):
  *   T0  auto-apply (never reaches this button)
@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { TypedPhraseConfirm } from "@/components/inbox/TypedPhraseConfirm";
 import { expectedPhraseFor } from "@/lib/inbox/tierSelector";
 import { cn } from "@/lib/utils";
+import { KeyboardHint, Spinner } from "@/design-system";
 
 export type TieredApproveButtonProps = {
   proposal: Proposal;
@@ -77,11 +78,12 @@ export function TieredApproveButton({
     return (
       <>
         <Button
-          className="bg-violet-500 hover:bg-violet-600"
+          className="bg-primary text-primary-foreground hover:bg-primary/90"
           disabled={busy}
           onClick={() => setConfirmOpen(true)}
         >
-          Type to approve…
+          {busy ? <Spinner size="sm" /> : null}
+          Type to approve
         </Button>
         {phrase && (
           <TypedPhraseConfirm
@@ -106,7 +108,7 @@ export function TieredApproveButton({
     return (
       <Button
         className={cn(
-          "bg-violet-500 hover:bg-violet-600",
+          "bg-primary text-primary-foreground hover:bg-primary/90",
           !diffReady && "cursor-not-allowed opacity-50",
         )}
         disabled={!diffReady || busy}
@@ -117,7 +119,19 @@ export function TieredApproveButton({
             : "Choose each field above to approve"
         }
       >
-        {diffReady ? "Approve · Y" : "Choose each field to approve"}
+        {diffReady ? (
+          <>
+            {busy ? <Spinner size="sm" /> : null}
+            Approve
+            <KeyboardHint
+              keys="Y"
+              label="Approve focused proposal"
+              className="border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+            />
+          </>
+        ) : (
+          "Choose each field to approve"
+        )}
       </Button>
     );
   }
@@ -126,7 +140,7 @@ export function TieredApproveButton({
     return (
       <Button
         className={cn(
-          "bg-violet-500 hover:bg-violet-600",
+          "bg-primary text-primary-foreground hover:bg-primary/90",
           !evidenceSeen && "cursor-not-allowed opacity-50",
         )}
         disabled={!evidenceSeen || busy}
@@ -137,7 +151,19 @@ export function TieredApproveButton({
             : "Scroll the evidence panel into view first"
         }
       >
-        {evidenceSeen ? "Approve · Y" : "Read evidence to approve"}
+        {evidenceSeen ? (
+          <>
+            {busy ? <Spinner size="sm" /> : null}
+            Approve
+            <KeyboardHint
+              keys="Y"
+              label="Approve focused proposal"
+              className="border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+            />
+          </>
+        ) : (
+          "Read evidence to approve"
+        )}
       </Button>
     );
   }
@@ -145,11 +171,17 @@ export function TieredApproveButton({
   // T1
   return (
     <Button
-      className="bg-violet-500 hover:bg-violet-600"
+      className="bg-primary text-primary-foreground hover:bg-primary/90"
       disabled={busy}
       onClick={() => onApprove(null)}
     >
-      Approve · Y
+      {busy ? <Spinner size="sm" /> : null}
+      Approve
+      <KeyboardHint
+        keys="Y"
+        label="Approve focused proposal"
+        className="border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+      />
     </Button>
   );
 }

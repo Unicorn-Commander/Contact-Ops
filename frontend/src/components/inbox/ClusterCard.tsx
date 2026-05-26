@@ -1,12 +1,12 @@
 /**
- * ClusterCard — one card per entity (or per dedup cluster, per agent
+ * ClusterCard - one card per entity (or per dedup cluster, per agent
  * batch, etc., depending on cluster_kind).
  *
- * Header: avatar, entity name, N proposals, cumulative confidence avg
- *   as compact ConfidenceDots, row of compact AgentBadges, relative time,
+ * Header: avatar, entity name, N proposals, cumulative confidence,
+ *   row of compact AgentBadges, relative time,
  *   expand/collapse chevron.
  * Body (expanded): 1-N ProposalRows.
- * Footer: [Approve all ≥0.85] [Reject all] [Open detail].
+ * Footer: [Approve all >=0.85] [Reject all] [Open detail].
  *
  * framer-motion `AnimatePresence` animates the expand/collapse. Honors
  * prefers-reduced-motion via framer-motion's useReducedMotion (set
@@ -21,10 +21,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { AgentBadge } from "@/components/inbox/AgentBadge";
-import { ConfidenceDots } from "@/components/inbox/ConfidenceDots";
 import { ProposalRow } from "@/components/inbox/ProposalRow";
 import { SwipeableProposalRow } from "@/components/inbox/SwipeableProposalRow";
+import { AgentBadge, ConfidenceIndicator, KeyboardHint, MonoNumeric } from "@/design-system";
 
 const MAX_INLINE = 12;
 
@@ -76,7 +75,7 @@ export function ClusterCard({
   const eligibleCount = proposals.filter((p) => p.confidence >= 0.85).length;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden rounded-md border-border bg-card/95 shadow-[var(--shadow-1)]">
       <header
         role="button"
         tabIndex={0}
@@ -88,10 +87,10 @@ export function ClusterCard({
           }
         }}
         className={cn(
-          "flex items-center gap-3 p-3",
+          "flex items-center gap-co-8 px-co-12 py-co-8",
           "cursor-pointer select-none",
-          "hover:bg-muted/40",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-inset",
+          "transition-colors duration-150 ease-snappy hover:bg-muted/60",
+          "focus-ring",
         )}
         aria-expanded={expanded}
         aria-label={`Cluster for ${cluster.entity_display_name}, ${proposals.length} proposals`}
@@ -104,49 +103,51 @@ export function ClusterCard({
           )}
           aria-hidden="true"
         />
-        <Avatar className="h-8 w-8">
+        <Avatar className="h-7 w-7 rounded-[var(--radius-sm)]">
           {cluster.entity_avatar_url ? (
             <AvatarImage src={cluster.entity_avatar_url} alt={cluster.entity_display_name} />
           ) : null}
-          <AvatarFallback>{initials(cluster.entity_display_name)}</AvatarFallback>
+          <AvatarFallback className="rounded-[var(--radius-sm)] bg-muted font-mono text-11 text-muted-foreground">
+            {initials(cluster.entity_display_name)}
+          </AvatarFallback>
         </Avatar>
-        <div className="flex flex-1 items-center gap-2 min-w-0">
-          <span className="truncate font-semibold text-foreground/90" title={cluster.entity_display_name}>
+        <div className="flex min-w-0 flex-1 items-center gap-co-6">
+          <span className="truncate text-13 font-semibold text-foreground" title={cluster.entity_display_name}>
             {cluster.entity_display_name.length > 40
-              ? cluster.entity_display_name.slice(0, 40) + "…"
+              ? cluster.entity_display_name.slice(0, 40) + "..."
               : cluster.entity_display_name}
           </span>
           {showTenantBadge && tenantSlug && (
-            <span className="font-mono text-[10px] text-slate-500" aria-label={`Tenant ${tenantSlug}`}>
+            <span className="font-mono text-11 text-muted-foreground" aria-label={`Tenant ${tenantSlug}`}>
               {tenantSlug}
             </span>
           )}
           {hasConflict && (
             <span title={`${proposals.length} proposals in this cluster conflict; review in detail pane`}>
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-label="Has conflict" />
+              <AlertTriangle className="h-3.5 w-3.5 text-warning" aria-label="Has conflict" />
             </span>
           )}
         </div>
-        <Badge variant="outline" className="font-mono text-[10px]" aria-label={`${proposals.length} proposals`}>
-          {proposals.length}
+        <Badge variant="outline" className="h-5 rounded-[var(--radius-sm)] px-co-6 font-mono text-11" aria-label={`${proposals.length} proposals`}>
+          <MonoNumeric tone="muted">{proposals.length}</MonoNumeric>
         </Badge>
-        <ConfidenceDots
+        <ConfidenceIndicator
           value={cluster.cumulative_confidence_avg}
-          showNumeric={false}
+          mode="binary"
           showLabel={false}
           size="sm"
         />
         <div className="hidden items-center gap-0.5 sm:flex">
           {cluster.agent_slugs.slice(0, 4).map((slug) => (
-            <AgentBadge key={slug} slug={slug} variant="compact" />
+            <AgentBadge key={slug} slug={slug} size="xs" showLabel={false} />
           ))}
           {cluster.agent_slugs.length > 4 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-12 text-muted-foreground">
               +{cluster.agent_slugs.length - 4}
             </span>
           )}
         </div>
-        <span className="hidden text-xs text-muted-foreground md:inline">{created}</span>
+        <span className="hidden text-12 text-muted-foreground md:inline">{created}</span>
       </header>
 
       <AnimatePresence initial={false}>
@@ -157,9 +158,9 @@ export function ClusterCard({
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: prefersReduced ? 0 : 0.18, ease: "easeInOut" }}
-            className="overflow-hidden border-t bg-card/40"
+            className="overflow-hidden border-t border-border bg-background/35"
           >
-            <div className="space-y-1 p-2">
+            <div className="space-y-co-4 p-co-6">
               {visible.map((p) =>
                 mobileSwipe ? (
                   <SwipeableProposalRow
@@ -186,28 +187,28 @@ export function ClusterCard({
                 ),
               )}
               {overflow > 0 && (
-                <p className="px-3 py-1 text-xs text-muted-foreground">
-                  +{overflow} more in this cluster — open detail to review
+                <p className="px-co-8 py-co-4 text-12 text-muted-foreground">
+                  +{overflow} more in this cluster. Open detail to review.
                 </p>
               )}
             </div>
-            <footer className="flex items-center justify-end gap-2 border-t bg-muted/30 px-3 py-2">
+            <footer className="flex flex-wrap items-center justify-end gap-co-6 border-t border-border bg-muted/35 px-co-8 py-co-6">
               <Button
                 size="sm"
                 variant="outline"
-                className="text-emerald-600 hover:bg-emerald-500/10"
+                className="h-7 gap-co-4 text-12 text-success hover:bg-success/10"
                 disabled={eligibleCount === 0}
                 onClick={(e) => {
                   e.stopPropagation();
                   onApproveAll?.();
                 }}
               >
-                Approve all ≥ 0.85 ({eligibleCount})
+                Approve &gt;= 0.85 (<MonoNumeric tone="strong">{eligibleCount}</MonoNumeric>)
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                className="text-rose-600 hover:bg-rose-500/10"
+                className="h-7 text-12 text-destructive hover:bg-destructive/10"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRejectAll?.();
@@ -218,12 +219,14 @@ export function ClusterCard({
               <Button
                 size="sm"
                 variant="ghost"
+                className="h-7 gap-co-4 text-12"
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenDetail?.();
                 }}
               >
-                Open detail →
+                Open detail
+                <KeyboardHint keys="E" label="Expand focused cluster" />
               </Button>
             </footer>
           </motion.div>

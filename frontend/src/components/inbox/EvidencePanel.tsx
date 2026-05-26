@@ -1,5 +1,5 @@
 /**
- * EvidencePanel — source events + reasoning + Laminar deep-link.
+ * EvidencePanel - source events + reasoning + Laminar deep-link.
  *
  * Lazy-loads via useQuery only when expanded (avoids paying for the
  * evidence fetch on every proposal scroll). Source events deep-link
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { tools, UnauthorizedError } from "@/lib/mcp";
 import type { ProposalEvidence, UUID } from "@/lib/types";
+import { MonoNumeric, Spinner } from "@/design-system";
 
 export type EvidencePanelProps = {
   proposalId: UUID;
@@ -47,13 +48,13 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
     <section
       data-evidence-panel
       data-proposal-id={proposalId}
-      className="rounded-md border bg-card"
+      className="rounded-md border border-border bg-card shadow-[var(--shadow-1)]"
     >
-      <header className="flex items-center justify-between gap-2 px-3 py-2">
+      <header className="flex items-center justify-between gap-co-8 px-co-12 py-co-8">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-2 text-sm font-medium hover:text-violet-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 rounded"
+          className="focus-ring flex items-center gap-co-6 rounded-[var(--radius-sm)] text-13 font-medium hover:text-primary"
           aria-expanded={expanded}
         >
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -64,7 +65,7 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
             href={query.data.laminar_trace_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-violet-500 hover:underline"
+            className="inline-flex items-center gap-co-4 text-12 text-primary hover:underline"
             title="Open in Laminar"
           >
             <span>Trace</span>
@@ -74,42 +75,46 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
       </header>
 
       {expanded && (
-        <div className="space-y-3 border-t p-3">
+        <div className="space-y-co-12 border-t border-border p-co-12">
           {query.isPending && (
-            <div className="space-y-2">
+            <div className="space-y-co-8">
+              <div className="flex items-center gap-co-6 text-12 text-muted-foreground">
+                <Spinner size="sm" />
+                <span>Loading evidence</span>
+              </div>
               <Skeleton className="h-4 w-3/4" />
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-5/6" />
             </div>
           )}
           {query.isError && (
-            <p className="text-xs text-rose-500">
+            <p className="text-12 text-destructive">
               Failed to load evidence: {(query.error as Error).message}
             </p>
           )}
           {query.data && (
             <>
               {query.data.reasoning && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                <div className="space-y-co-4">
+                  <p className="font-mono text-11 font-medium uppercase text-muted-foreground">
                     Agent reasoning
                   </p>
-                  <p className="whitespace-pre-wrap text-sm text-foreground/90">
+                  <p className="whitespace-pre-wrap rounded-md border border-border bg-muted/35 p-co-8 text-13 text-foreground">
                     {query.data.reasoning}
                   </p>
                 </div>
               )}
               {query.data.source_events.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                <div className="space-y-co-4">
+                  <p className="font-mono text-11 font-medium uppercase text-muted-foreground">
                     Source events ({query.data.source_events.length})
                   </p>
-                  <ul className="space-y-1">
+                  <ul className="space-y-co-4">
                     {query.data.source_events.map((e) => (
-                      <li key={e.event_id} className="flex items-center justify-between gap-2 text-xs">
+                      <li key={e.event_id} className="flex items-center justify-between gap-co-8 text-12">
                         <a
                           href={e.deep_link}
-                          className="truncate hover:text-violet-500 hover:underline"
+                          className="truncate hover:text-primary hover:underline"
                           title={e.title}
                         >
                           {e.title}
@@ -122,7 +127,7 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
                   </ul>
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-2 border-t pt-2 text-xs">
+              <div className="grid grid-cols-3 gap-co-8 border-t border-border pt-co-8 text-12">
                 <Stat label="Cost" value={`$${(query.data.cost_cents / 100).toFixed(4)}`} />
                 <Stat label="In" value={`${query.data.tokens_input.toLocaleString()} tok`} />
                 <Stat label="Out" value={`${query.data.tokens_output.toLocaleString()} tok`} />
@@ -133,11 +138,11 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
       )}
 
       {!expanded && (
-        <div className="px-3 pb-2">
+        <div className="px-co-12 pb-co-8">
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs text-muted-foreground"
+            className="h-7 text-12 text-muted-foreground"
             onClick={() => setExpanded(true)}
           >
             Reveal evidence
@@ -151,8 +156,8 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-0.5">
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="font-mono tabular-nums">{value}</p>
+      <p className="font-mono text-11 uppercase text-muted-foreground">{label}</p>
+      <MonoNumeric>{value}</MonoNumeric>
     </div>
   );
 }

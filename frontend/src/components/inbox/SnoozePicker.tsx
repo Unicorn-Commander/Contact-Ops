@@ -1,5 +1,5 @@
 /**
- * SnoozePicker — DropdownMenu of quick snooze options + custom date.
+ * SnoozePicker - DropdownMenu of quick snooze options + custom date.
  *
  * Quick options compute the snooze_until datetime client-side; "Custom
  * date" reveals an inline date input. "Until X event" would pull from
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { KeyboardHint } from "@/design-system";
 
 export type SnoozeReason =
   | "wait_for_event"
@@ -74,13 +75,14 @@ export function SnoozePicker({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2" disabled={busy} title="Snooze (H)">
+        <Button variant="outline" size="sm" className="gap-co-6" disabled={busy} title="Snooze">
           <Clock className="h-3.5 w-3.5" />
           Snooze
+          <KeyboardHint keys="H" label="Snooze focused proposal" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel>Snooze until…</DropdownMenuLabel>
+      <DropdownMenuContent align="end" className="w-64 rounded-[var(--radius-md)] border-border bg-popover shadow-[var(--shadow-3)]">
+        <DropdownMenuLabel className="font-mono text-11 uppercase text-muted-foreground">Snooze until...</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => onSnooze(tomorrowAt9(), "tomorrow")}>
           Tomorrow 9:00 AM
@@ -96,9 +98,9 @@ export function SnoozePicker({
           <button
             type="button"
             onClick={() => setCustomMode((v) => !v)}
-            className="text-xs text-violet-500 hover:underline focus-visible:outline-none"
+            className="focus-ring rounded-[var(--radius-sm)] text-12 text-primary hover:underline"
           >
-            {customMode ? "Hide" : "Custom date…"}
+            {customMode ? "Hide" : "Custom date..."}
           </button>
           {customMode && (
             <div className="flex gap-1">
@@ -128,7 +130,7 @@ export function SnoozePicker({
             /* TODO: open searchable Project-Ops task picker */
           }}
         >
-          Until an event…
+          Until an event...
           {!hasProjectOpsFederation && (
             <span className="ml-auto text-[10px] text-muted-foreground">requires Project-Ops</span>
           )}

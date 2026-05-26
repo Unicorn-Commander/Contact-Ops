@@ -1,5 +1,5 @@
 /**
- * SwipeableProposalRow — ProposalRow wrapped with framer-motion drag for
+ * SwipeableProposalRow - ProposalRow wrapped with framer-motion drag for
  * mobile swipe-to-approve (right) and swipe-to-snooze (left).
  *
  * Swipe threshold: 80px. Only T1 proposals (tier <= 1) are swipe-approvable;
@@ -10,17 +10,21 @@
  */
 import { useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Check, X } from "lucide-react";
+import { Check, Clock, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { actionVerbFor } from "@/components/inbox/ProposalRow";
-import { AgentBadge } from "@/components/inbox/AgentBadge";
-import { ConfidenceDots } from "@/components/inbox/ConfidenceDots";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Proposal } from "@/lib/types";
 import { useApproveMutation, useSnoozeMutation, type InboxFilters } from "@/hooks/useInbox";
 import { selectTier } from "@/lib/inbox/tierSelector";
+import {
+  ActionAttribution,
+  AgentBadge,
+  ConfidenceIndicator,
+  KeyboardHint,
+} from "@/design-system";
 
 const SWIPE_THRESHOLD = 80;
 
@@ -54,11 +58,12 @@ export function SwipeableProposalRow({
   const [dragX, setDragX] = useState(0);
   const verb = actionVerbFor(proposal.action_type, proposal);
 
-  const backdropColor = useMemo(() => {
-    if (dragX > 10) return "bg-emerald-500/20";
-    if (dragX < -10) return "bg-sky-500/20";
+  const backdropTone = useMemo(() => {
+    if (dragX > 10) return "bg-success/15";
+    if (dragX < -10) return "bg-info/15";
     return "";
   }, [dragX]);
+  const agentLabel = `${proposal.agent_id} ${proposal.agent_version}`;
 
   function handleSwipeApprove() {
     if (tier === 4) {
@@ -94,30 +99,30 @@ export function SwipeableProposalRow({
 
   return (
     <div className="relative overflow-hidden rounded-md">
-      {/* Colored backdrops — revealed on drag */}
+      {/* Colored backdrops revealed on drag. */}
       <motion.div
         className={cn(
           "absolute inset-0 flex items-center justify-end px-4",
-          backdropColor,
+          backdropTone,
         )}
         style={{
           x: Math.max(0, dragX), // only show right backdrop when dragging right
         }}
         transition={{ duration: prefersReduced ? 0 : 0.15 }}
       >
-        <Check className="h-6 w-6 text-emerald-600" />
+        <Check className="h-6 w-6 text-success" />
       </motion.div>
       <motion.div
         className={cn(
           "absolute inset-0 flex items-center justify-start px-4",
-          backdropColor,
+          backdropTone,
         )}
         style={{
           x: Math.min(0, dragX), // only show left backdrop when dragging left
         }}
         transition={{ duration: prefersReduced ? 0 : 0.15 }}
       >
-        <X className="h-6 w-6 text-sky-600" />
+        <Clock className="h-6 w-6 text-info" />
       </motion.div>
 
       {/* Draggable row */}
@@ -139,13 +144,11 @@ export function SwipeableProposalRow({
         }}
         transition={{ duration: prefersReduced ? 0 : 0.15 }}
         className={cn(
-          "group flex items-center gap-3 rounded-md px-3 py-2 text-sm",
-          "border-l-2 border-transparent",
-          "transition-colors cursor-pointer",
-          "hover:bg-muted/50",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2",
-          focused && "bg-muted border-l-violet-500",
-          selected && "bg-violet-500/10 border-l-violet-500",
+          "group grid min-h-12 cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-co-8 rounded-md border border-transparent bg-card px-co-8 py-co-6 text-13",
+          "transition-colors duration-150 ease-snappy hover:border-border hover:bg-muted/70",
+          "focus-ring",
+          focused && "border-primary/55 bg-primary/10 shadow-[var(--shadow-1)]",
+          selected && "border-primary bg-primary/15",
         )}
         onClick={onSelect}
         onFocus={onFocus}
@@ -161,16 +164,31 @@ export function SwipeableProposalRow({
         aria-pressed={selected}
         aria-current={focused ? "true" : undefined}
       >
-        <AgentBadge slug={proposal.agent_id} version={proposal.agent_version} variant="compact" />
-        <span className="flex-1 truncate font-medium text-foreground/90">{verb}</span>
-        <ConfidenceDots value={proposal.confidence} showLabel={false} size="sm" />
-        <span className="hidden text-xs text-muted-foreground sm:inline">{/* created_at */}</span>
-        <span className="ml-2 hidden items-center gap-1 group-hover:inline-flex">
+        <AgentBadge
+          slug={proposal.agent_id}
+          label={agentLabel}
+          size="xs"
+          showLabel={false}
+        />
+        <div className="min-w-0">
+          <span className="block truncate font-medium text-foreground" title={verb}>
+            {verb}
+          </span>
+          <ActionAttribution
+            actor={{ type: "agent", slug: proposal.agent_id, label: agentLabel }}
+            verb="Proposed"
+            timestamp={proposal.created_at}
+            compact
+            className="mt-co-2 hidden min-w-0 sm:inline-flex"
+          />
+        </div>
+        <ConfidenceIndicator value={proposal.confidence} mode="binary" showLabel={false} size="sm" />
+        <span className="ml-co-4 hidden items-center gap-co-4 group-hover:inline-flex group-focus-within:inline-flex">
           {isSwipeApprovable && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-600"
+              className="h-7 w-7 text-success hover:bg-success/10 hover:text-success"
               onClick={(e) => {
                 e.stopPropagation();
                 onApprove?.();
@@ -179,12 +197,13 @@ export function SwipeableProposalRow({
               aria-label="Approve proposal"
             >
               <Check className="h-3.5 w-3.5" />
+              <span className="sr-only">Approve</span>
             </Button>
           )}
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-rose-500 hover:bg-rose-500/10 hover:text-rose-600"
+            className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
             onClick={(e) => {
               e.stopPropagation();
               onReject?.();
@@ -193,7 +212,12 @@ export function SwipeableProposalRow({
             aria-label="Reject proposal"
           >
             <X className="h-3.5 w-3.5" />
+            <span className="sr-only">Reject</span>
           </Button>
+          <span className="hidden items-center gap-co-2 xl:inline-flex" aria-hidden="true">
+            {isSwipeApprovable ? <KeyboardHint keys="Y" label="Approve focused proposal" /> : null}
+            <KeyboardHint keys="N" label="Reject focused proposal" />
+          </span>
         </span>
       </motion.div>
     </div>

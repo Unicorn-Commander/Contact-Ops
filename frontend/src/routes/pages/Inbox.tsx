@@ -1,15 +1,10 @@
 /**
- * /inbox — the Phase 3.3b approval inbox cockpit.
+ * /inbox - the Phase 3.3b approval inbox cockpit.
  *
- * Layout (desktop ≥1024px):
- *   ┌───────────────────────────────────────────────────────────┐
- *   │ Header: stats · filter chips · FocusMode                  │
- *   ├─────┬──────────────────────────────┬────────────────────┬┘
- *   │ Nav │ Virtualized cluster list      │ Detail pane        │
- *   │ 220 │ 480                           │ flex               │
- *   └─────┴──────────────────────────────┴────────────────────┴
- *   │  BulkActionBar slides up when N≥2 selected               │
- *   └───────────────────────────────────────────────────────────┘
+ * Layout (desktop >=1024px):
+ *   Header: stats, filter chips, FocusMode
+ *   Nav / virtualized cluster list / detail pane
+ *   BulkActionBar slides up when N >= 2 selected.
  *
  * Mobile (<1024px): single-pane list; swipe-right approves T1, swipe-
  * left snoozes; long-press opens detail; T4/dedup/bulk blocked with
@@ -17,7 +12,7 @@
  *
  * Keyboard (active when /inbox is the route): J/K nav · E expand
  * detail · Y approve · N reject · H snooze · M mute · D dismiss · Esc
- * clear · ⌘A select all · ⌘K command palette · ⌘. focus mode · ⌘Z undo.
+ * clear, Cmd+A select all, Cmd+K command palette, Cmd+. focus mode, Cmd+Z undo.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
@@ -40,11 +35,20 @@ import { BulkActionBar } from "@/components/inbox/BulkActionBar";
 import { CommandPalette } from "@/components/inbox/CommandPalette";
 import { EmptyStateInboxZero } from "@/components/inbox/EmptyStateInboxZero";
 import { EvidencePanel } from "@/components/inbox/EvidencePanel";
-import { ConfidenceDots } from "@/components/inbox/ConfidenceDots";
-import { AgentBadge } from "@/components/inbox/AgentBadge";
 import { StructuredDiff, entriesFromPayload } from "@/components/inbox/StructuredDiff";
 import { TieredApproveButton } from "@/components/inbox/TieredApproveButton";
 import { SnoozePicker } from "@/components/inbox/SnoozePicker";
+import {
+  ActionAttribution,
+  AgentBadge,
+  ConfidenceIndicator,
+  DensityControl,
+  DensityProvider,
+  KeyboardHint,
+  MonoNumeric,
+  Spinner,
+  defaultDensityForSurface,
+} from "@/design-system";
 
 import {
   useApproveMutation,
@@ -70,12 +74,14 @@ import { cn } from "@/lib/utils";
 
 type View = "needs-review" | "snoozed" | "resolved";
 
-const PANE_DEFAULTS = { nav: 18, list: 42, detail: 40 };
+const PANE_DEFAULTS = { nav: "18%", list: "42%", detail: "40%" };
 
 export function InboxRoute() {
   return (
     <HotkeysProvider initiallyActiveScopes={[INBOX_HOTKEY_SCOPE]}>
-      <InboxCockpit />
+      <DensityProvider defaultDensity={defaultDensityForSurface("inbox")}>
+        <InboxCockpit />
+      </DensityProvider>
     </HotkeysProvider>
   );
 }
@@ -304,7 +310,7 @@ function InboxCockpit() {
     y: () => doApprove(focusedProposal, true),
     n: () => doReject(focusedProposal, true),
     h: () => {
-      // Open snooze picker for focused proposal — default tomorrow
+      // Open snooze picker for focused proposal, default tomorrow.
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(9, 0, 0, 0);
@@ -377,6 +383,7 @@ function InboxCockpit() {
         id: `agent-filter-${slug}`,
         group: "Filter" as const,
         label: `Filter by ${slug}`,
+        agentSlug: slug,
         onRun: () => {
           const url = new URL(window.location.href);
           url.searchParams.set("agent", slug);
@@ -392,7 +399,7 @@ function InboxCockpit() {
         { id: "nav-review", group: "Navigate" as const, label: "Jump to needs-review", onRun: () => setView("needs-review") },
         { id: "nav-snoozed", group: "Navigate" as const, label: "Jump to snoozed", onRun: () => setView("snoozed") },
         { id: "nav-resolved", group: "Navigate" as const, label: "Jump to recently resolved", onRun: () => setView("resolved") },
-        { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "⌘.", onRun: () => focusMode.toggle() },
+        { id: "focus-mode", group: "View" as const, label: focusMode.enabled ? "Disable Focus Mode" : "Enable Focus Mode", shortcut: "cmd+.", onRun: () => focusMode.toggle() },
         { id: "hipaa-only", group: "Filter" as const, label: "HIPAA only", onRun: () => {
           const url = new URL(window.location.href);
           url.searchParams.set("hipaa_only", "true");
@@ -407,8 +414,10 @@ function InboxCockpit() {
   );
 
   // ---- render ----
+  // LOCAL VARIANT: /inbox needs the full post-sidebar width for triage density;
+  // the shared AppShell max-width is tuned for CRUD curation screens.
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col">
+    <div className="flex h-[calc(100vh-4rem)] flex-col bg-background lg:relative lg:left-1/2 lg:w-[calc(100vw-16rem-3rem)] lg:-translate-x-1/2">
       <InboxHeader
         view={view}
         onViewChange={setView}
@@ -422,7 +431,7 @@ function InboxCockpit() {
       {/* Desktop 3-pane */}
       <div className="hidden flex-1 overflow-hidden lg:flex">
         <ResizablePanelGroup orientation="horizontal">
-          <ResizablePanel defaultSize={PANE_DEFAULTS.nav} minSize={12} maxSize={28}>
+          <ResizablePanel defaultSize={PANE_DEFAULTS.nav} minSize="12%" maxSize="28%">
             <NavSidebar
               view={view}
               onViewChange={setView}
@@ -430,7 +439,7 @@ function InboxCockpit() {
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={PANE_DEFAULTS.list} minSize={28}>
+          <ResizablePanel defaultSize={PANE_DEFAULTS.list} minSize="28%">
             <ListPane
               clusters={hydrated}
               focusedProposalId={focusedId}
@@ -468,7 +477,7 @@ function InboxCockpit() {
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={PANE_DEFAULTS.detail} minSize={28}>
+          <ResizablePanel defaultSize={PANE_DEFAULTS.detail} minSize="28%">
             <DetailPane
               proposal={focusedProposal}
               tier={focusedTier}
@@ -511,7 +520,7 @@ function InboxCockpit() {
       </div>
 
       {/* Mobile single-pane (≤ lg) */}
-      <div className="flex-1 overflow-y-auto p-3 lg:hidden">
+      <div className="co-scrollbar flex-1 overflow-y-auto p-co-12 lg:hidden">
         {visibleProposals.length === 0 && !list.isPending ? (
           <EmptyStateInboxZero
             coldStart={allProposalsRaw.length === 0}
@@ -640,11 +649,29 @@ function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals,
   }, []);
 
   return (
-    <header className="flex flex-wrap items-center gap-3 border-b bg-card/70 px-4 py-2.5">
-      <span className="font-mono text-sm tabular-nums text-muted-foreground">
-        {totals.today} today · {totals.approved} approved · {totals.rejected} rejected · {totals.snoozed} snoozed
+    <header className="flex flex-wrap items-center gap-co-12 border-b border-border bg-background/95 px-co-16 py-co-8 shadow-[var(--shadow-1)]">
+      <span className="inline-flex flex-wrap items-center gap-co-6 text-13 text-muted-foreground">
+        <MonoNumeric tone="muted">{totals.today}</MonoNumeric>
+        <span>today</span>
+        <span>/</span>
+        <MonoNumeric tone="muted">{totals.approved}</MonoNumeric>
+        <span>approved</span>
+        <span>/</span>
+        <MonoNumeric tone="muted">{totals.rejected}</MonoNumeric>
+        <span>rejected</span>
+        <span>/</span>
+        <MonoNumeric tone="muted">{totals.snoozed}</MonoNumeric>
+        <span>snoozed</span>
       </span>
-      <div className="ml-auto flex items-center gap-2">
+      <div className="hidden items-center gap-co-4 text-muted-foreground xl:flex">
+        <KeyboardHint keys="J" label="Next proposal" />
+        <KeyboardHint keys="K" label="Previous proposal" />
+        <KeyboardHint keys="Y" label="Approve focused proposal" />
+        <KeyboardHint keys="N" label="Reject focused proposal" />
+        <KeyboardHint keys="cmd+k" label="Open command palette" />
+      </div>
+      <div className="ml-auto flex items-center gap-co-8">
+        <DensityControl className="hidden xl:inline-flex" />
         {import.meta.env.VITE_DESKTOP_HANDOFF_URL && (
           <Button
             variant="ghost"
@@ -659,12 +686,12 @@ function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals,
         <Button
           variant="ghost"
           size="sm"
-          className={cn("gap-1.5", conflictsOnly && "bg-amber-500/10 text-amber-600")}
+          className={cn("gap-co-6", conflictsOnly && "bg-warning/10 text-warning")}
           onClick={onToggleConflicts}
           title="Filter: conflicts only"
           aria-pressed={conflictsOnly}
         >
-          <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+          <AlertTriangle className="h-3.5 w-3.5 text-warning" />
           <span className="hidden sm:inline">Conflicts</span>
         </Button>
         <FocusModeToggle enabled={focusMode} onToggle={onToggleFocusMode} />
@@ -680,40 +707,39 @@ type NavSidebarProps = {
 };
 
 function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
-  const items: { id: View; label: string; count: number; color: string }[] = [
-    { id: "needs-review", label: "Needs Review", count: totals.today, color: "bg-violet-500" },
-    { id: "snoozed", label: "Snoozed", count: 0, color: "bg-amber-500" },
-    { id: "resolved", label: "Recently Resolved", count: 0, color: "bg-slate-500" },
+  const items: { id: View; label: string; count: number }[] = [
+    { id: "needs-review", label: "Needs Review", count: totals.today },
+    { id: "snoozed", label: "Snoozed", count: 0 },
+    { id: "resolved", label: "Recently Resolved", count: 0 },
   ];
   return (
-    <nav className="h-full overflow-y-auto border-r bg-card p-3" aria-label="Inbox sections">
-      <ul className="space-y-1">
+    <nav className="co-scrollbar h-full overflow-y-auto border-r border-border bg-card/85 p-co-8" aria-label="Inbox sections">
+      <ul className="space-y-co-4">
         {items.map((it) => (
           <li key={it.id}>
             <button
               type="button"
               onClick={() => onViewChange(it.id)}
               className={cn(
-                "flex w-full items-center justify-between rounded-md px-3 py-2 text-sm",
-                "hover:bg-muted",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500",
-                view === it.id && "bg-violet-500/10 text-violet-500 font-medium",
+                "focus-ring flex w-full items-center justify-between rounded-md px-co-10 py-co-8 text-13",
+                "transition-colors duration-150 ease-snappy hover:bg-muted",
+                view === it.id && "bg-primary/10 font-medium text-primary",
               )}
               aria-current={view === it.id ? "page" : undefined}
             >
               <span>{it.label}</span>
-              <Badge variant="outline" className={cn("font-mono text-[10px]", view === it.id && "border-violet-500/30")}>
-                {it.count}
+              <Badge variant="outline" className={cn("rounded-[var(--radius-sm)] px-co-6 font-mono text-11", view === it.id && "border-primary/30")}>
+                <MonoNumeric tone="muted">{it.count}</MonoNumeric>
               </Badge>
             </button>
           </li>
         ))}
       </ul>
-      <div className="mt-6 space-y-1">
-        <p className="px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="mt-co-24 space-y-co-4">
+        <p className="px-co-10 font-mono text-11 font-semibold uppercase text-muted-foreground">
           Saved views
         </p>
-        <p className="px-3 text-xs text-muted-foreground italic">
+        <p className="px-co-10 text-12 text-muted-foreground italic">
           (local) coming in 3.4
         </p>
       </div>
@@ -776,9 +802,12 @@ function ListPane({
 
   if (clusters.length === 0) {
     return (
-      <div ref={scrollRef} className="h-full overflow-y-auto p-4" aria-live="polite">
+      <div ref={scrollRef} className="co-scrollbar h-full overflow-y-auto p-co-16" aria-live="polite">
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading proposals…</p>
+          <p className="flex items-center gap-co-8 text-13 text-muted-foreground">
+            <Spinner size="sm" />
+            <span>Loading proposals...</span>
+          </p>
         ) : (
           emptyState
         )}
@@ -787,7 +816,7 @@ function ListPane({
   }
 
   return (
-    <div ref={scrollRef} className="h-full overflow-y-auto p-2" aria-live="polite">
+    <div ref={scrollRef} className="co-scrollbar h-full overflow-y-auto p-co-8" aria-live="polite">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const cluster = clusters[vi.index];
@@ -799,7 +828,7 @@ function ListPane({
               data-index={vi.index}
               style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
             >
-              <div className="mb-2">
+              <div className="mb-co-8">
                 <ClusterCard
                   cluster={cluster}
                   proposals={cluster.proposals}
@@ -840,6 +869,13 @@ type DetailPaneProps = {
   onOfferSnooze: () => void;
 };
 
+function confidenceFillClass(confidence: number) {
+  if (confidence >= 0.9) return "bg-confidence-emerald";
+  if (confidence >= 0.75) return "bg-confidence-sky";
+  if (confidence >= 0.5) return "bg-confidence-amber";
+  return "bg-confidence-rose";
+}
+
 function DetailPane({
   proposal,
   tier,
@@ -855,27 +891,46 @@ function DetailPane({
 }: DetailPaneProps) {
   if (!proposal) {
     return (
-      <div className="flex h-full items-center justify-center bg-card/30 p-8 text-center text-sm text-muted-foreground">
-        <div className="space-y-2">
-          <Bell className="mx-auto h-8 w-8 text-slate-500" aria-hidden="true" />
-          <p>Select a proposal to review.</p>
-          <p className="text-xs">J/K to navigate · Y/N to decide · ⌘K for commands</p>
+      <div className="flex h-full items-center justify-center bg-card/35 p-co-32 text-center text-13 text-muted-foreground">
+        <div className="space-y-co-8">
+          <Bell className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden="true" />
+          <p className="font-medium text-foreground">Select a proposal to review.</p>
+          <p className="flex flex-wrap justify-center gap-co-4 text-12">
+            <KeyboardHint keys="J" label="Next proposal" />
+            <KeyboardHint keys="K" label="Previous proposal" />
+            <KeyboardHint keys="Y" label="Approve focused proposal" />
+            <KeyboardHint keys="N" label="Reject focused proposal" />
+            <KeyboardHint keys="cmd+k" label="Open command palette" />
+          </p>
         </div>
       </div>
     );
   }
 
   const subScore = (proposal.confidence ?? 0) * 100;
+  const agentLabel = `${proposal.agent_id} ${proposal.agent_version}`;
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <header className="flex items-start gap-2 border-b bg-card/40 p-3">
-        <AgentBadge slug={proposal.agent_id} version={proposal.agent_version} variant="with-version" />
-        <span className="flex-1 truncate text-sm font-medium">{proposal.entity_display_name}</span>
+    <div className="flex h-full flex-col overflow-hidden bg-card/55">
+      <header className="flex items-start gap-co-10 border-b border-border bg-card/85 p-co-12">
+        <AgentBadge slug={proposal.agent_id} label={agentLabel} size="sm" />
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-14 font-semibold text-foreground" title={proposal.entity_display_name}>
+            {proposal.entity_display_name}
+          </span>
+          <ActionAttribution
+            actor={{ type: "agent", slug: proposal.agent_id, label: agentLabel }}
+            verb="Proposed"
+            timestamp={proposal.created_at}
+            target={`T${tier}`}
+            compact
+            className="mt-co-2"
+          />
+        </div>
         {proposal.trace_id && (
           <a
             href={`#trace-${proposal.trace_id}`}
-            className="inline-flex items-center gap-1 text-xs text-violet-500 hover:underline"
+            className="inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] text-12 text-primary hover:underline focus-ring"
             title="Open in Laminar"
             aria-label="Open in Laminar"
           >
@@ -883,15 +938,15 @@ function DetailPane({
           </a>
         )}
       </header>
-      <div className="space-y-4 p-4">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <div className="co-scrollbar flex-1 space-y-co-16 overflow-y-auto p-co-16">
+        <div className="space-y-co-6">
+          <div className="flex items-center justify-between text-12 text-muted-foreground">
             <span>Confidence</span>
-            <ConfidenceDots value={proposal.confidence} showLabel showNumeric size="sm" />
+            <ConfidenceIndicator value={proposal.confidence} mode="numeric" showLabel size="sm" />
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full bg-violet-500 transition-all"
+              className={cn("h-full transition-all duration-300 ease-gentle", confidenceFillClass(proposal.confidence))}
               style={{ width: `${subScore}%` }}
               aria-hidden="true"
             />
@@ -899,14 +954,16 @@ function DetailPane({
         </div>
 
         <section>
-          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="mb-co-4 font-mono text-11 font-medium uppercase text-muted-foreground">
             What the agent proposes
           </p>
-          <p className="text-sm italic text-foreground/85">{proposal.rationale}</p>
+          <p className="rounded-md border border-border bg-muted/35 p-co-10 text-13 italic text-foreground">
+            {proposal.rationale}
+          </p>
         </section>
 
         <section>
-          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="mb-co-4 font-mono text-11 font-medium uppercase text-muted-foreground">
             Structured changes
           </p>
           <StructuredDiff
@@ -920,19 +977,20 @@ function DetailPane({
         <EvidencePanel proposalId={proposal.proposal_id} defaultExpanded={tier === 2} />
 
         {proposal.case_file_links.length > 0 && (
-          <section className="rounded-md border border-amber-500/40 bg-amber-50/30 p-3 text-xs dark:bg-amber-950/20">
-            <p className="mb-1 font-medium text-amber-900 dark:text-amber-200">Related work</p>
-            <ul className="space-y-1">
+          <section className="rounded-md border border-warning/40 bg-warning/10 p-co-12 text-12">
+            <p className="mb-co-4 font-medium text-foreground">Related work</p>
+            <ul className="space-y-co-4">
               {proposal.case_file_links.map((l) => (
                 <li key={`${l.project_id}-${l.task_id ?? "root"}`}>
                   <a
                     href={`https://projects.magicunicorn.dev/projects/${l.project_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-amber-700 hover:underline dark:text-amber-300"
+                    className="inline-flex items-center gap-co-4 text-primary hover:underline"
                   >
-                    🔗 {l.project_name}
-                    {l.task_name && ` · ${l.task_name}`}
+                    <ExternalLink className="h-3 w-3" />
+                    {l.project_name}
+                    {l.task_name && ` / ${l.task_name}`}
                   </a>
                 </li>
               ))}
@@ -941,9 +999,10 @@ function DetailPane({
         )}
       </div>
 
-      <footer className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t bg-card/95 p-3 backdrop-blur">
+      <footer className="flex flex-wrap items-center justify-end gap-co-8 border-t border-border bg-card/95 p-co-12 shadow-[var(--shadow-2)] backdrop-blur">
         <Button variant="ghost" size="sm" onClick={onReject} disabled={busy}>
-          Reject · N
+          Reject
+          <KeyboardHint keys="N" label="Reject focused proposal" />
         </Button>
         <SnoozePicker onSnooze={(until) => onSnooze(until)} busy={busy} />
         <TieredApproveButton
