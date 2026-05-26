@@ -5,7 +5,14 @@ import { Button } from "@/components/ui/button";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
-import { applyThemePreference, getThemePreference, type ThemeMode } from "@/design-system/tokens";
+import {
+  applyThemePreference,
+  getStoredTheme,
+  getThemePreference,
+  setThemePreference,
+  subscribeSystemTheme,
+  type ThemeMode
+} from "@/design-system/tokens";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: Home },
@@ -25,6 +32,13 @@ export function AppShell() {
   useEffect(() => {
     applyThemePreference(theme);
   }, [theme]);
+
+  // Follow OS color-scheme changes until the user picks an explicit theme.
+  useEffect(() => {
+    return subscribeSystemTheme((systemTheme) => {
+      if (getStoredTheme() === null) setTheme(systemTheme);
+    });
+  }, []);
 
   const dark = theme === "dark";
 
@@ -69,7 +83,11 @@ export function AppShell() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
+              onClick={() => {
+                const next = theme === "dark" ? "light" : "dark";
+                setThemePreference(next);
+                setTheme(next);
+              }}
               title="Toggle color mode"
               aria-label="Toggle color mode"
               aria-pressed={dark}

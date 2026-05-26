@@ -186,16 +186,51 @@ export function agentColorVars(slug: string): CSSVarStyle {
   };
 }
 
-export function getThemePreference(): ThemeMode {
-  if (typeof window === "undefined") return "dark";
-  return window.localStorage.getItem("theme") === "light" ? "light" : "dark";
+const THEME_STORAGE_KEY = "theme";
+
+/** The OS-level color scheme. Falls back to dark when matchMedia is unavailable. */
+export function getSystemTheme(): ThemeMode {
+  if (typeof window === "undefined" || !window.matchMedia) return "dark";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+/** The user's explicit choice, or null when they're following the OS preference. */
+export function getStoredTheme(): ThemeMode | null {
+  if (typeof window === "undefined") return null;
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === "light" || stored === "dark" ? stored : null;
+}
+
+/** Theme to render: the explicit choice if set, otherwise the OS preference. */
+export function getThemePreference(): ThemeMode {
+  return getStoredTheme() ?? getSystemTheme();
+}
+
+/** Apply a theme to the document. Does NOT persist — used for OS-driven application. */
 export function applyThemePreference(theme: ThemeMode) {
   if (typeof document === "undefined") return;
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.classList.toggle("dark", theme === "dark");
-  document.documentElement.classList.toggle("light", theme === "light");
-  document.documentElement.style.colorScheme = theme;
-  window.localStorage.setItem("theme", theme);
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.classList.toggle("dark", theme === "dark");
+  root.classList.toggle("light", theme === "light");
+  root.style.colorScheme = theme;
+}
+
+/** Persist an explicit user choice and apply it. */
+export function setThemePreference(theme: ThemeMode) {
+  if (typeof window !== "undefined") window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  applyThemePreference(theme);
+}
+
+/**
+ * Subscribe to OS color-scheme changes. The callback receives the new system
+ * theme; callers should ignore it when the user has an explicit stored choice.
+ * Returns an unsubscribe function.
+ */
+export function subscribeSystemTheme(callback: (theme: ThemeMode) => void): () => void {
+  if (typeof window === "undefined" || !window.matchMedia) return () => {};
+  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  const handler = (event: MediaQueryListEvent) => callback(event.matches ? "dark" : "light");
+  query.addEventListener("change", handler);
+  return () => query.removeEventListener("change", handler);
 }
