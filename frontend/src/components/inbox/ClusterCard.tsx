@@ -122,7 +122,9 @@ export function ClusterCard({
             </span>
           )}
           {hasConflict && (
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-label="Has conflict" />
+            <span title={`${proposals.length} proposals in this cluster conflict; review in detail pane`}>
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-label="Has conflict" />
+            </span>
           )}
         </div>
         <Badge variant="outline" className="font-mono text-[10px]" aria-label={`${proposals.length} proposals`}>

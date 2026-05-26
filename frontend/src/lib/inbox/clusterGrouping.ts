@@ -16,6 +16,7 @@ import type { Proposal, ProposalCluster } from "@/lib/types";
 
 export type HydratedCluster = ProposalCluster & {
   proposals: Proposal[];
+  hasConflict: boolean;
 };
 
 export function hydrateClusters(
@@ -36,7 +37,13 @@ export function hydrateClusters(
     );
   }
   return clusters
-    .map((c) => ({ ...c, proposals: byCluster.get(c.cluster_id) ?? [] }))
+    .map((c) => {
+      const proposals = byCluster.get(c.cluster_id) ?? [];
+      const hasConflict = proposals.some(
+        (p) => p.parent_proposal_id != null,
+      );
+      return { ...c, proposals, hasConflict };
+    })
     .filter((c) => c.proposals.length > 0);
 }
 
