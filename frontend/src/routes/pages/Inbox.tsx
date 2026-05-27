@@ -1,5 +1,5 @@
 /**
- * /inbox - the Phase 3.3b approval inbox cockpit.
+ * /review - the Phase 3.3b Review Queue cockpit.
  *
  * Layout (desktop >=1024px):
  *   Header: stats, filter chips, FocusMode
@@ -10,7 +10,7 @@
  * left snoozes; long-press opens detail; T4/dedup/bulk blocked with
  * "send link to desktop" toast.
  *
- * Keyboard (active when /inbox is the route): J/K nav · E expand
+ * Keyboard (active when /review is the route): J/K nav · E expand
  * detail · Y approve · N reject · H snooze · M mute · D dismiss · Esc
  * clear, Cmd+A select all, Cmd+K command palette, Cmd+. focus mode, Cmd+Z undo.
  */
@@ -713,7 +713,7 @@ function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
     { id: "resolved", label: "Recently Resolved", count: 0 },
   ];
   return (
-    <nav className="co-scrollbar h-full overflow-y-auto border-r border-border bg-card/85 p-co-8" aria-label="Inbox sections">
+    <nav className="co-scrollbar h-full overflow-y-auto border-r border-border bg-card/85 p-co-8" aria-label="Review Queue sections">
       <ul className="space-y-co-4">
         {items.map((it) => (
           <li key={it.id}>

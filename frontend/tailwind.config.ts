@@ -120,6 +120,35 @@ const config: Config = {
         standard: "var(--ease-standard)",
         snappy: "var(--ease-snappy)",
         gentle: "var(--ease-gentle)"
+      },
+      keyframes: {
+        "fade-in": {
+          from: { opacity: 0, transform: "translateY(4px)" },
+          to: { opacity: 1, transform: "translateY(0)" }
+        },
+        "fade-in-scale": {
+          from: { opacity: 0, transform: "scale(0.96)" },
+          to: { opacity: 1, transform: "scale(1)" }
+        },
+        "slide-up": {
+          from: { opacity: 0, transform: "translateY(8px)" },
+          to: { opacity: 1, transform: "translateY(0)" }
+        },
+        "pulse-subtle": {
+          "0%, 100%": { opacity: 1 },
+          "50%": { opacity: 0.7 }
+        },
+        shimmer: {
+          from: { backgroundPosition: "-200% 0" },
+          to: { backgroundPosition: "200% 0" }
+        }
+      },
+      animation: {
+        "fade-in": "fade-in var(--motion-base, 200ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both",
+        "fade-in-scale": "fade-in-scale var(--motion-base, 200ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both",
+        "slide-up": "slide-up var(--motion-base, 200ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both",
+        "pulse-subtle": "pulse-subtle 2s ease-in-out infinite",
+        shimmer: "shimmer 1.8s ease-in-out infinite"
       }
     }
   },

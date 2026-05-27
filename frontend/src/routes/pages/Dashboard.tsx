@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Activity, Building2, ChevronRight, GitMerge, Inbox, Users } from "lucide-react";
+import { Activity, Building2, ChevronRight, GitMerge, ListChecks, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,7 +8,7 @@ import { useDashboard, useRecentEvents, useToolsList } from "@/hooks/useMcp";
 import { AuditList } from "@/routes";
 import { cn } from "@/lib/utils";
 
-type ValidRoute = "/people" | "/orgs" | "/inbox";
+type ValidRoute = "/people" | "/orgs" | "/review";
 
 /**
  * Ambient stat tile. Calm and glanceable: a label, a large tabular value, and a
@@ -111,7 +111,7 @@ export function DashboardRoute() {
         <Stat label="People" value={peopleCount} icon={Users} to="/people" />
         <Stat label="Organizations" value={orgCount} icon={Building2} to="/orgs" />
         <Stat label="Recent merges" value={0} icon={GitMerge} hint="Last 30 days" />
-        <Stat label="Pending suggestions" value="—" icon={Inbox} to="/inbox" hint="Review in inbox" />
+        <Stat label="Pending suggestions" value="—" icon={ListChecks} to="/review" hint="Review in Review Queue" />
       </div>
 
       <Card>

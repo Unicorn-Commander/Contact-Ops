@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Moon, Sun } from "lucide-react";
+import { ListChecks, Moon, Sparkles, Sun } from "lucide-react";
 import { ActionAttribution } from "@/design-system/ActionAttribution";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
@@ -77,7 +77,7 @@ function PrimitiveGallery({ theme }: { theme: ThemeMode }) {
           <ActionAttribution actor={{ type: "human", name: "Aaron Stransky", label: "Aaron" }} verb="Reverted" timestamp={now - 9000} compact />
         </StateBlock>
         <StateBlock title="Keyboard Hint">
-          <KeyboardHint keys="mod+K" label="Command menu" />
+          <KeyboardHint keys="mod+K" label="Command command" />
           <KeyboardHint keys="Y" label="Approve" />
           <KeyboardHint keys={["shift", "J"]} label="Jump" />
           <KeyboardHint keys="esc" label="Close" />
@@ -106,6 +106,142 @@ function PrimitiveGallery({ theme }: { theme: ThemeMode }) {
   );
 }
 
+function GradientGallery({ theme }: { theme: ThemeMode }) {
+  return (
+    <div data-theme={theme} className="rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold capitalize">{theme} mode</h2>
+        <p className="text-xs text-muted-foreground">Brand gradients, surface washes, and elevated header treatments.</p>
+      </div>
+
+      <div className="space-y-3">
+        <StateBlock title="Brand Gradient">
+          <div className="h-10 w-full rounded-md bg-gradient-brand" />
+        </StateBlock>
+
+        <StateBlock title="Subtle Gradient">
+          <div className="h-10 w-full rounded-md bg-gradient-brand-subtle" />
+        </StateBlock>
+
+        <StateBlock title="Surface Wash">
+          <div className="h-16 w-full rounded-md border border-border bg-card p-2">
+            <div className="h-full w-full rounded-sm bg-gradient-surface" />
+          </div>
+        </StateBlock>
+
+        <StateBlock title="Elevated Header">
+          <div className="h-10 w-full rounded-md bg-gradient-header" />
+        </StateBlock>
+
+        <StateBlock title="Gradient Button">
+          <Button variant="gradient" size="sm">
+            <Sparkles className="h-3.5 w-3.5" />
+            Primary Action
+          </Button>
+        </StateBlock>
+
+        <StateBlock title="Gradient Text">
+          <span className="text-lg font-semibold bg-gradient-brand-text">Contact-Ops</span>
+        </StateBlock>
+      </div>
+    </div>
+  );
+}
+
+function LivingDataGallery({ theme }: { theme: ThemeMode }) {
+  return (
+    <div data-theme={theme} className="rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold capitalize">{theme} mode</h2>
+        <p className="text-xs text-muted-foreground">Living data: agent vs human, confidence tiers, and item status.</p>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        <StateBlock title="Agent Indicator">
+          <span className="co-agent-indicator inline-flex h-6 w-6 items-center justify-center rounded-md border">
+            <ListChecks className="h-3 w-3 text-[oklch(var(--co-agent-color))]" />
+          </span>
+          <AgentBadge slug="dedupe-agent" />
+        </StateBlock>
+
+        <StateBlock title="Human Indicator">
+          <span className="co-human-indicator inline-flex h-6 w-6 items-center justify-center rounded-full border">
+            <span className="text-[9px] font-semibold">AS</span>
+          </span>
+          <HumanBadge name="Aaron Stransky" />
+        </StateBlock>
+
+        <StateBlock title="Confidence Tiers">
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-emerald-500))]" />
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-sky-500))]" />
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-amber-500))]" />
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-rose-500))]" />
+        </StateBlock>
+
+        <StateBlock title="Item Status">
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-proposed">Proposed</span>
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-applied">Applied</span>
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-rejected">Rejected</span>
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-snoozed">Snoozed</span>
+        </StateBlock>
+      </div>
+    </div>
+  );
+}
+
+function MotionGallery({ theme }: { theme: ThemeMode }) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => setVisible((v) => !v), 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div data-theme={theme} className="rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold capitalize">{theme} mode</h2>
+        <p className="text-xs text-muted-foreground">Micro-interactions: fade-in, slide-up, pulse, shimmer.</p>
+      </div>
+
+      <div className="space-y-3">
+        <StateBlock title="Fade In">
+          <div className="flex items-center gap-2">
+            {visible && (
+              <span className="co-animate-fade-in inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs">
+                <ListChecks className="h-3 w-3" />
+                Fade in
+              </span>
+            )}
+          </div>
+        </StateBlock>
+
+        <StateBlock title="Slide Up">
+          <div className="flex items-center gap-2">
+            {visible && (
+              <span className="co-animate-slide-up inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs">
+                <ListChecks className="h-3 w-3" />
+                Slide up
+              </span>
+            )}
+          </div>
+        </StateBlock>
+
+        <StateBlock title="Pulse Subtle">
+          <span className="co-animate-pulse-subtle inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs">
+            <ListChecks className="h-3 w-3" />
+            Pulse
+          </span>
+        </StateBlock>
+
+        <StateBlock title="Shimmer">
+          <div className="h-8 w-48 rounded-md co-shimmer" />
+        </StateBlock>
+      </div>
+    </div>
+  );
+}
+
 export function DesignSystemShowcase() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const requested = new URLSearchParams(window.location.search).get("theme");
@@ -113,7 +249,8 @@ export function DesignSystemShowcase() {
   });
   const [activeTab, setActiveTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
-    return requested === "inbox" || requested === "graph" ? requested : "primitives";
+    const valid = ["primitives", "gradients", "living-data", "motion", "inbox", "graph"] as const;
+    return valid.includes(requested as typeof valid[number]) ? (requested as string) : "primitives";
   });
 
   useEffect(() => {
@@ -153,13 +290,34 @@ export function DesignSystemShowcase() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <TabsList>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
-              <TabsTrigger value="inbox">Inbox Stress</TabsTrigger>
+              <TabsTrigger value="gradients">Gradients</TabsTrigger>
+              <TabsTrigger value="living-data">Living Data</TabsTrigger>
+              <TabsTrigger value="motion">Motion</TabsTrigger>
+              <TabsTrigger value="inbox">Review Queue</TabsTrigger>
               <TabsTrigger value="graph">Graph Labels</TabsTrigger>
             </TabsList>
             <TabsContent value="primitives" className="space-y-4">
               <div className="grid gap-4 2xl:grid-cols-2">
                 <PrimitiveGallery theme="dark" />
                 <PrimitiveGallery theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="gradients" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <GradientGallery theme="dark" />
+                <GradientGallery theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="living-data" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <LivingDataGallery theme="dark" />
+                <LivingDataGallery theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="motion" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <MotionGallery theme="dark" />
+                <MotionGallery theme="light" />
               </div>
             </TabsContent>
             <TabsContent value="inbox">

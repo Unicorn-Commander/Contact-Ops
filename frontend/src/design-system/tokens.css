@@ -169,6 +169,46 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-gentle: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* Motion — Phase 1 personality pass */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 360ms;
+  --motion-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Gradients — brand */
+  --gradient-brand-start: 0.617 0.19 318;
+  --gradient-brand-end: 0.55 0.18 280;
+  --gradient-brand: linear-gradient(135deg, oklch(var(--gradient-brand-start)), oklch(var(--gradient-brand-end)));
+  --gradient-brand-subtle: linear-gradient(135deg, oklch(0.972 0.031 318 / 0.6), oklch(0.925 0.056 318 / 0.4));
+
+  /* Gradients — surface ambient wash */
+  --gradient-surface-start: 0.972 0.031 318;
+  --gradient-surface-end: 0.947 0.006 76;
+  --gradient-surface: linear-gradient(180deg, oklch(var(--gradient-surface-start) / 0.35), oklch(var(--gradient-surface-end) / 0));
+
+  /* Gradients — elevated card header */
+  --gradient-header-start: 0.23 0.045 318;
+  --gradient-header-end: 0.145 0.018 318;
+  --gradient-header: linear-gradient(135deg, oklch(var(--gradient-header-start)), oklch(var(--gradient-header-end)));
+
+  /* Living data — agent vs human */
+  --co-agent-color: oklch(0.68 0.15 318);
+  --co-agent-color-muted: oklch(0.68 0.15 318 / 0.16);
+  --co-agent-glow: oklch(0.68 0.15 318 / 0.08);
+  --co-human-color: 0.548 0.009 76;
+  --co-human-color-muted: 0.548 0.009 76 / 0.16;
+
+  /* Status colors — item state */
+  --co-status-amber: var(--co-amber-500);
+  --co-status-amber-muted: oklch(var(--co-amber-500) / 0.14);
+  --co-status-emerald: var(--co-emerald-500);
+  --co-status-emerald-muted: oklch(var(--co-emerald-500) / 0.14);
+  --co-status-rose: var(--co-rose-500);
+  --co-status-rose-muted: oklch(var(--co-rose-500) / 0.14);
+  --co-status-sky: var(--co-sky-500);
+  --co-status-sky-muted: oklch(var(--co-sky-500) / 0.14);
 }
 
 [data-theme="light"] {
@@ -204,6 +244,40 @@
   --confidence-sky: var(--co-sky-700);
   --confidence-amber: var(--co-amber-700);
   --confidence-rose: var(--co-rose-700);
+
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 360ms;
+  --motion-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --gradient-brand-start: 0.492 0.17 318;
+  --gradient-brand-end: 0.45 0.16 280;
+  --gradient-brand: linear-gradient(135deg, oklch(var(--gradient-brand-start)), oklch(var(--gradient-brand-end)));
+  --gradient-brand-subtle: linear-gradient(135deg, oklch(0.972 0.031 318 / 0.6), oklch(0.925 0.056 318 / 0.4));
+
+  --gradient-surface-start: 0.972 0.031 318;
+  --gradient-surface-end: 0.947 0.006 76;
+  --gradient-surface: linear-gradient(180deg, oklch(var(--gradient-surface-start) / 0.35), oklch(var(--gradient-surface-end) / 0));
+
+  --gradient-header-start: 0.355 0.12 318;
+  --gradient-header-end: 0.244 0.082 318;
+  --gradient-header: linear-gradient(135deg, oklch(var(--gradient-header-start)), oklch(var(--gradient-header-end)));
+
+  --co-agent-color: oklch(0.492 0.17 318);
+  --co-agent-color-muted: oklch(0.492 0.17 318 / 0.16);
+  --co-agent-glow: oklch(0.492 0.17 318 / 0.08);
+  --co-human-color: 0.334 0.009 76;
+  --co-human-color-muted: 0.334 0.009 76 / 0.16;
+
+  --co-status-amber: var(--co-amber-700);
+  --co-status-amber-muted: oklch(var(--co-amber-700) / 0.14);
+  --co-status-emerald: var(--co-emerald-700);
+  --co-status-emerald-muted: oklch(var(--co-emerald-700) / 0.14);
+  --co-status-rose: var(--co-rose-700);
+  --co-status-rose-muted: oklch(var(--co-rose-700) / 0.14);
+  --co-status-sky: var(--co-sky-700);
+  --co-status-sky-muted: oklch(var(--co-sky-700) / 0.14);
 
   --shadow-1: 0 1px 2px oklch(0.29 0.012 76 / 0.08), 0 0 0 1px oklch(0.24 0.01 76 / 0.055);
   --shadow-2: 0 8px 24px oklch(0.29 0.012 76 / 0.1), 0 2px 6px oklch(0.29 0.012 76 / 0.06), 0 0 0 1px oklch(0.24 0.01 76 / 0.06);
@@ -336,6 +410,126 @@ body {
   47%,
   100% {
     opacity: 0;
+  }
+}
+
+/* Personality pass — gradient utilities */
+.bg-gradient-brand {
+  background: var(--gradient-brand);
+}
+
+.bg-gradient-brand-subtle {
+  background: var(--gradient-brand-subtle);
+}
+
+.bg-gradient-surface {
+  background: var(--gradient-surface);
+}
+
+.bg-gradient-header {
+  background: var(--gradient-header);
+}
+
+.bg-gradient-brand-text {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Personality pass — living data colors */
+.co-agent-indicator {
+  background-color: oklch(var(--co-agent-glow));
+  border-color: oklch(var(--co-agent-color) / 0.3);
+}
+
+.co-human-indicator {
+  background-color: oklch(var(--co-human-color) / 0.08);
+  border-color: oklch(var(--co-human-color) / 0.25);
+}
+
+.co-status-proposed {
+  color: oklch(var(--co-status-amber));
+  background-color: oklch(var(--co-status-amber-muted));
+}
+
+.co-status-applied {
+  color: oklch(var(--co-status-emerald));
+  background-color: oklch(var(--co-status-emerald-muted));
+}
+
+.co-status-rejected {
+  color: oklch(var(--co-status-rose));
+  background-color: oklch(var(--co-status-rose-muted));
+}
+
+.co-status-snoozed {
+  color: oklch(var(--co-status-sky));
+  background-color: oklch(var(--co-status-sky-muted));
+}
+
+/* Personality pass — motion utilities */
+@keyframes co-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes co-fade-in-scale {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes co-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes co-pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes co-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes co-sigil-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.co-animate-fade-in {
+  animation: co-fade-in var(--motion-base) var(--motion-ease-out) both;
+}
+
+.co-animate-fade-in-scale {
+  animation: co-fade-in-scale var(--motion-base) var(--motion-ease-out) both;
+}
+
+.co-animate-slide-up {
+  animation: co-slide-up var(--motion-base) var(--motion-ease-out) both;
+}
+
+.co-animate-pulse-subtle {
+  animation: co-pulse-subtle 2s ease-in-out infinite;
+}
+
+.co-shimmer {
+  background: linear-gradient(90deg, transparent 25%, oklch(var(--co-neutral-200) / 0.3) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: co-shimmer 1.8s ease-in-out infinite;
+}
+
+/* Reduced motion: disable personality animations */
+@media (prefers-reduced-motion: reduce) {
+  .co-animate-fade-in,
+  .co-animate-fade-in-scale,
+  .co-animate-slide-up,
+  .co-animate-pulse-subtle,
+  .co-shimmer {
+    animation: none !important;
   }
 }
 

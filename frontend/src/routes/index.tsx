@@ -80,24 +80,27 @@ function AuthGate() {
   if (!auth.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md text-center shadow-co3">
-          <CardHeader className="items-center space-y-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/12 text-primary">
-              <BookUser className="h-7 w-7" strokeWidth={1.5} />
-            </div>
-            <div className="space-y-1.5">
-              <CardTitle className="text-xl">Contact-Ops</CardTitle>
-              <CardDescription>
-                Sign in with Magic Unicorn Keycloak to manage people, organizations, tenants, tags, and audit history.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full" onClick={() => void auth.signinRedirect()}>
-              Sign in
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="relative w-full max-w-md overflow-hidden rounded-2xl shadow-co4">
+          <div className="absolute inset-0 bg-gradient-brand opacity-[0.07]" />
+          <Card className="relative z-10 w-full text-center shadow-none">
+            <CardHeader className="items-center space-y-3">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-brand text-primary-foreground shadow-md">
+                <BookUser className="h-7 w-7" strokeWidth={1.5} />
+              </div>
+              <div className="space-y-1.5">
+                <CardTitle className="text-xl">Contact-Ops</CardTitle>
+                <CardDescription>
+                  Sign in with Magic Unicorn Keycloak to manage people, organizations, tenants, tags, and audit history.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Button className="w-full" variant="gradient" onClick={() => void auth.signinRedirect()}>
+                Sign in
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -153,7 +156,14 @@ const personGraphRoute = createRoute({ getParentRoute: () => appRoute, path: "/p
 const orgsRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs", component: OrgsRoute });
 const orgRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs/$id", component: OrgDetailRoute });
 const tagsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tags", component: TagsRoute });
-const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox", component: LazyInboxRoute });
+const reviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/review", component: LazyInboxRoute });
+const inboxRedirectRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/inbox",
+  beforeLoad: () => {
+    throw { replace: true, to: "/review" };
+  }
+});
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
@@ -180,7 +190,7 @@ function CallbackRoute() {
 
 export const routeTree = rootRoute.addChildren([
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, inboxRoute, tenantsRoute, settingsRoute, graphRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute]),
   callbackRoute
 ]);
 

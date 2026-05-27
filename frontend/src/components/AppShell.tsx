@@ -1,5 +1,5 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { Bell, Building2, Home, Inbox, Moon, Network, Settings, Tags, Sun, Users } from "lucide-react";
+import { Bell, Building2, Home, ListChecks, Moon, Network, Settings, Tags, Sun, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
@@ -20,7 +20,7 @@ const nav = [
   { to: "/orgs", label: "Organizations", icon: Building2 },
   { to: "/tags", label: "Tags", icon: Tags },
   { to: "/graph", label: "Graph", icon: Network },
-  { to: "/inbox", label: "Inbox", icon: Inbox },
+  { to: "/review", label: "Review Queue", icon: ListChecks },
   { to: "/tenants", label: "Tenants", icon: Building2 },
   { to: "/settings", label: "Settings", icon: Settings }
 ] as const;
