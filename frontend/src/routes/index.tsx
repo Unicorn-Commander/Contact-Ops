@@ -1,10 +1,12 @@
 import { lazy, Suspense } from "react";
 import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet } from "@tanstack/react-router";
 import { useAuth } from "react-oidc-context";
+import { BookUser, Compass } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/design-system/Spinner";
 import { ActionEventRow } from "@/components/domain/Lists";
 import { DashboardRoute } from "@/routes/pages/Dashboard";
 import { PeopleRoute, PersonDetailRoute } from "@/routes/pages/People";
@@ -70,21 +72,25 @@ function AuthGate() {
   const auth = useAuth();
   if (auth.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="w-full max-w-md space-y-3">
-          <Skeleton className="h-10 w-48" />
-          <Skeleton className="h-32 w-full" />
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Spinner label="Checking your session…" size="lg" />
       </div>
     );
   }
   if (!auth.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>Contact-Ops</CardTitle>
-            <CardDescription>Sign in with Magic Unicorn Keycloak to manage people, organizations, tenants, tags, and audit history.</CardDescription>
+        <Card className="w-full max-w-md text-center shadow-co3">
+          <CardHeader className="items-center space-y-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/12 text-primary">
+              <BookUser className="h-7 w-7" strokeWidth={1.5} />
+            </div>
+            <div className="space-y-1.5">
+              <CardTitle className="text-xl">Contact-Ops</CardTitle>
+              <CardDescription>
+                Sign in with Magic Unicorn Keycloak to manage people, organizations, tenants, tags, and audit history.
+              </CardDescription>
+            </div>
           </CardHeader>
           <CardContent>
             <Button className="w-full" onClick={() => void auth.signinRedirect()}>
@@ -100,33 +106,24 @@ function AuthGate() {
 
 function NotFound() {
   return (
-    <Card className="text-center py-12">
-      <div className="mb-6">
-        <svg 
-          className="h-12 w-12 mx-auto text-violet-400" 
-          fill="none" 
-          stroke="currentColor" 
-          viewBox="0 0 24 24"
-        >
-          <path 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            strokeWidth={2} 
-            d="M12 8v4l3 3"
-          />
-        </svg>
-      </div>
-      <h2 className="mb-4 text-xl font-semibold text-violet-600">Page not found</h2>
-      <p className="mb-6 text-muted-foreground max-w-xl">
-        The page you're looking for doesn't exist or has been moved.
-      </p>
-      <Button 
-        className="bg-violet-500 hover:bg-violet-600"
-        asChild
-      >
-        <a href="/">Back to dashboard</a>
-      </Button>
-    </Card>
+    <div className="flex min-h-[60vh] items-center justify-center p-4">
+      <Card className="w-full max-w-lg text-center">
+        <CardContent className="flex flex-col items-center gap-4 py-16">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <Compass className="h-7 w-7" strokeWidth={1.5} />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-xl font-semibold tracking-tight">Page not found</h2>
+            <p className="mx-auto max-w-sm text-sm text-muted-foreground">
+              The page you're looking for doesn't exist or has been moved.
+            </p>
+          </div>
+          <Button asChild>
+            <a href="/">Back to dashboard</a>
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -176,14 +173,7 @@ const callbackRoute = createRoute({
 function CallbackRoute() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <div className="text-center space-y-4">
-        <div className="h-8 w-8">
-          <Skeleton className="h-full w-full rounded-full" />
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Signing in... Please wait.
-        </p>
-      </div>
+      <Spinner label="Signing you in…" size="lg" />
     </div>
   );
 }

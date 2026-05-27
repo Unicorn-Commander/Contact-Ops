@@ -1,13 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { Badge } from "@/components/ui/badge";
+import { Tags as TagsIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTags } from "@/hooks/useMcp";
+import { cn } from "@/lib/utils";
 
 const maxUsage = (items: Array<{ usage_count?: number }>) =>
   Math.max(...items.map((t) => t.usage_count ?? 0), 1);
 
-function TagSize(usage: number, max: number): string {
+/** Usage-weighted type scale for the tag cloud. */
+function tagSize(usage: number, max: number): string {
   const ratio = usage / max;
   if (ratio > 0.75) return "text-lg";
   if (ratio > 0.5) return "text-base";
@@ -17,50 +19,69 @@ function TagSize(usage: number, max: number): string {
 
 export function TagsRoute() {
   const tags = useTags();
+  const items = tags.data?.items ?? [];
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Tags</h1>
-        <p className="text-sm text-muted-foreground">Browse tenant tags and jump into filtered people views.</p>
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-2xl font-semibold tracking-tight">Tags</h1>
+          {!tags.isLoading && tags.data ? (
+            <span className="co-mono-numeric rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {items.length}
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">Browse tenant tags and jump into filtered people views.</p>
       </div>
-      <Card className="border-violet-200">
+
+      <Card>
         <CardHeader>
-          <CardTitle className="text-violet-600">Tag cloud</CardTitle>
-          <CardDescription>Click a tag to filter the people list.</CardDescription>
+          <CardTitle className="text-base">Tag cloud</CardTitle>
+          <CardDescription>Sized by usage. Select a tag to filter the people list.</CardDescription>
         </CardHeader>
         <CardContent>
           {tags.isLoading ? (
             <div className="flex flex-wrap gap-2">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-6 w-20 rounded-full" />
+              {Array.from({ length: 10 }).map((_, i) => (
+                <Skeleton key={i} className="h-7 w-20 rounded-full" />
               ))}
             </div>
-          ) : tags.data?.items?.length ? (
-            <div className="flex flex-wrap gap-2">
+          ) : items.length ? (
+            <div className="flex flex-wrap items-center gap-2">
               {(() => {
-                const max = maxUsage(tags.data!.items);
-                return tags.data!.items.map((tag) => (
-                  <Link key={tag.slug} to="/people" search={{ tag: tag.slug } as never}>
-                    <Badge
-                      variant="secondary"
-                      className={`${TagSize(tag.usage_count ?? 0, max)} border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200`}
-                    >
-                      {tag.display_name ?? tag.slug}
-                      {tag.usage_count != null && (
-                        <span className="ml-1 text-muted-foreground">
-                          {tag.usage_count}
-                        </span>
-                      )}
-                    </Badge>
+                const max = maxUsage(items);
+                return items.map((tag) => (
+                  <Link
+                    key={tag.slug}
+                    to="/people"
+                    search={{ tag: tag.slug } as never}
+                    aria-label={`Filter people by ${tag.display_name ?? tag.slug}`}
+                    className={cn(
+                      "focus-ring group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/70 px-3 py-1 font-medium text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground",
+                      tagSize(tag.usage_count ?? 0, max)
+                    )}
+                  >
+                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
+                    <span className="truncate">{tag.display_name ?? tag.slug}</span>
+                    {tag.usage_count != null ? (
+                      <span className="co-mono-numeric ml-0.5 text-xs text-muted-foreground">{tag.usage_count}</span>
+                    ) : null}
                   </Link>
                 ));
               })()}
             </div>
           ) : (
-            <div className="text-center py-8">
-              <p className="text-sm text-muted-foreground">No tags have been applied yet.</p>
-              <p className="text-xs text-muted-foreground mt-1">Tags appear here once people are tagged in the system.</p>
+            <div className="flex flex-col items-center gap-4 py-12 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <TagsIcon className="h-6 w-6" strokeWidth={1.5} />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold">No tags yet</h2>
+                <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                  Tags appear here once people are tagged in the system.
+                </p>
+              </div>
             </div>
           )}
         </CardContent>

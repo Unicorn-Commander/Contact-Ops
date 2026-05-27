@@ -1,4 +1,4 @@
-import { Plus, Save, Shield, ShieldCheck } from "lucide-react";
+import { Building2, Plus, Save, Shield, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,47 +10,95 @@ import { useMcpMutation, useTenants } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { cn } from "@/lib/utils";
 
-const kindColors: Record<string, string> = {
-  personal: "border-sky-200 bg-sky-50 text-sky-700",
-  brand: "border-amber-200 bg-amber-50 text-amber-700",
-  white_label_customer: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  magic_unicorn_internal: "border-violet-200 bg-violet-50 text-violet-700",
+// Tenant kind → tokenized accent. The label uses `text-foreground` (always AA);
+// the kind's semantic color is carried by the chip's tint, border, and dot — so a
+// faint sky/amber tint can't drop the *text* below contrast. No palette hex.
+const kindAccent: Record<string, { ring: string; dot: string }> = {
+  personal: { ring: "border-info/40 bg-info/10", dot: "bg-info" },
+  brand: { ring: "border-warning/40 bg-warning/10", dot: "bg-warning" },
+  white_label_customer: { ring: "border-success/40 bg-success/10", dot: "bg-success" },
+  magic_unicorn_internal: { ring: "border-primary/40 bg-primary/10", dot: "bg-primary" }
 };
 
-export function TenantsRoute() {
-  const tenants = useTenants();
+function KindChip({ kind }: { kind?: string }) {
+  const accent = kindAccent[kind ?? ""];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium capitalize text-foreground",
+        accent?.ring ?? "border-border bg-muted"
+      )}
+    >
+      <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", accent?.dot ?? "bg-muted-foreground")} />
+      {kind?.replace(/_/g, " ") ?? "tenant"}
+    </span>
+  );
+}
+
+function AddTenantDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (next: boolean) => void }) {
   const create = useMcpMutation(tools.createTenant);
-  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Tenants</h1>
-          <p className="text-sm text-muted-foreground">Manage tenant membership, branding, retention, and HIPAA flags.</p>
-        </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button className="bg-violet-500 hover:bg-violet-600">
-              <Plus className="h-4 w-4" />
-              Add tenant
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogTrigger asChild>
+        <Button>
+          <Plus className="h-4 w-4" strokeWidth={1.6} />
+          Add tenant
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add tenant</DialogTitle>
+          <DialogDescription>Visible only to authorized admins once role claims are enforced server-side.</DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void create
+              .mutateAsync({ display_name: name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), kind: "personal" })
+              .then(() => onOpenChange(false));
+          }}
+        >
+          <div className="space-y-1.5">
+            <label htmlFor="tenant_name" className="text-sm font-medium text-foreground">
+              Tenant name
+            </label>
+            <Input id="tenant_name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Magic Unicorn" />
+          </div>
+          <div className="flex justify-end pt-1">
+            <Button type="submit" disabled={create.isPending || !name.trim()}>
+              <Save className="h-4 w-4" strokeWidth={1.6} />
+              {create.isPending ? "Creating…" : "Create tenant"}
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add tenant</DialogTitle>
-              <DialogDescription>Visible only to authorized admins once role claims are enforced server-side.</DialogDescription>
-            </DialogHeader>
-            <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void create.mutateAsync({ display_name: name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), kind: "personal" }).then(() => setOpen(false)); }}>
-              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Tenant name" />
-              <Button type="submit" className="bg-violet-500 hover:bg-violet-600">
-                <Save className="mr-2 h-4 w-4" />
-                Create tenant
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function TenantsRoute() {
+  const tenants = useTenants();
+  const [open, setOpen] = useState(false);
+  const items = tenants.data?.items ?? [];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-semibold tracking-tight">Tenants</h1>
+            {!tenants.isLoading && tenants.data ? (
+              <span className="co-mono-numeric rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                {items.length}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">Manage tenant membership, branding, retention, and HIPAA flags.</p>
+        </div>
+        <AddTenantDialog open={open} onOpenChange={setOpen} />
       </div>
 
       {tenants.isLoading ? (
@@ -68,55 +116,58 @@ export function TenantsRoute() {
             </Card>
           ))}
         </div>
-      ) : tenants.data?.items?.length ? (
+      ) : items.length ? (
         <div className="grid gap-4 lg:grid-cols-2">
-          {tenants.data.items.map((tenant) => (
-            <Card key={tenant.tenant_id} className="border-violet-200 hover:border-violet-300 transition-colors">
+          {items.map((tenant) => (
+            <Card key={tenant.tenant_id} className="transition-colors hover:border-primary/30">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 text-base">
                   {tenant.display_name}
-                  {tenant.hipaa_mode && (
-                    <ShieldCheck className="h-4 w-4 text-amber-500" aria-label="HIPAA enabled" />
-                  )}
+                  {tenant.hipaa_mode ? (
+                    <ShieldCheck className="h-4 w-4 text-warning" strokeWidth={1.8} aria-label="HIPAA enabled" />
+                  ) : null}
                 </CardTitle>
-                <CardDescription className="font-mono text-xs">{tenant.slug}</CardDescription>
+                <CardDescription className="co-mono-numeric text-xs">{tenant.slug}</CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-wrap gap-2">
-                <Badge className={cn(kindColors[tenant.kind ?? ""] ?? "border-slate-200 bg-slate-50 text-slate-700", "border")}>
-                  {tenant.kind?.replace(/_/g, " ") ?? "tenant"}
+              <CardContent className="flex flex-wrap items-center gap-2">
+                <KindChip kind={tenant.kind} />
+                <Badge variant="secondary" className="capitalize">
+                  {tenant.role ?? "member"}
                 </Badge>
-                <Badge variant="secondary">{tenant.role ?? "member"}</Badge>
-                {tenant.retention_class && (
-                  <Badge variant="outline">{tenant.retention_class}</Badge>
-                )}
-                {tenant.hipaa_mode && (
-                  <Badge variant="destructive" className="flex items-center gap-1">
-                    <Shield className="h-3 w-3" />
+                {tenant.retention_class ? <Badge variant="outline">{tenant.retention_class}</Badge> : null}
+                {tenant.hipaa_mode ? (
+                  // Danger is carried by the red shield (graphical, 3:1) + border; the
+                  // label stays text-foreground so it clears AA on the tinted bg.
+                  <span className="inline-flex items-center gap-1 rounded-full border border-destructive/50 bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-foreground">
+                    <Shield className="h-3 w-3 text-destructive" strokeWidth={1.8} />
                     HIPAA
-                  </Badge>
-                )}
-                <Badge variant="secondary" className="ml-auto">
+                  </span>
+                ) : null}
+                <span className="co-mono-numeric ml-auto text-xs text-muted-foreground">
                   {tenant.member_count ?? 0} members
-                </Badge>
+                </span>
               </CardContent>
             </Card>
           ))}
         </div>
       ) : (
-        <div className="text-center py-12">
-          <Shield className="mx-auto h-12 w-12 text-violet-400 mb-4" />
-          <h2 className="mb-2 text-xl font-semibold text-violet-600">No tenants</h2>
-          <p className="text-muted-foreground max-w-xl mx-auto">
-            Tenants allow you to segment your contact data. Create your first tenant to get started.
-          </p>
-          <Button 
-            className="mt-6 bg-violet-500 hover:bg-violet-600"
-            onClick={() => setOpen(true)}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Create tenant
-          </Button>
-        </div>
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-4 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Building2 className="h-6 w-6" strokeWidth={1.5} />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold">No tenants yet</h2>
+              <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                Tenants segment your contact data into isolated workspaces. Create your first to get started.
+              </p>
+            </div>
+            <Button onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" strokeWidth={1.6} />
+              Create tenant
+            </Button>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
