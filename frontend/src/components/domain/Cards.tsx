@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Building2, ChevronRight, Mail } from "lucide-react";
+import { Briefcase, Building2, ChevronRight, Globe, Mail } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -96,24 +96,46 @@ export function PersonCard({ person }: { person: PersonSummary }) {
   );
 }
 
+/**
+ * Org-card variant of the shared entity card. Mirrors {@link PersonCard}'s chrome
+ * (avatar puck, kind badge, two-line meta, chevron) but carries the org-specific
+ * signals — kind, domain, and industry — instead of email/org. Orgs are not human,
+ * so the avatar shows the `Building2` glyph rather than initials.
+ */
 export function OrgCard({ org }: { org: OrganizationSummary }) {
-  const meta = [org.kind, org.domain, org.industry].filter(Boolean).join(" · ");
+  const name = org.display_name || org.legal_name || "Untitled organization";
   return (
     <Link
       to="/orgs/$id"
       params={{ id: org.org_id }}
-      aria-label={`Open ${org.display_name ?? org.legal_name}`}
+      aria-label={`Open ${name}`}
       className="focus-ring group block rounded-lg"
     >
       <Card className={cardChrome()}>
         <CardContent className="flex items-center gap-4 p-4">
           <EntityAvatar icon={Building2} />
           <div className="min-w-0 flex-1">
-            <p className="truncate font-medium">{org.display_name ?? org.legal_name}</p>
-            <p className="truncate text-sm text-muted-foreground">{meta || "No details yet"}</p>
+            <div className="flex items-center gap-2">
+              <p className="truncate font-medium">{name}</p>
+              {org.kind ? (
+                <Badge variant="secondary" className="shrink-0 capitalize">
+                  {org.kind}
+                </Badge>
+              ) : null}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <span className={metaItem}>
+                <Globe className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+                <span className="truncate">{org.domain ?? "No domain"}</span>
+              </span>
+              <span className={metaItem}>
+                <Briefcase className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+                <span className="truncate">{org.industry ?? "No industry"}</span>
+              </span>
+            </div>
           </div>
           <ChevronRight
-            className="ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
+            className="ml-auto h-4 w-4 shrink-0 self-start mt-0.5 text-muted-foreground transition-colors group-hover:text-foreground"
             strokeWidth={1.6}
           />
         </CardContent>
