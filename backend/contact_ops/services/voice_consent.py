@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-import jwt
+from jose import jwt
 from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -265,7 +265,7 @@ class VoiceConsentService:
         """Verify a consent token and return its claims.
 
         Raises:
-            jwt.PyJWTError: If the token is expired, invalidly signed, or
+            jose.JWTError: If the token is expired, invalidly signed, or
                             has the wrong audience.
         """
         return jwt.decode(
