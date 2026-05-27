@@ -303,7 +303,7 @@ function OrgFact({
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="focus-ring inline-block max-w-full truncate rounded text-sm font-medium text-foreground underline decoration-border underline-offset-2 transition-colors hover:text-primary hover:decoration-primary"
+            className="focus-ring inline-block max-w-full truncate rounded text-sm font-medium text-foreground underline decoration-border underline-offset-2 transition-colors hover:text-link hover:decoration-link"
           >
             {value}
           </a>

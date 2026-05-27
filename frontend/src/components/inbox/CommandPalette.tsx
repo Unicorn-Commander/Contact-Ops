@@ -103,7 +103,7 @@ export function CommandPalette({ open, onOpenChange, actions }: CommandPalettePr
                       }}
                       className={cn(
                         "flex cursor-pointer items-center gap-co-8 rounded-[var(--radius-sm)] px-co-8 py-co-8 text-13 text-foreground",
-                        "aria-selected:bg-primary/10 aria-selected:text-primary",
+                        "aria-selected:bg-primary/10 aria-selected:text-link",
                       )}
                     >
                       <span className="flex flex-1 items-center gap-co-6">
