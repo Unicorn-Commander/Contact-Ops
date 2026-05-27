@@ -98,7 +98,7 @@ export function SnoozePicker({
           <button
             type="button"
             onClick={() => setCustomMode((v) => !v)}
-            className="focus-ring rounded-[var(--radius-sm)] text-12 text-primary hover:underline"
+            className="focus-ring rounded-[var(--radius-sm)] text-12 text-link hover:underline"
           >
             {customMode ? "Hide" : "Custom date..."}
           </button>

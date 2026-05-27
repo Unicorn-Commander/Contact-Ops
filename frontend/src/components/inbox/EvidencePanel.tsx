@@ -65,7 +65,7 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
             href={query.data.laminar_trace_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-co-4 text-12 text-primary hover:underline"
+            className="inline-flex items-center gap-co-4 text-12 text-link hover:underline"
             title="Open in Laminar"
           >
             <span>Trace</span>
