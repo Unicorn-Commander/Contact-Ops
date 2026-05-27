@@ -13,7 +13,7 @@ RUN npm ci
 COPY . .
 
 ARG VITE_MCP_BASE_URL=https://mcp.contacts.magicunicorn.dev
-ARG VITE_KEYCLOAK_ISSUER=https://auth.unicorncommander.ai/realms/uchub
+ARG VITE_KEYCLOAK_ISSUER=https://auth.magicunicorn.dev/realms/uchub
 ARG VITE_KEYCLOAK_CLIENT_ID=contact-ops-app
 ENV VITE_MCP_BASE_URL=$VITE_MCP_BASE_URL
 ENV VITE_KEYCLOAK_ISSUER=$VITE_KEYCLOAK_ISSUER
