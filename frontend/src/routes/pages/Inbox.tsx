@@ -723,7 +723,7 @@ function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
               className={cn(
                 "focus-ring flex w-full items-center justify-between rounded-md px-co-10 py-co-8 text-13",
                 "transition-colors duration-150 ease-snappy hover:bg-muted",
-                view === it.id && "bg-primary/10 font-medium text-primary",
+                view === it.id && "bg-primary/10 font-medium text-link",
               )}
               aria-current={view === it.id ? "page" : undefined}
             >

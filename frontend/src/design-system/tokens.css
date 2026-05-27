@@ -80,6 +80,7 @@
   --co-rose-200: 0.794 0.112 18;
   --co-rose-300: 0.694 0.155 18;
   --co-rose-500: 0.606 0.199 18;
+  --co-rose-600: 0.558 0.188 18;
   --co-rose-700: 0.506 0.174 18;
   --co-rose-900: 0.39 0.121 18;
   --co-rose-950: 0.286 0.085 18;
@@ -99,7 +100,7 @@
   --muted-foreground: 0.686 0.009 76;
   --accent: 0.235 0.013 76;
   --accent-foreground: 0.94 0.006 76;
-  --destructive: var(--co-rose-500);
+  --destructive: var(--co-rose-600);
   --destructive-foreground: 0.985 0.004 76;
   --border: 0.282 0.01 76;
   --input: 0.252 0.011 76;

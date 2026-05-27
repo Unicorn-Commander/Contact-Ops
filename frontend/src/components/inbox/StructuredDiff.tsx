@@ -138,7 +138,7 @@ export function StructuredDiff({
                   <FormattedValue field={entry.field} value={entry.proposedValue} />
                 </p>
                 {entry.agentRecommendation && (
-                  <p className="mt-co-4 inline-flex items-center gap-co-2 rounded-[var(--radius-sm)] border border-primary/30 bg-primary/10 px-co-4 py-co-2 font-mono text-11 text-primary">
+                  <p className="mt-co-4 inline-flex items-center gap-co-2 rounded-[var(--radius-sm)] border border-primary/30 bg-primary/10 px-co-4 py-co-2 font-mono text-11 text-link">
                     <span>agent</span>
                     <ArrowRight className="h-2.5 w-2.5" />
                     <span>{entry.agentRecommendation}</span>

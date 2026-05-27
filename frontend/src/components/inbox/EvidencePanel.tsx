@@ -54,7 +54,7 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="focus-ring flex items-center gap-co-6 rounded-[var(--radius-sm)] text-13 font-medium hover:text-primary"
+          className="focus-ring flex items-center gap-co-6 rounded-[var(--radius-sm)] text-13 font-medium hover:text-link"
           aria-expanded={expanded}
         >
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -114,7 +114,7 @@ export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidenceP
                       <li key={e.event_id} className="flex items-center justify-between gap-co-8 text-12">
                         <a
                           href={e.deep_link}
-                          className="truncate hover:text-primary hover:underline"
+                          className="truncate hover:text-link hover:underline"
                           title={e.title}
                         >
                           {e.title}
