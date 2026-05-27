@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ListChecks, Moon, Sparkles, Sun } from "lucide-react";
+import { BookUser, ListChecks, Moon, Sparkles, Sun } from "lucide-react";
 import { ActionAttribution } from "@/design-system/ActionAttribution";
+import { ShellPreview } from "@/design-system/ShellPreview";
+import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
 import { DensityControl, DensityProvider } from "@/design-system/Density";
@@ -115,22 +117,14 @@ function GradientGallery({ theme }: { theme: ThemeMode }) {
       </div>
 
       <div className="space-y-3">
-        <StateBlock title="Brand Gradient">
+        <StateBlock title="Brand Gradient (purple → fuchsia)">
           <div className="h-10 w-full rounded-md bg-gradient-brand" />
         </StateBlock>
 
-        <StateBlock title="Subtle Gradient">
-          <div className="h-10 w-full rounded-md bg-gradient-brand-subtle" />
-        </StateBlock>
-
-        <StateBlock title="Surface Wash">
-          <div className="h-16 w-full rounded-md border border-border bg-card p-2">
-            <div className="h-full w-full rounded-sm bg-gradient-surface" />
-          </div>
-        </StateBlock>
-
-        <StateBlock title="Elevated Header">
-          <div className="h-10 w-full rounded-md bg-gradient-header" />
+        <StateBlock title="Logo Mark">
+          <span className="bg-gradient-brand co-glow-brand flex h-9 w-9 items-center justify-center rounded-xl text-primary-foreground">
+            <Sparkles className="h-4 w-4" />
+          </span>
         </StateBlock>
 
         <StateBlock title="Gradient Button">
@@ -142,6 +136,14 @@ function GradientGallery({ theme }: { theme: ThemeMode }) {
 
         <StateBlock title="Gradient Text">
           <span className="text-lg font-semibold bg-gradient-brand-text">Contact-Ops</span>
+        </StateBlock>
+
+        <StateBlock title="Surfaces (flat, cool neutral)">
+          <Swatch label="background" className="bg-background" />
+          <Swatch label="card" className="bg-card" />
+          <Swatch label="muted" className="bg-muted" />
+          <Swatch label="primary" className="bg-primary" />
+          <Swatch label="fuchsia" className="bg-[oklch(var(--accent-fuchsia))]" />
         </StateBlock>
       </div>
     </div>
@@ -242,6 +244,36 @@ function MotionGallery({ theme }: { theme: ThemeMode }) {
   );
 }
 
+/** Auth-free twin of the AuthGate login screen (routes/index.tsx). */
+function LoginPreview({ theme }: { theme: ThemeMode }) {
+  return (
+    <div
+      data-theme={theme}
+      className="flex min-h-[560px] items-center justify-center rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]"
+    >
+      <div className="w-full max-w-md">
+        <Card className="border-border">
+          <CardContent className="px-8 py-10 text-center">
+            <div className="bg-gradient-brand co-glow-brand mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
+              <BookUser className="h-7 w-7" strokeWidth={1.6} />
+            </div>
+            <h1 className="bg-gradient-brand-text text-3xl font-bold tracking-tight">Contact-Ops</h1>
+            <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
+              The canonical identity hub. Sign in with Magic Unicorn to manage people, organizations, and the agents
+              that keep them clean.
+            </p>
+            <Button className="mt-8 h-11 w-full" variant="gradient">
+              Sign in
+            </Button>
+            <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
+          </CardContent>
+        </Card>
+        <p className="mt-4 text-center text-xs text-muted-foreground">by Magic Unicorn</p>
+      </div>
+    </div>
+  );
+}
+
 export function DesignSystemShowcase() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const requested = new URLSearchParams(window.location.search).get("theme");
@@ -249,8 +281,8 @@ export function DesignSystemShowcase() {
   });
   const [activeTab, setActiveTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
-    const valid = ["primitives", "gradients", "living-data", "motion", "inbox", "graph"] as const;
-    return valid.includes(requested as typeof valid[number]) ? (requested as string) : "primitives";
+    const valid = ["shell", "login", "primitives", "gradients", "living-data", "motion", "inbox", "graph"] as const;
+    return valid.includes(requested as typeof valid[number]) ? (requested as string) : "shell";
   });
 
   useEffect(() => {
@@ -288,7 +320,9 @@ export function DesignSystemShowcase() {
           </header>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-            <TabsList>
+            <TabsList className="flex h-auto flex-wrap">
+              <TabsTrigger value="shell">Shell + Dashboard</TabsTrigger>
+              <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
               <TabsTrigger value="gradients">Gradients</TabsTrigger>
               <TabsTrigger value="living-data">Living Data</TabsTrigger>
@@ -296,6 +330,28 @@ export function DesignSystemShowcase() {
               <TabsTrigger value="inbox">Review Queue</TabsTrigger>
               <TabsTrigger value="graph">Graph Labels</TabsTrigger>
             </TabsList>
+            <TabsContent value="shell" className="space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Command center — dark</h2>
+                <ShellPreview theme="dark" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Command center — light</h2>
+                <ShellPreview theme="light" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Mobile (375px, sidebar collapsed)</h2>
+                <div className="mx-auto w-[375px] max-w-full">
+                  <ShellPreview theme="dark" compact />
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="login" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <LoginPreview theme="dark" />
+                <LoginPreview theme="light" />
+              </div>
+            </TabsContent>
             <TabsContent value="primitives" className="space-y-4">
               <div className="grid gap-4 2xl:grid-cols-2">
                 <PrimitiveGallery theme="dark" />

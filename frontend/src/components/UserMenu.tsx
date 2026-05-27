@@ -45,7 +45,7 @@ export function UserMenu() {
         <Button variant="outline" size="icon" className="h-9 w-9">
           <Avatar className="h-8 w-8">
             <AvatarImage src={picture} />
-            <AvatarFallback className="bg-violet-500 text-white text-sm font-medium">
+            <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
               {initials}
             </AvatarFallback>
           </Avatar>
@@ -58,7 +58,7 @@ export function UserMenu() {
       >
         <div className="space-y-1">
           <div className="flex items-center space-x-3 p-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-violet-500 font-semibold">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold">
               {initials}
             </div>
             <div className="min-w-0">

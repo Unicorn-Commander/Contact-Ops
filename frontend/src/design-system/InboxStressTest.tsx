@@ -152,9 +152,8 @@ export function InboxStressTest() {
 
   return (
     <section className="overflow-hidden rounded-[var(--radius-lg)] border border-border bg-background shadow-[var(--shadow-2)]">
-      <header className="relative overflow-hidden border-b border-border bg-card px-4 py-3">
-        <div className="absolute inset-0 bg-gradient-surface pointer-events-none" />
-        <div className="relative z-10 flex flex-wrap items-center justify-between gap-3">
+      <header className="border-b border-border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-brand text-primary-foreground shadow-sm">
               <ListChecks className="h-3.5 w-3.5" />

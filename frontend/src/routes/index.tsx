@@ -4,7 +4,7 @@ import { useAuth } from "react-oidc-context";
 import { BookUser, Compass } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/design-system/Spinner";
 import { ActionEventRow } from "@/components/domain/Lists";
@@ -80,26 +80,24 @@ function AuthGate() {
   if (!auth.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="relative w-full max-w-md overflow-hidden rounded-2xl shadow-co4">
-          <div className="absolute inset-0 bg-gradient-brand opacity-[0.07]" />
-          <Card className="relative z-10 w-full text-center shadow-none">
-            <CardHeader className="items-center space-y-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-brand text-primary-foreground shadow-md">
-                <BookUser className="h-7 w-7" strokeWidth={1.5} />
+        <div className="co-animate-fade-in w-full max-w-md">
+          <Card className="border-border">
+            <CardContent className="px-8 py-10 text-center">
+              <div className="bg-gradient-brand co-glow-brand mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
+                <BookUser className="h-7 w-7" strokeWidth={1.6} />
               </div>
-              <div className="space-y-1.5">
-                <CardTitle className="text-xl">Contact-Ops</CardTitle>
-                <CardDescription>
-                  Sign in with Magic Unicorn Keycloak to manage people, organizations, tenants, tags, and audit history.
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Button className="w-full" variant="gradient" onClick={() => void auth.signinRedirect()}>
+              <h1 className="bg-gradient-brand-text text-3xl font-bold tracking-tight">Contact-Ops</h1>
+              <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
+                The canonical identity hub. Sign in with Magic Unicorn to manage people, organizations, and the
+                agents that keep them clean.
+              </p>
+              <Button className="mt-8 h-11 w-full" variant="gradient" onClick={() => void auth.signinRedirect()}>
                 Sign in
               </Button>
+              <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
             </CardContent>
           </Card>
+          <p className="mt-4 text-center text-xs text-muted-foreground">by Magic Unicorn</p>
         </div>
       </div>
     );

@@ -72,6 +72,10 @@ export default {
           DEFAULT: oklch("--primary"),
           foreground: oklch("--primary-foreground")
         },
+        "accent-fuchsia": {
+          DEFAULT: oklch("--accent-fuchsia"),
+          foreground: oklch("--accent-fuchsia-foreground")
+        },
         secondary: {
           DEFAULT: oklch("--secondary"),
           foreground: oklch("--secondary-foreground")

@@ -33,7 +33,7 @@ const ResizableHandle = ({
       "after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2",
       "data-[panel-group-direction=vertical]:h-px data-[panel-group-direction=vertical]:w-full",
       "data-[panel-group-direction=vertical]:after:left-0 data-[panel-group-direction=vertical]:after:h-1 data-[panel-group-direction=vertical]:after:w-full",
-      "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-500",
+      "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
       className,
     )}
     {...props}
