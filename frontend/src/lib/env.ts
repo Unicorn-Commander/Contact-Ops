@@ -6,18 +6,9 @@ export const env = {
   keycloakClientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? "contact-ops-app"
 };
 
-export const oidcScopes = [
-  "openid",
-  "profile",
-  "email",
-  "user-attributes",
-  "person:read",
-  "person:write",
-  "org:read",
-  "org:write",
-  "field:propose_set",
-  "relationship:propose",
-  "relationship:apply",
-  "tag:apply",
-  "voice:match"
-].join(" ");
+// Request only standard OIDC scopes. The app's permission scopes (person:*,
+// org:*, tag:*, voice:*, etc.) and uc_uid/tenant claims are granted server-side
+// as default client scopes on contact-ops-app, so they're always in the token
+// without the SPA enumerating them (and requesting unconfigured scopes triggers
+// invalid_scope under strict realms).
+export const oidcScopes = ["openid", "profile", "email"].join(" ");
