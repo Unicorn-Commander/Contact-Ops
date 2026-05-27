@@ -91,6 +91,7 @@
   --popover: 0.156 0.01 76;
   --popover-foreground: var(--foreground);
   --primary: var(--co-brand-600);
+  --link: var(--co-brand-300);
   --primary-foreground: 0.985 0.004 76;
   --secondary: 0.218 0.011 76;
   --secondary-foreground: 0.91 0.006 76;
@@ -179,6 +180,7 @@
   --popover: 0.998 0.002 76;
   --popover-foreground: var(--foreground);
   --primary: var(--co-brand-700);
+  --link: var(--co-brand-700);
   --primary-foreground: 0.985 0.004 76;
   --secondary: 0.947 0.006 76;
   --secondary-foreground: 0.234 0.011 76;

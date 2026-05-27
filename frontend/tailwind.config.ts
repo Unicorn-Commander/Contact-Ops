@@ -68,6 +68,7 @@ const config: Config = {
         ring: oklch("--ring"),
         background: oklch("--background"),
         foreground: oklch("--foreground"),
+        link: oklch("--link"),
         primary: {
           DEFAULT: oklch("--primary"),
           foreground: oklch("--primary-foreground")

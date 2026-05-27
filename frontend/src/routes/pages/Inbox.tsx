@@ -930,7 +930,7 @@ function DetailPane({
         {proposal.trace_id && (
           <a
             href={`#trace-${proposal.trace_id}`}
-            className="inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] text-12 text-primary hover:underline focus-ring"
+            className="inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] text-12 text-link hover:underline focus-ring"
             title="Open in Laminar"
             aria-label="Open in Laminar"
           >
@@ -986,7 +986,7 @@ function DetailPane({
                     href={`https://projects.magicunicorn.dev/projects/${l.project_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-co-4 text-primary hover:underline"
+                    className="inline-flex items-center gap-co-4 text-link hover:underline"
                   >
                     <ExternalLink className="h-3 w-3" />
                     {l.project_name}

@@ -108,7 +108,7 @@ export function TypedPhraseConfirm({
             <button
               type="button"
               onClick={() => setShowDetail((v) => !v)}
-              className="focus-ring rounded-[var(--radius-sm)] text-12 text-primary hover:underline"
+              className="focus-ring rounded-[var(--radius-sm)] text-12 text-link hover:underline"
             >
               {showDetail ? "Hide" : "Why am I being asked to type?"}
             </button>
@@ -128,7 +128,7 @@ export function TypedPhraseConfirm({
                     onOpenChange(false);
                     onOfferSnooze();
                   }}
-                  className="focus-ring mt-co-4 rounded-[var(--radius-sm)] text-primary hover:underline"
+                  className="focus-ring mt-co-4 rounded-[var(--radius-sm)] text-link hover:underline"
                 >
                   Snooze this proposal instead
                 </button>
