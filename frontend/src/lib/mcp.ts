@@ -46,6 +46,107 @@ export class MCPError extends Error {
   }
 }
 
+// ---- Server-Sent Events helper for /chat ----------------------------------
+//
+// Posts a JSON body and yields parsed event objects from the text/event-stream
+// response. The shape of each yielded event is whatever the server packs into
+// a `data: ...` line — by convention an object with an `event` discriminator
+// and event-specific fields. See `hooks/useChat.ts` for the discriminated
+// union the chat consumes.
+
+export type SSEEvent = Record<string, unknown> & { event?: string };
+
+export type SSEStreamOptions = {
+  signal?: AbortSignal;
+};
+
+/**
+ * POST a JSON body to a same-origin endpoint and yield parsed `data:` events
+ * from the SSE response. Bearer token is added by the caller via `token`.
+ *
+ * Throws `UnauthorizedError` on 401 (matches the MCP fetch pattern), or a
+ * plain Error on transport / parse failures.
+ */
+export async function* sseStream(
+  path: string,
+  body: unknown,
+  token: string,
+  options: SSEStreamOptions = {}
+): AsyncGenerator<SSEEvent, void, unknown> {
+  const response = await fetch(`${env.mcpBaseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      Accept: "text/event-stream"
+    },
+    body: JSON.stringify(body),
+    signal: options.signal
+  });
+
+  if (response.status === 401) throw new UnauthorizedError();
+  if (!response.ok || !response.body) {
+    throw new MCPError(response.status, `SSE request failed with HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are separated by a blank line (\n\n). Tolerate \r\n\r\n too.
+      let separator = buffer.indexOf("\n\n");
+      while (separator === -1) {
+        const crlf = buffer.indexOf("\r\n\r\n");
+        if (crlf !== -1) {
+          separator = crlf;
+          break;
+        }
+        break;
+      }
+
+      while (separator !== -1) {
+        const frame = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + (buffer[separator] === "\r" ? 4 : 2));
+
+        // A frame may contain multiple lines; concatenate only the `data:`
+        // payloads. Lines like `event:` / `id:` / `:keepalive` are ignored —
+        // the discriminator lives inside the JSON payload by contract.
+        const dataLines: string[] = [];
+        for (const rawLine of frame.split(/\r?\n/)) {
+          if (rawLine.startsWith("data:")) {
+            dataLines.push(rawLine.slice(5).trim());
+          }
+        }
+        if (dataLines.length > 0) {
+          const payload = dataLines.join("\n");
+          try {
+            const parsed = JSON.parse(payload) as SSEEvent;
+            yield parsed;
+          } catch {
+            // Malformed JSON in a `data:` line — surface as an error event so
+            // the caller can render it instead of silently dropping bytes.
+            yield { event: "error", message: `Malformed SSE payload: ${payload.slice(0, 120)}` };
+          }
+        }
+
+        separator = buffer.indexOf("\n\n");
+        if (separator === -1) {
+          const crlf = buffer.indexOf("\r\n\r\n");
+          if (crlf !== -1) separator = crlf;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function mcpCall<R>(method: MCPRequest["method"], params: unknown, token: string): Promise<R> {
   const response = await fetch(`${env.mcpBaseUrl}/mcp`, {
     method: "POST",

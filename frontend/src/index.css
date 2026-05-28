@@ -30,3 +30,28 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: oklch(var(--muted-foreground));
 }
+
+/* AI Analyst right-rail slide-in / slide-out.
+   Triggers on Radix Dialog's data-state attribute. A short, restrained
+   translate-X with fade so it feels intentional but doesn't draw attention
+   to the motion itself. */
+@keyframes co-rail-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes co-rail-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(24px); }
+}
+.co-slide-rail[data-state="open"] {
+  animation: co-rail-in var(--motion-base, 200ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+.co-slide-rail[data-state="closed"] {
+  animation: co-rail-out var(--motion-fast, 120ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .co-slide-rail[data-state="open"],
+  .co-slide-rail[data-state="closed"] {
+    animation: none !important;
+  }
+}
