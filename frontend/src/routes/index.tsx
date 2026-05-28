@@ -1,5 +1,5 @@
-import { lazy, Suspense } from "react";
-import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet } from "@tanstack/react-router";
+import { lazy, Suspense, useEffect } from "react";
+import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "react-oidc-context";
 import { BookUser, Compass } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
@@ -179,6 +179,15 @@ const callbackRoute = createRoute({
 });
 
 function CallbackRoute() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  // react-oidc-context completes the code exchange here but does not redirect on
+  // its own — once authenticated, leave /auth/callback for the app.
+  useEffect(() => {
+    if (!auth.isLoading && auth.isAuthenticated) {
+      void navigate({ to: "/", replace: true });
+    }
+  }, [auth.isLoading, auth.isAuthenticated, navigate]);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Spinner label="Signing you in…" size="lg" />

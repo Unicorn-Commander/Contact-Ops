@@ -165,7 +165,7 @@ export function DashboardRoute() {
   const recentProposals = useMemo(() => {
     const pages = proposals.data?.pages;
     if (!pages?.length) return [];
-    return pages.flatMap((p) => p.proposals).slice(0, 4);
+    return pages.flatMap((p) => p.proposals ?? []).slice(0, 4);
   }, [proposals.data]);
 
   // Distinct agents currently proposing changes (across all loaded pages).
@@ -173,7 +173,7 @@ export function DashboardRoute() {
     const pages = proposals.data?.pages;
     if (!pages?.length) return 0;
     const ids = new Set<string>();
-    for (const page of pages) for (const p of page.proposals) if (p.agent_id) ids.add(p.agent_id);
+    for (const page of pages) for (const p of page.proposals ?? []) if (p.agent_id) ids.add(p.agent_id);
     return ids.size;
   }, [proposals.data]);
 
