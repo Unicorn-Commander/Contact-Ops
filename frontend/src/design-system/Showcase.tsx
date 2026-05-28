@@ -4,6 +4,7 @@ import { ActionAttribution } from "@/design-system/ActionAttribution";
 import { ShellPreview } from "@/design-system/ShellPreview";
 import { ScreensPreview } from "@/design-system/ScreensPreview";
 import { CommandPalettePreview } from "@/design-system/CommandPalettePreview";
+import { AIAnalystPreview } from "@/design-system/AIAnalystPreview";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
@@ -326,6 +327,7 @@ export function DesignSystemShowcase() {
               <TabsTrigger value="shell">Shell + Dashboard</TabsTrigger>
               <TabsTrigger value="screens">Screens</TabsTrigger>
               <TabsTrigger value="cmdk">⌘K Palette</TabsTrigger>
+              <TabsTrigger value="ai-analyst">AI Analyst</TabsTrigger>
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
               <TabsTrigger value="gradients">Gradients</TabsTrigger>
@@ -371,6 +373,9 @@ export function DesignSystemShowcase() {
                   <CommandPalettePreview theme="light" mode="search" />
                 </div>
               </div>
+            </TabsContent>
+            <TabsContent value="ai-analyst">
+              <AIAnalystPreview />
             </TabsContent>
             <TabsContent value="login" className="space-y-4">
               <div className="grid gap-4 2xl:grid-cols-2">
