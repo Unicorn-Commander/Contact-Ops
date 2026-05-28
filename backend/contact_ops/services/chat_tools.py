@@ -28,7 +28,11 @@ CURATED_MCP_TOOLS: tuple[str, ...] = (
     "list_pending_proposals",
     "suggest_relationships",
     "propose_merge",
+    "list_notes",
+    "append_note",
 )
+
+AI_CONTACTS_ANALYST_AGENT_SLUG = "ai-contacts-analyst"
 
 
 class ChatRequestContext(BaseModel):
@@ -91,6 +95,16 @@ class ChatToolExecutor:
         except Exception as exc:
             return {"error": f"invalid arguments: {exc}"}
 
+        claims = ctx.claims
+        if name == "append_note":
+            claims = {
+                **ctx.claims,
+                "_contact_ops_note_author": {
+                    "author_type": "agent",
+                    "author_id": AI_CONTACTS_ANALYST_AGENT_SLUG,
+                },
+            }
+
         settings = get_settings()
         async with async_session_maker() as db, audit_session_maker() as audit_db:
             await db.execute(
@@ -109,7 +123,7 @@ class ChatToolExecutor:
                 db=db,
                 audit_db=audit_db,
                 request_id=ctx.request_id,
-                claims=ctx.claims,
+                claims=claims,
             )
             try:
                 enforce_tool_rbac(mcp_ctx, tool)
