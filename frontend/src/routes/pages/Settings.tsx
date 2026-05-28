@@ -36,7 +36,6 @@ export function SettingsRoute() {
   const profile = auth.user?.profile as Record<string, unknown> | undefined;
   const name = String(profile?.name ?? "");
   const email = String(profile?.email ?? "");
-  const pronouns = String(profile?.pronouns ?? "");
   const preferredUsername = String(profile?.preferred_username ?? "");
 
   // Apply the chosen theme through the design-system helper so it takes effect
@@ -77,7 +76,6 @@ export function SettingsRoute() {
             <ReadonlyField id="profile_name" label="Name" value={name} />
             <ReadonlyField id="profile_email" label="Email" value={email} />
             <ReadonlyField id="profile_username" label="Username" value={preferredUsername} mono />
-            <ReadonlyField id="profile_pronouns" label="Pronouns" value={pronouns || "Not set"} />
             <ReadonlyField id="profile_timezone" label="Time zone" value={Intl.DateTimeFormat().resolvedOptions().timeZone} />
           </div>
         </CardContent>
