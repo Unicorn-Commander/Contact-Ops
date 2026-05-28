@@ -1,4 +1,4 @@
-import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
   BookUser,
@@ -15,12 +15,21 @@ import {
   Sun,
   Users
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useAuth } from "react-oidc-context";
+import { useHotkeys } from "react-hotkeys-hook";
 import { Button } from "@/components/ui/button";
+import { KeyboardHint } from "@/design-system/KeyboardHint";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { cn, initials } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
+
+// Lazy-load the palette so its cmdk + Radix-dialog code splits into the async
+// `cmdk` chunk (matching the Inbox) instead of weighing down the eager shell
+// bundle. It only loads on the first ⌘K / search-button press.
+const CommandPalette = lazy(() =>
+  import("@/components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+);
 import {
   applyThemePreference,
   getStoredTheme,
@@ -145,10 +154,12 @@ function SidebarContent({ pathname, onNavigate }: { pathname: string; onNavigate
 
 export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const navigate = useNavigate();
   const [theme, setTheme] = useState<ThemeMode>(() => getThemePreference());
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Defer mounting (and thus loading the lazy chunk) until the user first opens
+  // the palette; keep it mounted afterwards so Radix can run its close animation.
+  const [paletteMounted, setPaletteMounted] = useState(false);
 
   useEffect(() => {
     applyThemePreference(theme);
@@ -166,13 +177,25 @@ export function AppShell() {
     setMobileOpen(false);
   }, [pathname]);
 
-  const dark = theme === "dark";
+  // Global ⌘K → command palette. Bound to the "global" scope, so it fires
+  // everywhere EXCEPT inside the Review Queue, whose nested HotkeysProvider
+  // switches the active scope to "inbox" and owns its own ⌘K verb palette.
+  // enableOnFormTags lets ⌘K still open the palette from the top-bar search.
+  useHotkeys(
+    "mod+k",
+    (event) => {
+      event.preventDefault();
+      setPaletteMounted(true);
+      setPaletteOpen((prev) => !prev);
+    },
+    { scopes: "global", enableOnFormTags: true, enableOnContentEditable: true },
+    []
+  );
 
-  // Global search entry: the People directory is the canonical search surface,
-  // so submitting jumps there. (A future cross-entity command palette can hang
-  // off this same input.) Routing stays type-safe — no undeclared search schema.
-  const submitSearch = () => {
-    void navigate({ to: "/people" });
+  const dark = theme === "dark";
+  const openPalette = () => {
+    setPaletteMounted(true);
+    setPaletteOpen(true);
   };
 
   return (
@@ -209,36 +232,31 @@ export function AppShell() {
 
           <TenantSwitcher />
 
-          {/* Global search entry */}
-          <form
-            className="relative ml-auto hidden max-w-sm flex-1 md:block"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitSearch();
-            }}
-            role="search"
+          {/* Global search entry — opens the ⌘K command palette. Rendered as a
+              button (not a live input) so a single search surface drives the
+              whole app; the palette owns the actual query field. */}
+          <button
+            type="button"
+            onClick={openPalette}
+            aria-label="Search people, organizations, and tags. Opens the command palette."
+            aria-keyshortcuts="Meta+K Control+K"
+            className="focus-ring relative ml-auto hidden h-9 max-w-sm flex-1 items-center gap-2 rounded-md border bg-background/60 pl-9 pr-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted md:flex"
           >
             <Search
               className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
               strokeWidth={1.8}
             />
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search people, orgs, tags…"
-              aria-label="Search people, organizations, and tags"
-              className="focus-ring h-9 w-full rounded-md border bg-background/60 pl-9 pr-3 text-sm placeholder:text-muted-foreground"
-            />
-          </form>
+            <span className="flex-1 truncate">Search people, orgs, tags…</span>
+            <KeyboardHint keys="mod+K" label="Open command palette" className="hidden lg:inline-flex" />
+          </button>
 
           <div className="ml-auto flex items-center gap-1 md:ml-0">
             <Button
               variant="ghost"
               size="icon"
               className="md:hidden"
-              onClick={submitSearch}
-              aria-label="Search"
+              onClick={openPalette}
+              aria-label="Open command palette"
             >
               <Search className="h-4 w-4" strokeWidth={1.8} />
             </Button>
@@ -267,6 +285,12 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {paletteMounted ? (
+        <Suspense fallback={null}>
+          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
