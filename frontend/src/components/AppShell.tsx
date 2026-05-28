@@ -11,6 +11,7 @@ import {
   Network,
   Search,
   Settings,
+  Sparkles,
   Tags,
   Sun,
   Users
@@ -29,6 +30,13 @@ import { UserMenu } from "@/components/UserMenu";
 // bundle. It only loads on the first ⌘K / search-button press.
 const CommandPalette = lazy(() =>
   import("@/components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+);
+
+// Lazy-load the AI Analyst panel for the same reason — its message-thread
+// + SSE machinery shouldn't weigh down the eager shell. The Sparkles button
+// and ⌘J hotkey both trigger it.
+const AIAnalystPanel = lazy(() =>
+  import("@/components/chat/AIAnalystPanel").then((m) => ({ default: m.AIAnalystPanel }))
 );
 import {
   applyThemePreference,
@@ -161,6 +169,11 @@ export function AppShell() {
   // the palette; keep it mounted afterwards so Radix can run its close animation.
   const [paletteMounted, setPaletteMounted] = useState(false);
 
+  // AI Analyst right-rail panel — same lazy-mount pattern as the palette so
+  // its SSE / chat machinery stays out of the eager shell bundle.
+  const [analystOpen, setAnalystOpen] = useState(false);
+  const [analystMounted, setAnalystMounted] = useState(false);
+
   useEffect(() => {
     applyThemePreference(theme);
   }, [theme]);
@@ -192,10 +205,27 @@ export function AppShell() {
     []
   );
 
+  // Global ⌘J → AI Analyst right-rail. Same scope rules as ⌘K so it works
+  // from anywhere in the app, including from inside form inputs.
+  useHotkeys(
+    "mod+j",
+    (event) => {
+      event.preventDefault();
+      setAnalystMounted(true);
+      setAnalystOpen((prev) => !prev);
+    },
+    { scopes: "global", enableOnFormTags: true, enableOnContentEditable: true },
+    []
+  );
+
   const dark = theme === "dark";
   const openPalette = () => {
     setPaletteMounted(true);
     setPaletteOpen(true);
+  };
+  const openAnalyst = () => {
+    setAnalystMounted(true);
+    setAnalystOpen(true);
   };
 
   return (
@@ -260,6 +290,25 @@ export function AppShell() {
             >
               <Search className="h-4 w-4" strokeWidth={1.8} />
             </Button>
+            {/* AI Contacts Analyst trigger — gradient-tinted Sparkles button.
+                The button itself stays variant="ghost" so it doesn't overpower
+                the bar; only the icon carries the brand gradient. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={openAnalyst}
+              title="AI Contacts Analyst"
+              aria-label="Open AI Contacts Analyst"
+              aria-keyshortcuts="Meta+J Control+J"
+              aria-expanded={analystOpen}
+            >
+              <span
+                className="bg-gradient-brand flex h-5 w-5 items-center justify-center rounded-md text-primary-foreground shadow-[var(--shadow-1)]"
+                aria-hidden="true"
+              >
+                <Sparkles className="h-3 w-3" strokeWidth={2} />
+              </span>
+            </Button>
             <Button variant="ghost" size="icon" title="Notifications" aria-label="Notifications">
               <Bell className="h-4 w-4" strokeWidth={1.8} />
             </Button>
@@ -289,6 +338,11 @@ export function AppShell() {
       {paletteMounted ? (
         <Suspense fallback={null}>
           <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        </Suspense>
+      ) : null}
+      {analystMounted ? (
+        <Suspense fallback={null}>
+          <AIAnalystPanel open={analystOpen} onOpenChange={setAnalystOpen} />
         </Suspense>
       ) : null}
     </div>
