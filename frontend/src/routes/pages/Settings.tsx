@@ -34,6 +34,25 @@ export function SettingsRoute() {
   const generate = useMcpMutation(tools.generateCardDavPassword);
   const revoke = useMcpMutation(tools.revokeCardDavPassword);
 
+  // Server emits the plaintext password only once; capture it for the
+  // post-generate callout below so the user can copy it before it's gone.
+  const [newCredential, setNewCredential] = useState<{
+    device_label: string;
+    app_password_plaintext: string;
+    last_4_chars: string;
+  } | null>(null);
+
+  const handleGenerateClick = async () => {
+    try {
+      const result = (await generate.mutateAsync({
+        device_label: `Browser ${new Date().toLocaleString()}`
+      })) as { device_label: string; app_password_plaintext: string; last_4_chars: string };
+      setNewCredential(result);
+    } catch (err) {
+      console.error("CardDAV generate failed", err);
+    }
+  };
+
   const profile = auth.user?.profile as Record<string, unknown> | undefined;
   const name = String(profile?.name ?? "");
   const email = String(profile?.email ?? "");
@@ -134,13 +153,42 @@ export function SettingsRoute() {
           <Button
             size="sm"
             disabled={generate.isPending}
-            onClick={() => void generate.mutateAsync({ label: `Browser ${new Date().toISOString()}` })}
+            onClick={() => void handleGenerateClick()}
           >
             <Plus className="h-4 w-4" strokeWidth={1.6} />
             Generate
           </Button>
         </CardHeader>
         <CardContent className="space-y-2">
+          {newCredential ? (
+            <div className="rounded-md border border-[oklch(var(--co-amber-500)/0.4)] bg-[oklch(var(--co-amber-500)/0.08)] p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1.5">
+                  <p className="text-sm font-semibold">New app password generated</p>
+                  <p className="text-xs text-muted-foreground">
+                    For <span className="font-medium">{newCredential.device_label}</span>. This is the only time
+                    the full password will be shown — copy it now.
+                  </p>
+                  <code className="block w-full break-all rounded bg-background/80 px-2 py-1 font-mono text-xs">
+                    {newCredential.app_password_plaintext}
+                  </code>
+                </div>
+                <div className="flex shrink-0 flex-col gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Copy app password"
+                    onClick={() => void navigator.clipboard.writeText(newCredential.app_password_plaintext)}
+                  >
+                    <Copy className="h-4 w-4" strokeWidth={1.6} />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setNewCredential(null)}>
+                    Done
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {passwords.isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-[60px] w-full rounded-md" />
@@ -168,7 +216,7 @@ export function SettingsRoute() {
                     size="icon"
                     aria-label="Revoke password"
                     disabled={revoke.isPending}
-                    onClick={() => void revoke.mutateAsync({ password_id: password.id })}
+                    onClick={() => void revoke.mutateAsync({ app_password_id: password.id })}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" strokeWidth={1.6} />
                   </Button>
