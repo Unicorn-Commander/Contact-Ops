@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, Camera, ChevronLeft, Network, Plus, Save, Search, Upload, UsersRound } from "lucide-react";
+import { Archive, Building2, Camera, ChevronLeft, Mail, Network, Plus, Save, Search, Upload, UsersRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -10,12 +10,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input, Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PersonCard } from "@/components/domain/Cards";
+import { PersonCard, PersonGridCard } from "@/components/domain/Cards";
 import { TagChip } from "@/components/domain/Badges";
 import { ContactMethodList, EmploymentTimeline } from "@/components/domain/Lists";
+import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
+import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
 import { useMcpMutation, usePeople, usePerson, usePhotos, useTags } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
-import { initials } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
 import { AuditList } from "@/routes";
 
 const personSchema = z.object({
@@ -98,15 +100,25 @@ function PersonForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function AddPersonDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (next: boolean) => void }) {
+function AddPersonDialog({
+  open,
+  onOpenChange,
+  hideTrigger = false
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  hideTrigger?: boolean;
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4" strokeWidth={1.6} />
-          Add person
-        </Button>
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          <Button>
+            <Plus className="h-4 w-4" strokeWidth={1.6} />
+            Add person
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add person</DialogTitle>
@@ -163,14 +175,25 @@ export function PeopleRoute() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [hasEmailOnly, setHasEmailOnly] = useState(false);
+  const [layout, setLayout] = useState<DirectoryLayout>("list");
   const args = useMemo(() => ({ query: query || undefined, limit: 50, include_archived: false }), [query]);
   const people = usePeople(args);
   const tags = useTags();
 
-  const items = people.data?.items ?? [];
+  const items = useMemo(() => people.data?.items ?? [], [people.data]);
   const visible = hasEmailOnly ? items.filter((person) => Boolean(person.primary_email)) : items;
   const count = people.data?.count ?? items.length;
   const tagItems = tags.data?.items ?? [];
+  const filtered = Boolean(query) || hasEmailOnly;
+
+  // Loaded-page overview metrics for the directory stat strip. Counts reflect
+  // the current result set; the total-people stat prefers the server's total.
+  const totalPeople = people.data?.total_count ?? count;
+  const withEmail = useMemo(() => items.filter((p) => Boolean(p.primary_email)).length, [items]);
+  const orgCount = useMemo(
+    () => new Set(items.map((p) => p.current_org_id ?? p.current_org).filter(Boolean)).size,
+    [items]
+  );
 
   return (
     <div className="space-y-6">
@@ -186,8 +209,27 @@ export function PeopleRoute() {
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Search, filter, create, and curate canonical people.</p>
         </div>
-        <AddPersonDialog open={open} onOpenChange={setOpen} />
+        <Button variant="gradient" className="h-9" onClick={() => setOpen(true)}>
+          <Plus className="h-4 w-4" strokeWidth={1.8} />
+          Add person
+        </Button>
+        <AddPersonDialog open={open} onOpenChange={setOpen} hideTrigger />
       </div>
+
+      {/* Overview stat strip */}
+      {people.isLoading ? (
+        <StatStrip>
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+        </StatStrip>
+      ) : items.length ? (
+        <StatStrip>
+          <StatTile label="People" value={totalPeople} icon={UsersRound} tone="fuchsia" />
+          <StatTile label="With email" value={withEmail} icon={Mail} tone="sky" hint="reachable contacts" />
+          <StatTile label="Organizations" value={orgCount} icon={Building2} tone="emerald" hint="across this page" />
+        </StatStrip>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         {/* Filters */}
@@ -239,26 +281,59 @@ export function PeopleRoute() {
         </Card>
 
         {/* List */}
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              {people.isLoading ? "Loading…" : (
+                <>
+                  <span className="co-mono-numeric font-medium text-foreground">{visible.length}</span>{" "}
+                  {visible.length === 1 ? "person" : "people"}
+                  {filtered ? " match" : ""}
+                </>
+              )}
+            </p>
+            <ViewToggle value={layout} onChange={setLayout} />
+          </div>
+
           {people.isLoading ? (
-            <div className="space-y-2.5">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <PersonCardSkeleton key={index} />
-              ))}
-            </div>
+            layout === "grid" ? (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <Skeleton key={index} className="h-[188px] w-full rounded-xl" />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <PersonCardSkeleton key={index} />
+                ))}
+              </div>
+            )
           ) : visible.length ? (
-            <div className="space-y-2.5">
-              {visible.map((person) => (
-                <PersonCard key={person.person_id} person={person} />
-              ))}
+            <>
+              <div
+                className={cn(
+                  layout === "grid"
+                    ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+                    : "space-y-2.5"
+                )}
+              >
+                {visible.map((person) =>
+                  layout === "grid" ? (
+                    <PersonGridCard key={person.person_id} person={person} />
+                  ) : (
+                    <PersonCard key={person.person_id} person={person} />
+                  )
+                )}
+              </div>
               {items.length >= 50 ? (
                 <p className="pt-2 text-center text-xs text-muted-foreground">
                   Showing the first 50 — refine your search to narrow results.
                 </p>
               ) : null}
-            </div>
+            </>
           ) : (
-            <EmptyPeople filtered={Boolean(query) || hasEmailOnly} onAdd={() => setOpen(true)} />
+            <EmptyPeople filtered={filtered} onAdd={() => setOpen(true)} />
           )}
         </div>
       </div>

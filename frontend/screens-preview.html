@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Contact-Ops — Inner Screens Preview</title>
+    <script>
+      // Apply ?theme= (or stored/OS) before first paint to avoid a flash.
+      (function () {
+        try {
+          var qp = new URLSearchParams(window.location.search).get("theme");
+          var stored = localStorage.getItem("theme");
+          var prefersDark =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme =
+            qp === "light" || qp === "dark"
+              ? qp
+              : stored === "light" || stored === "dark"
+                ? stored
+                : prefersDark
+                  ? "dark"
+                  : "light";
+          var root = document.documentElement;
+          root.dataset.theme = theme;
+          root.classList.toggle("dark", theme === "dark");
+          root.classList.toggle("light", theme === "light");
+          root.style.colorScheme = theme;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/design-system/screens-preview-main.tsx"></script>
+  </body>
+</html>

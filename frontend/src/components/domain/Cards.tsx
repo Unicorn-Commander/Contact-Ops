@@ -10,14 +10,30 @@ import { initials } from "@/lib/utils";
 import type { OrganizationSummary, PersonSummary } from "@/lib/types";
 
 /**
+ * Avatar sizes shared by the list-row and grid-tile entity cards. The grid tile
+ * uses a larger puck so the card reads as a directory poster rather than a row.
+ */
+type AvatarSize = "md" | "lg";
+
+const avatarSize: Record<AvatarSize, string> = {
+  md: "h-11 w-11 text-sm",
+  lg: "h-12 w-12 text-base"
+};
+
+/**
  * The avatar puck shared by every entity card. People show initials; orgs and
  * other non-human entities show a glyph. People are humans, so a human-shaped
  * avatar is correct here — the AIG "never make an agent look human" rule applies
  * to agents, not to the people in the registry.
  */
-function EntityAvatar({ name, icon: Icon }: { name?: string | null; icon?: LucideIcon }) {
+function EntityAvatar({ name, icon: Icon, size = "md" }: { name?: string | null; icon?: LucideIcon; size?: AvatarSize }) {
   return (
-    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/12 text-sm font-semibold text-primary">
+    <div
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-full bg-primary/12 font-semibold text-primary",
+        avatarSize[size]
+      )}
+    >
       {Icon ? <Icon className="h-5 w-5" strokeWidth={1.6} /> : initials(name)}
     </div>
   );
@@ -138,6 +154,86 @@ export function OrgCard({ org }: { org: OrganizationSummary }) {
             className="ml-auto h-4 w-4 shrink-0 self-start mt-0.5 text-muted-foreground transition-colors group-hover:text-foreground"
             strokeWidth={1.6}
           />
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+/**
+ * Grid-tile variant of {@link PersonCard}. Same chrome and signals, laid out as
+ * a centered poster for the directory's grid view. The list and grid cards link
+ * to the same detail route and carry the same data, so toggling layout never
+ * changes meaning — only density.
+ */
+export function PersonGridCard({ person }: { person: PersonSummary }) {
+  const lastInteraction = person.last_interaction_at ? new Date(person.last_interaction_at) : null;
+  return (
+    <Link
+      to="/people/$id"
+      params={{ id: person.person_id }}
+      aria-label={`Open ${person.display_name}`}
+      className="focus-ring group block h-full rounded-lg"
+    >
+      <Card className={cardChrome("h-full")}>
+        <CardContent className="flex h-full flex-col items-center gap-3 p-5 text-center">
+          <EntityAvatar name={person.display_name} size="lg" />
+          <div className="min-w-0 space-y-1">
+            <p className="truncate font-medium">{person.display_name}</p>
+            <p className="truncate text-sm text-muted-foreground">{person.headline ?? person.current_org ?? "No organization"}</p>
+          </div>
+          {person.relationship_temperature ? (
+            <Badge variant="secondary" className="capitalize">
+              {person.relationship_temperature}
+            </Badge>
+          ) : null}
+          <div className="mt-auto w-full space-y-1.5 border-t border-border pt-3 text-left">
+            <span className={cn(metaItem, "w-full text-sm text-muted-foreground")}>
+              <Mail className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+              <span className="truncate">{person.primary_email ?? "No email"}</span>
+            </span>
+            {lastInteraction ? (
+              <span className={cn(metaItem, "co-mono-numeric w-full text-xs text-muted-foreground")}>
+                <span className="truncate" title={lastInteraction.toLocaleString()}>
+                  Last contact {formatDistanceToNow(lastInteraction, { addSuffix: true })}
+                </span>
+              </span>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+/** Grid-tile variant of {@link OrgCard}. */
+export function OrgGridCard({ org }: { org: OrganizationSummary }) {
+  const name = org.display_name || org.legal_name || "Untitled organization";
+  return (
+    <Link
+      to="/orgs/$id"
+      params={{ id: org.org_id }}
+      aria-label={`Open ${name}`}
+      className="focus-ring group block h-full rounded-lg"
+    >
+      <Card className={cardChrome("h-full")}>
+        <CardContent className="flex h-full flex-col items-center gap-3 p-5 text-center">
+          <EntityAvatar icon={Building2} size="lg" />
+          <div className="min-w-0 space-y-1">
+            <p className="truncate font-medium">{name}</p>
+            <p className="truncate text-sm text-muted-foreground">{org.industry ?? "No industry"}</p>
+          </div>
+          {org.kind ? (
+            <Badge variant="secondary" className="capitalize">
+              {org.kind}
+            </Badge>
+          ) : null}
+          <div className="mt-auto w-full border-t border-border pt-3 text-left">
+            <span className={cn(metaItem, "w-full text-sm text-muted-foreground")}>
+              <Globe className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+              <span className="truncate">{org.domain ?? "No domain"}</span>
+            </span>
+          </div>
         </CardContent>
       </Card>
     </Link>

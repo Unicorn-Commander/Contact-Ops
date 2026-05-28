@@ -10,11 +10,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input, Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { OrgCard, PersonCard } from "@/components/domain/Cards";
+import { OrgCard, OrgGridCard, PersonCard } from "@/components/domain/Cards";
 import { ContactMethodList } from "@/components/domain/Lists";
+import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
+import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
 import { useMcpMutation, useOrganization, useOrganizations, usePeople } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import type { OrganizationSummary } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { AuditList } from "@/routes";
 
 const orgSchema = z.object({
@@ -82,15 +85,25 @@ function OrgForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function AddOrgDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (next: boolean) => void }) {
+function AddOrgDialog({
+  open,
+  onOpenChange,
+  hideTrigger = false
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  hideTrigger?: boolean;
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4" strokeWidth={1.6} />
-          Add organization
-        </Button>
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          <Button>
+            <Plus className="h-4 w-4" strokeWidth={1.6} />
+            Add organization
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add organization</DialogTitle>
@@ -147,14 +160,24 @@ export function OrgsRoute() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [hasDomainOnly, setHasDomainOnly] = useState(false);
+  const [layout, setLayout] = useState<DirectoryLayout>("list");
   const args = useMemo(() => ({ query: query || undefined, limit: 50 }), [query]);
   const orgs = useOrganizations(args);
 
-  const items: OrganizationSummary[] = orgs.data?.items ?? [];
+  const items: OrganizationSummary[] = useMemo(() => orgs.data?.items ?? [], [orgs.data]);
   const visible = hasDomainOnly ? items.filter((org) => Boolean(org.domain)) : items;
   const count = orgs.data?.count ?? items.length;
+  const filtered = Boolean(query) || hasDomainOnly;
   // Distinct industries across the loaded page, for the calm overview rail.
   const industries = Array.from(new Set(items.map((org) => org.industry).filter(Boolean) as string[])).slice(0, 12);
+
+  // Loaded-page overview metrics for the directory stat strip.
+  const totalOrgs = orgs.data?.total_count ?? count;
+  const withDomain = useMemo(() => items.filter((o) => Boolean(o.domain)).length, [items]);
+  const industryCount = useMemo(
+    () => new Set(items.map((o) => o.industry).filter(Boolean)).size,
+    [items]
+  );
 
   return (
     <div className="space-y-6">
@@ -172,8 +195,27 @@ export function OrgsRoute() {
             Browse, search, and curate canonical companies, nonprofits, agencies, and groups.
           </p>
         </div>
-        <AddOrgDialog open={open} onOpenChange={setOpen} />
+        <Button variant="gradient" className="h-9" onClick={() => setOpen(true)}>
+          <Plus className="h-4 w-4" strokeWidth={1.8} />
+          Add organization
+        </Button>
+        <AddOrgDialog open={open} onOpenChange={setOpen} hideTrigger />
       </div>
+
+      {/* Overview stat strip */}
+      {orgs.isLoading ? (
+        <StatStrip>
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+        </StatStrip>
+      ) : items.length ? (
+        <StatStrip>
+          <StatTile label="Organizations" value={totalOrgs} icon={Building2} tone="emerald" />
+          <StatTile label="With domain" value={withDomain} icon={Globe} tone="sky" hint="verified web presence" />
+          <StatTile label="Industries" value={industryCount} icon={Briefcase} tone="amber" hint="across this page" />
+        </StatStrip>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         {/* Filters */}
@@ -228,26 +270,53 @@ export function OrgsRoute() {
         </Card>
 
         {/* List */}
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              {orgs.isLoading ? "Loading…" : (
+                <>
+                  <span className="co-mono-numeric font-medium text-foreground">{visible.length}</span>{" "}
+                  {visible.length === 1 ? "organization" : "organizations"}
+                  {filtered ? " match" : ""}
+                </>
+              )}
+            </p>
+            <ViewToggle value={layout} onChange={setLayout} />
+          </div>
+
           {orgs.isLoading ? (
-            <div className="space-y-2.5">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <OrgCardSkeleton key={index} />
-              ))}
-            </div>
+            layout === "grid" ? (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <Skeleton key={index} className="h-[172px] w-full rounded-xl" />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <OrgCardSkeleton key={index} />
+                ))}
+              </div>
+            )
           ) : visible.length ? (
-            <div className="space-y-2.5">
-              {visible.map((org) => (
-                <OrgCard key={org.org_id} org={org} />
-              ))}
+            <>
+              <div className={cn(layout === "grid" ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3" : "space-y-2.5")}>
+                {visible.map((org) =>
+                  layout === "grid" ? (
+                    <OrgGridCard key={org.org_id} org={org} />
+                  ) : (
+                    <OrgCard key={org.org_id} org={org} />
+                  )
+                )}
+              </div>
               {items.length >= 50 ? (
                 <p className="pt-2 text-center text-xs text-muted-foreground">
                   Showing the first 50 — refine your search to narrow results.
                 </p>
               ) : null}
-            </div>
+            </>
           ) : (
-            <EmptyOrgs filtered={Boolean(query) || hasDomainOnly} onAdd={() => setOpen(true)} />
+            <EmptyOrgs filtered={filtered} onAdd={() => setOpen(true)} />
           )}
         </div>
       </div>

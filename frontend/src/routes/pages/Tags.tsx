@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { Tags as TagsIcon } from "lucide-react";
+import { Hash, Tags as TagsIcon, TrendingUp } from "lucide-react";
+import { useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { useTags } from "@/hooks/useMcp";
 import { cn } from "@/lib/utils";
 
@@ -19,7 +21,17 @@ function tagSize(usage: number, max: number): string {
 
 export function TagsRoute() {
   const tags = useTags();
-  const items = tags.data?.items ?? [];
+  const items = useMemo(() => tags.data?.items ?? [], [tags.data]);
+
+  const totalUsage = useMemo(() => items.reduce((sum, t) => sum + (t.usage_count ?? 0), 0), [items]);
+  const topTag = useMemo(
+    () => items.reduce<{ name: string; n: number } | null>((best, t) => {
+      const n = t.usage_count ?? 0;
+      if (!best || n > best.n) return { name: t.display_name ?? t.slug, n };
+      return best;
+    }, null),
+    [items]
+  );
 
   return (
     <div className="space-y-6">
@@ -35,9 +47,33 @@ export function TagsRoute() {
         <p className="mt-1 text-sm text-muted-foreground">Browse tenant tags and jump into filtered people views.</p>
       </div>
 
+      {/* Overview stat strip */}
+      {tags.isLoading ? (
+        <StatStrip>
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+        </StatStrip>
+      ) : items.length ? (
+        <StatStrip>
+          <StatTile label="Tags" value={items.length} icon={TagsIcon} tone="amber" />
+          <StatTile label="Total applications" value={totalUsage} icon={Hash} tone="sky" hint="tag-to-person links" />
+          <StatTile
+            label="Most used"
+            value={topTag?.n ?? 0}
+            icon={TrendingUp}
+            tone="emerald"
+            hint={topTag ? topTag.name : "no tags applied"}
+          />
+        </StatStrip>
+      ) : null}
+
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Tag cloud</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <TagsIcon className="h-4 w-4 text-[oklch(var(--co-amber-500))]" strokeWidth={1.8} />
+            Tag cloud
+          </CardTitle>
           <CardDescription>Sized by usage. Select a tag to filter the people list.</CardDescription>
         </CardHeader>
         <CardContent>

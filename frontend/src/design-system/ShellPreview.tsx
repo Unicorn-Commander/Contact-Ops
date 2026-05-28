@@ -6,7 +6,14 @@
  *
  * Keep the class recipes here in sync with components/AppShell.tsx and
  * routes/pages/Dashboard.tsx — these are presentational twins, not the source
- * of truth.
+ * of truth. The dashboard body reuses the real components/dashboard/* pieces
+ * (AtAGlance, StatTile, ProposalRow, DataHealth, LiveStatusLine, OnboardingState)
+ * with representative demo data, so the preview exercises the same code paths.
+ *
+ * Empty/onboarding state: pass `empty`, OR append `?empty=1` to the
+ * /design-system URL — ShellPreview reads the flag itself so the "Shell +
+ * Dashboard" tab can screenshot both the populated and onboarding dashboards
+ * without changing the showcase harness.
  */
 import type { ReactNode } from "react";
 import {
@@ -14,7 +21,6 @@ import {
   Bell,
   Building2,
   BookUser,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   GitMerge,
@@ -37,6 +43,17 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AtAGlance,
+  DataHealth,
+  LiveStatusLine,
+  OnboardingState,
+  ProposalRow,
+  StatTile,
+  type GlanceHighlight,
+  type StatTone,
+  type StatTrend
+} from "@/components/dashboard";
 import type { ThemeMode } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 
@@ -54,14 +71,6 @@ const adminNav = [
   { label: "Settings", icon: Settings, accent: "text-muted-foreground" }
 ] as const;
 
-type StatTone = "fuchsia" | "sky" | "amber" | "emerald";
-const toneClasses: Record<StatTone, { tile: string; icon: string }> = {
-  fuchsia: { tile: "ring-[oklch(var(--co-brand-500)/0.22)]", icon: "text-primary" },
-  sky: { tile: "ring-[oklch(var(--co-sky-500)/0.22)]", icon: "text-[oklch(var(--co-sky-500))]" },
-  amber: { tile: "ring-[oklch(var(--co-amber-500)/0.22)]", icon: "text-[oklch(var(--co-amber-500))]" },
-  emerald: { tile: "ring-[oklch(var(--co-emerald-500)/0.22)]", icon: "text-[oklch(var(--co-emerald-500))]" }
-};
-
 function NavItem({ label, icon: Icon, active, accent }: { label: string; icon: LucideIcon; active?: boolean; accent: string }) {
   return (
     <span
@@ -76,12 +85,14 @@ function NavItem({ label, icon: Icon, active, accent }: { label: string; icon: L
   );
 }
 
-function Stat({
+/** Demo stat tile — drives the StatTile's hover lift via a `group` wrapper + a drill chevron. */
+function StatDemo({
   label,
   value,
-  icon: Icon,
+  icon,
   tone,
   hint,
+  trend,
   drill
 }: {
   label: string;
@@ -89,23 +100,18 @@ function Stat({
   icon: LucideIcon;
   tone: StatTone;
   hint?: string;
+  trend?: StatTrend;
   drill?: boolean;
 }) {
-  const t = toneClasses[tone];
   return (
-    <div className="relative">
-      <Card className={cn("h-full ring-1", t.tile)}>
-        <CardContent className="p-5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-            <Icon className={cn("h-4 w-4", t.icon)} strokeWidth={1.8} />
-          </div>
-          <p className="mt-2.5 text-3xl font-semibold tabular-nums tracking-tight">{value}</p>
-          {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
-        </CardContent>
-      </Card>
+    <div className={cn("relative block rounded-xl", drill && "group")}>
+      <StatTile label={label} value={value} icon={icon} tone={tone} hint={hint} trend={trend} interactive={drill} />
       {drill ? (
-        <ChevronRight className="absolute bottom-5 right-5 h-4 w-4 text-muted-foreground" strokeWidth={1.8} aria-hidden />
+        <ChevronRight
+          className="absolute bottom-5 right-5 h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+          strokeWidth={1.8}
+          aria-hidden
+        />
       ) : null}
     </div>
   );
@@ -124,9 +130,12 @@ function StatusRow({ label, detail, ok }: { label: string; detail: string; ok: b
   return (
     <div className="flex items-center justify-between gap-3 py-2 text-sm">
       <span className="inline-flex items-center gap-2">
-        <CheckCircle2
-          className={cn("h-4 w-4", ok ? "text-[oklch(var(--co-emerald-500))]" : "text-muted-foreground")}
-          strokeWidth={1.8}
+        <span
+          className={cn(
+            "h-2 w-2 rounded-full",
+            ok ? "bg-[oklch(var(--co-emerald-500))]" : "bg-muted-foreground"
+          )}
+          aria-hidden
         />
         <span className="text-foreground">{label}</span>
       </span>
@@ -135,11 +144,27 @@ function StatusRow({ label, detail, ok }: { label: string; detail: string; ok: b
   );
 }
 
+// Representative weekly series for the living stat tiles' sparklines.
+const trends: Record<string, StatTrend> = {
+  people: { delta: 18, period: "this week", series: [1180, 1205, 1212, 1240, 1251, 1266, 1284] },
+  orgs: { delta: 4, period: "this week", series: [198, 199, 201, 201, 203, 204, 206] },
+  pending: { delta: -2, period: "vs. yesterday", series: [9, 8, 7, 6, 6, 5, 4], invert: true },
+  agents: { delta: 1, period: "active now", series: [1, 2, 2, 1, 2, 3, 3] }
+};
+
+const demoHighlights: GlanceHighlight[] = [
+  { id: "people", icon: Users, value: "1,284", label: "people", tone: "fuchsia" },
+  { id: "orgs", icon: Building2, value: "206", label: "organizations", tone: "emerald" },
+  { id: "dupes", icon: GitMerge, value: 7, label: "likely duplicates", tone: "rose" },
+  { id: "stale", icon: Activity, value: 23, label: "stale records", tone: "amber" },
+  { id: "pending", icon: ListChecks, value: 4, label: "pending reviews", tone: "sky" }
+];
+
 const demoProposals = [
-  { name: "Aaron Stransky", kind: "person" as const, action: "merge duplicate", agent: "dedupe-agent", conf: 96 },
-  { name: "Bayview Health", kind: "org" as const, action: "update domain", agent: "enrichment-agent", conf: 88 },
-  { name: "Shafen Khan", kind: "person" as const, action: "add phone", agent: "carddav-reconcile", conf: 74 },
-  { name: "Magic Unicorn LLC", kind: "org" as const, action: "set industry", agent: "enrichment-agent", conf: 81 }
+  { name: "Aaron Stransky", kind: "person" as const, action: "merge duplicate", agent: "dedupe-agent", conf: 0.96 },
+  { name: "Bayview Health", kind: "org" as const, action: "update domain", agent: "enrichment-agent", conf: 0.88 },
+  { name: "Shafen Khan", kind: "person" as const, action: "add phone", agent: "carddav-reconcile", conf: 0.74 },
+  { name: "Magic Unicorn LLC", kind: "org" as const, action: "set industry", agent: "enrichment-agent", conf: 0.41 }
 ];
 
 const demoActivity = [
@@ -149,31 +174,61 @@ const demoActivity = [
   { actor: "tag-agent", verb: "Proposed", what: "tag · vendor", when: "3h ago", agent: true }
 ];
 
+const demoCoverage = [
+  { label: "Have email", value: 0.82 },
+  { label: "Have phone", value: 0.61 },
+  { label: "Linked to an org", value: 0.74 }
+];
+
+const demoGaps = [
+  { label: "missing phone", count: 14 },
+  { label: "no organization", count: 6 }
+];
+
 /**
  * The Dashboard command-center body, with static demo data. `stack` forces the
  * single-column mobile layout (the embedded preview can't rely on viewport
  * breakpoints, which key off the real window width, not the 375px frame).
+ * `empty` swaps the populated body for the guided onboarding state.
  */
-export function DashboardPreviewBody({ stack = false }: { stack?: boolean }) {
+export function DashboardPreviewBody({ stack = false, empty = false }: { stack?: boolean; empty?: boolean }) {
   const statGrid = stack ? "grid grid-cols-1 gap-4" : "grid gap-4 md:grid-cols-2 xl:grid-cols-4";
   const mainGrid = stack ? "grid gap-6" : "grid gap-6 lg:grid-cols-3";
   const mainCol = stack ? "space-y-6" : "space-y-6 lg:col-span-2";
+
+  const header = (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Good afternoon, <span className="bg-gradient-brand-text">Aaron</span>
+        </h1>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LiveStatusLine date={new Date("2026-05-27T14:00:00")} live />
+          <span className="text-border" aria-hidden>
+            ·
+          </span>
+          <span className="text-xs text-muted-foreground">41 MCP tools available</span>
+        </div>
+      </div>
+      <Button variant="gradient" className="h-9">
+        <Plus className="h-4 w-4" strokeWidth={1.8} />
+        Add person
+      </Button>
+    </div>
+  );
+
+  if (empty) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <OnboardingState />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Good afternoon, <span className="bg-gradient-brand-text">Aaron</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Your canonical identity hub at a glance · 41 MCP tools available.
-          </p>
-        </div>
-        <Button variant="gradient" className="h-9">
-          <Plus className="h-4 w-4" strokeWidth={1.8} />
-          Add person
-        </Button>
-      </div>
+      {header}
 
       <div className="relative max-w-2xl">
         <Search
@@ -188,11 +243,18 @@ export function DashboardPreviewBody({ stack = false }: { stack?: boolean }) {
         />
       </div>
 
+      <AtAGlance
+        context="Updated just now · synthesized from your registry"
+        summary="You're tracking 1,284 people across 206 organizations. 4 proposals are waiting on your review, and the agents have flagged 7 likely duplicates and 23 stale records worth a look."
+        highlights={demoHighlights}
+        onDismiss={() => undefined}
+      />
+
       <div className={statGrid}>
-        <Stat label="People" value={1284} icon={Users} tone="fuchsia" drill />
-        <Stat label="Organizations" value={206} icon={Building2} tone="emerald" drill />
-        <Stat label="Pending reviews" value={4} icon={ListChecks} tone="amber" hint="Awaiting your decision" drill />
-        <Stat label="Agent activity" value={3} icon={Sparkles} tone="sky" hint="agents proposing changes" />
+        <StatDemo label="People" value="1,284" icon={Users} tone="fuchsia" trend={trends.people} drill />
+        <StatDemo label="Organizations" value="206" icon={Building2} tone="emerald" trend={trends.orgs} drill />
+        <StatDemo label="Pending reviews" value={4} icon={ListChecks} tone="amber" trend={trends.pending} drill />
+        <StatDemo label="Agent activity" value={3} icon={Sparkles} tone="sky" trend={trends.agents} />
       </div>
 
       <div className={mainGrid}>
@@ -211,26 +273,17 @@ export function DashboardPreviewBody({ stack = false }: { stack?: boolean }) {
             <CardContent>
               <div className="divide-y divide-border">
                 {demoProposals.map((p) => (
-                  <div key={p.name} className="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      {p.kind === "org" ? (
-                        <Building2 className="h-4 w-4" strokeWidth={1.8} />
-                      ) : (
-                        <Users className="h-4 w-4" strokeWidth={1.8} />
-                      )}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{p.name}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        <span className="capitalize">{p.action}</span>
-                        {" · "}
-                        <span className="font-mono">{p.agent}</span>
-                      </span>
-                    </span>
-                    <span className="co-mono-numeric shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      {p.conf}%
-                    </span>
-                  </div>
+                  <ProposalRow
+                    key={p.name}
+                    entityKind={p.kind}
+                    entityName={p.name}
+                    action={p.action}
+                    agentSlug={p.agent}
+                    confidence={p.conf}
+                    onOpen={() => undefined}
+                    onApprove={() => undefined}
+                    onReject={() => undefined}
+                  />
                 ))}
               </div>
             </CardContent>
@@ -283,6 +336,8 @@ export function DashboardPreviewBody({ stack = false }: { stack?: boolean }) {
             </CardContent>
           </Card>
 
+          <DataHealth coverage={demoCoverage} gaps={demoGaps} />
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -316,12 +371,22 @@ export function DashboardPreviewBody({ stack = false }: { stack?: boolean }) {
   );
 }
 
+/** Reads `?empty=1` (or `?empty=true`) from the URL so the Shell + Dashboard tab
+ * can screenshot the onboarding state without changing the showcase harness. */
+function readEmptyFlag(): boolean {
+  if (typeof window === "undefined") return false;
+  const v = new URLSearchParams(window.location.search).get("empty");
+  return v === "1" || v === "true";
+}
+
 /**
  * Full shell preview: sidebar + sticky top bar + the dashboard body. Rendered at
  * a fixed height so it screenshots as a self-contained command center. `compact`
- * collapses the sidebar to mimic the 375px mobile layout.
+ * collapses the sidebar to mimic the 375px mobile layout. `empty` (or the
+ * `?empty=1` URL flag) shows the guided onboarding dashboard.
  */
-export function ShellPreview({ theme, compact = false }: { theme: ThemeMode; compact?: boolean }) {
+export function ShellPreview({ theme, compact = false, empty }: { theme: ThemeMode; compact?: boolean; empty?: boolean }) {
+  const showEmpty = empty ?? readEmptyFlag();
   return (
     <div
       data-theme={theme}
@@ -414,7 +479,7 @@ export function ShellPreview({ theme, compact = false }: { theme: ThemeMode; com
             </div>
           </header>
           <div className="co-scrollbar flex-1 overflow-y-auto p-4 lg:p-6">
-            <DashboardPreviewBody stack={compact} />
+            <DashboardPreviewBody stack={compact} empty={showEmpty} />
           </div>
         </div>
       </div>

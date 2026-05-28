@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
 import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertTriangle, Bell, ExternalLink, Monitor } from "lucide-react";
+import { AlertTriangle, Bell, ExternalLink, ListChecks, Monitor } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -650,6 +650,13 @@ function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals,
 
   return (
     <header className="flex flex-wrap items-center gap-co-12 border-b border-border bg-background/95 px-co-16 py-co-8 shadow-[var(--shadow-1)]">
+      <span className="inline-flex items-center gap-co-8">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[oklch(var(--co-rose-500)/0.14)] text-[oklch(var(--co-rose-500))]">
+          <ListChecks className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+        </span>
+        <h1 className="text-14 font-semibold tracking-tight text-foreground">Review Queue</h1>
+      </span>
+      <span aria-hidden className="hidden h-5 w-px bg-border sm:block" />
       <span className="inline-flex flex-wrap items-center gap-co-6 text-13 text-muted-foreground">
         <MonoNumeric tone="muted">{totals.today}</MonoNumeric>
         <span>today</span>

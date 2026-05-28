@@ -1,4 +1,4 @@
-import { Copy, KeyRound, LogOut, Moon, Plus, Sun, Trash2 } from "lucide-react";
+import { Copy, KeyRound, LogOut, Moon, Palette, Plus, Sun, Trash2, UserCircle } from "lucide-react";
 import { useAuth } from "react-oidc-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,7 +57,10 @@ export function SettingsRoute() {
       {/* Profile */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Profile</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <UserCircle className="h-4 w-4 text-[oklch(var(--co-sky-500))]" strokeWidth={1.8} />
+            Profile
+          </CardTitle>
           <CardDescription>Values come from your Keycloak profile claims.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -83,7 +86,10 @@ export function SettingsRoute() {
       {/* Appearance */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Appearance</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Palette className="h-4 w-4 text-[oklch(var(--co-fuchsia-500))]" strokeWidth={1.8} />
+            Appearance
+          </CardTitle>
           <CardDescription>Override the OS color scheme for this browser.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -118,7 +124,7 @@ export function SettingsRoute() {
         <CardHeader className="flex-row items-start justify-between space-y-0">
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-base">
-              <KeyRound className="h-4 w-4 text-muted-foreground" strokeWidth={1.6} />
+              <KeyRound className="h-4 w-4 text-[oklch(var(--co-amber-500))]" strokeWidth={1.8} />
               CardDAV app passwords
             </CardTitle>
             <CardDescription>Generated passwords are shown once by the MCP tool response.</CardDescription>
