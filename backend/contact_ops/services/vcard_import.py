@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import re
 import uuid
 
 import structlog
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 
 from contact_ops.importers.base import CanonicalImportRecord
 from contact_ops.importers.vcard import record_from_vcard_text, split_vcards
-from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.registry import MCPContext
+from contact_ops.services.proposal_emit import (
+    PERSON_CREATE_PROPOSAL_PATH,
+    emit_person_create_proposal,
+    import_fingerprint,
+    upload_id_for_text,
+)
 
 MAX_VCARD_SIZE_BYTES = 50 * 1024 * 1024
-VCARD_IMPORT_PROPOSAL_TOOL = "action_event:person.create:proposed"
+VCARD_IMPORT_PROPOSAL_TOOL = PERSON_CREATE_PROPOSAL_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -60,7 +62,7 @@ async def propose_vcard_import(
     if not _looks_like_vcard(vcard_text):
         raise VCardImportError("file content must start with BEGIN:VCARD")
 
-    resolved_upload_id = upload_id or _upload_id_for_text(vcard_text)
+    resolved_upload_id = upload_id or upload_id_for_text("vcard-import", vcard_text)
     source_filename = _sanitize_filename(filename)
     blocks = split_vcards(vcard_text)
     if not blocks:
@@ -84,7 +86,7 @@ async def propose_vcard_import(
         if len(preview) < 5:
             preview.append(_preview(record))
 
-        fingerprint = _fingerprint(record)
+        fingerprint = import_fingerprint(record)
         if fingerprint in seen:
             deduped_count += 1
             continue
@@ -93,12 +95,17 @@ async def propose_vcard_import(
         if dry_run:
             continue
 
-        await _emit_person_create_proposal(
+        await emit_person_create_proposal(
             ctx=ctx,
             record=record,
             upload_id=resolved_upload_id,
-            filename=source_filename,
-            index=index,
+            source={
+                "action": "vcard_import",
+                "upload_id": str(resolved_upload_id),
+                "filename": source_filename,
+                "record_index": index,
+                "source_record_id": record.source_record_id,
+            },
         )
         proposed_count += 1
 
@@ -139,28 +146,6 @@ def _source_record_id(block: str, index: int) -> str:
     return f"vcard:{index}:{digest}"
 
 
-def _upload_id_for_text(vcard_text: str) -> uuid.UUID:
-    digest = hashlib.sha256(vcard_text.encode()).hexdigest()
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"contact-ops:vcard-import:{digest}")
-
-
-def _fingerprint(record: CanonicalImportRecord) -> str:
-    emails = sorted(email.address.strip().lower() for email in record.emails if email.address)
-    phones = sorted(_normalize_phone(phone.e164) for phone in record.phones if phone.e164)
-    payload = {
-        "display_name": record.display_name.strip().lower(),
-        "emails": emails,
-        "phones": phones,
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-def _normalize_phone(value: str) -> str:
-    if value.startswith("+"):
-        return "+" + re.sub(r"\D", "", value)
-    return re.sub(r"\D", "", value)
-
-
 def _preview(record: CanonicalImportRecord) -> VCardImportPreview:
     organization = record.employments[0].company if record.employments else None
     return VCardImportPreview(
@@ -169,112 +154,6 @@ def _preview(record: CanonicalImportRecord) -> VCardImportPreview:
         phones=[phone.e164 for phone in record.phones],
         organization=organization,
     )
-
-
-async def _emit_person_create_proposal(
-    *,
-    ctx: MCPContext,
-    record: CanonicalImportRecord,
-    upload_id: uuid.UUID,
-    filename: str | None,
-    index: int,
-) -> uuid.UUID:
-    idempotency_key = _idempotency_key(ctx.tenant_id, upload_id, record)
-    existing = await ctx.audit_db.scalar(
-        text(
-            """
-            SELECT event_id
-            FROM action_event
-            WHERE tenant_id = :tenant_id
-              AND idempotency_key = :idempotency_key
-            LIMIT 1
-            """
-        ),
-        {"tenant_id": str(ctx.tenant_id), "idempotency_key": idempotency_key},
-    )
-    if isinstance(existing, uuid.UUID):
-        return existing
-    if existing is not None:
-        return uuid.UUID(str(existing))
-
-    proposed_person_id = uuid.uuid5(upload_id, record.source_record_id)
-    source = {
-        "action": "vcard_import",
-        "upload_id": str(upload_id),
-        "filename": filename,
-        "record_index": index,
-        "source_record_id": record.source_record_id,
-    }
-    payload_after = {
-        "person_id": str(proposed_person_id),
-        "display_name": record.display_name,
-        "given_name": record.given_name,
-        "family_name": record.family_name,
-        "additional_names": record.additional_names,
-        "honorific_prefix": record.honorific_prefix,
-        "honorific_suffix": record.honorific_suffix,
-        "nicknames": record.nicknames,
-        "birthday": record.birthday,
-        "notes": record.notes,
-        "headline": record.headline,
-        "occupation_title": record.occupation_title,
-        "emails": [email.model_dump(mode="json") for email in record.emails],
-        "phones": [phone.model_dump(mode="json") for phone in record.phones],
-        "addresses": [address.model_dump(mode="json") for address in record.addresses],
-        "identifiers": [identifier.model_dump(mode="json") for identifier in record.identifiers],
-        "employments": [employment.model_dump(mode="json") for employment in record.employments],
-        "tags": record.tags,
-        "source": source,
-    }
-    event_id = await emit_action_event(
-        ctx,
-        event_type="person.create",
-        aggregate_type="person",
-        aggregate_id=proposed_person_id,
-        payload_before=None,
-        payload_after=payload_after,
-        status="proposed",
-        confidence=0.9,
-        rationale="Proposed person creation from uploaded vCard. No contact row was applied.",
-        evidence=source,
-    )
-    await ctx.audit_db.execute(
-        text(
-            """
-            UPDATE action_event
-            SET idempotency_key = :idempotency_key,
-                decision_payload = CAST(:decision_payload AS jsonb),
-                reversibility_class = 'reversible',
-                triggered_by = 'vcard_import'
-            WHERE event_id = :event_id
-            """
-        ),
-        {
-            "event_id": str(event_id),
-            "idempotency_key": idempotency_key,
-            "decision_payload": json.dumps(
-                {"payload_before": None, "payload_after": payload_after},
-                sort_keys=True,
-                default=str,
-            ),
-        },
-    )
-    return event_id
-
-
-def _idempotency_key(
-    tenant_id: uuid.UUID,
-    upload_id: uuid.UUID,
-    record: CanonicalImportRecord,
-) -> str:
-    payload = {
-        "tenant_id": str(tenant_id),
-        "upload_id": str(upload_id),
-        "source_record_id": record.source_record_id,
-        "fingerprint": _fingerprint(record),
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _sanitize_filename(filename: str | None) -> str | None:

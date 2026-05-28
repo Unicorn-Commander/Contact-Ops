@@ -15,6 +15,7 @@ import { TagsRoute } from "@/routes/pages/Tags";
 import { TenantsRoute } from "@/routes/pages/Tenants";
 import { SettingsRoute } from "@/routes/pages/Settings";
 import { ImportRoute } from "@/routes/pages/Import";
+import { ConnectorsRoute } from "@/routes/pages/Connectors";
 
 const GraphRoute = lazy(() =>
   import("@/routes/pages/Graph").then((m) => ({ default: m.GraphRoute }))
@@ -54,6 +55,14 @@ const NotesPreviewRoute = import.meta.env.DEV
 const ImportPreviewRoute = import.meta.env.DEV
   ? lazy(() =>
       import("@/design-system/ImportPreview").then((m) => ({ default: m.ImportPreview }))
+    )
+  : null;
+
+// Connectors auth-free preview — same screenshot-without-auth pattern as the
+// other previews. The orchestrator wires the Showcase tab in a follow-up.
+const ConnectorsPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/ConnectorsPreview").then((m) => ({ default: m.ConnectorsPreview }))
     )
   : null;
 
@@ -145,6 +154,25 @@ function LazyImportPreviewRoute() {
       <div className="min-h-screen bg-background p-4 lg:p-6">
         <div className="mx-auto max-w-[1500px]">
           <ImportPreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
+function LazyConnectorsPreviewRoute() {
+  if (!ConnectorsPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <ConnectorsPreviewRoute />
         </div>
       </div>
     </Suspense>
@@ -249,6 +277,7 @@ const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenan
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
 const importRoute = createRoute({ getParentRoute: () => appRoute, path: "/import", component: ImportRoute });
+const connectorsRoute = createRoute({ getParentRoute: () => appRoute, path: "/connectors", component: ConnectorsRoute });
 const designSystemRoute = import.meta.env.DEV
   ? createRoute({
       getParentRoute: () => rootRoute,
@@ -275,6 +304,13 @@ const designSystemImportRoute = import.meta.env.DEV
       getParentRoute: () => rootRoute,
       path: "/design-system/import",
       component: LazyImportPreviewRoute
+    })
+  : null;
+const designSystemConnectorsRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/connectors",
+      component: LazyConnectorsPreviewRoute
     })
   : null;
 const callbackRoute = createRoute({
@@ -304,8 +340,9 @@ export const routeTree = rootRoute.addChildren([
   ...(designSystemAIAnalystRoute ? [designSystemAIAnalystRoute] : []),
   ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
   ...(designSystemImportRoute ? [designSystemImportRoute] : []),
+  ...(designSystemConnectorsRoute ? [designSystemConnectorsRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute]),
   callbackRoute
 ]);
 

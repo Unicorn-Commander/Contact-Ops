@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://unicorn-redis:6379/5"
 
+    # Contact import connectors. Generate Fernet key with:
+    # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    CONNECTOR_ENCRYPTION_KEY: str = ""
+    M365_CLIENT_ID: str = ""
+    M365_CLIENT_SECRET: str = ""
+    M365_REDIRECT_URI: str = ""
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
+    GMAIL_REDIRECT_URI: str = ""
+    FRONTEND_URL: str = "https://contacts.magicunicorn.dev"
+
     # Tenant resolution
     TENANT_GUC_NAME: str = "app.tenant_id"
 
@@ -151,6 +162,16 @@ class Settings(BaseSettings):
                 "KEYCLOAK_ISSUER is required when STANDALONE_MODE=false. "
                 "Set it to your realm URL, e.g. "
                 "https://auth.unicorncommander.ai/realms/uchub"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_connector_key_in_non_standalone(self) -> Settings:
+        if not self.STANDALONE_MODE and self.ENV != "test" and not self.CONNECTOR_ENCRYPTION_KEY:
+            raise ValueError(
+                "CONNECTOR_ENCRYPTION_KEY is required when STANDALONE_MODE=false. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())\""
             )
         return self
 

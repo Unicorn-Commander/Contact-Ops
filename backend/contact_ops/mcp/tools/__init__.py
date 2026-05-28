@@ -11,6 +11,7 @@ from contact_ops.mcp.tools.relationships import register_relationship_tools
 _OPTIONAL_TOOL_MODULES = (
     "addresses",
     "carddav_passwords",
+    "connectors",
     "emails",
     "employment",
     "identifiers",

@@ -149,6 +149,7 @@ async def _write_inbox_decision(
 async def approve_proposal(
     *,
     db: AsyncSession,
+    app_db: AsyncSession | None = None,
     tenant_id: uuid.UUID,
     reviewer_id: uuid.UUID,
     proposal_id: uuid.UUID,
@@ -200,6 +201,13 @@ async def approve_proposal(
                 f"typed phrase did not match expected (expected {expected!r})",
             )
 
+    if row["event_type"] == "person.create":
+        await _apply_person_create_proposal(
+            db=app_db or db,
+            tenant_id=tenant_id,
+            proposal_id=proposal_id,
+        )
+
     # Flip action_event to applied
     await db.execute(
         text(
@@ -242,6 +250,241 @@ async def approve_proposal(
         "action_event_id": proposal_id,
         "inbox_decision_id": decision_id,
     }
+
+
+async def _apply_person_create_proposal(
+    *,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+) -> None:
+    row = await db.execute(
+        text(
+            """
+            SELECT aggregate_id, payload, decision_payload
+            FROM action_event
+            WHERE tenant_id = CAST(:tenant_id AS uuid)
+              AND event_id = CAST(:proposal_id AS uuid)
+              AND event_type = 'person.create'
+            """
+        ),
+        {"tenant_id": str(tenant_id), "proposal_id": str(proposal_id)},
+    )
+    proposal = row.mappings().first()
+    if proposal is None:
+        raise InboxMutationError("PROPOSAL_NOT_FOUND", "person.create proposal not found")
+
+    person_id = uuid.UUID(str(proposal["aggregate_id"]))
+    existing = await db.scalar(
+        text(
+            """
+            SELECT id
+            FROM persons
+            WHERE id = CAST(:person_id AS uuid)
+              AND canonical_owner_tenant_id = CAST(:tenant_id AS uuid)
+            """
+        ),
+        {"person_id": str(person_id), "tenant_id": str(tenant_id)},
+    )
+    if existing is not None:
+        return
+
+    payload = _payload_after(proposal["payload"], proposal["decision_payload"])
+    display_name = str(payload.get("display_name") or "Unnamed Contact")
+    await db.execute(
+        text(
+            """
+            INSERT INTO persons (
+                id, display_name, given_name, family_name, additional_names,
+                honorific_prefix, honorific_suffix, nicknames, birthday,
+                headline, occupation_title, canonical_owner_tenant_id,
+                vcard_uid, etag
+            ) VALUES (
+                CAST(:id AS uuid), :display_name, :given_name, :family_name,
+                CAST(:additional_names AS text[]), :honorific_prefix,
+                :honorific_suffix, CAST(:nicknames AS text[]),
+                CAST(:birthday AS jsonb), :headline, :occupation_title,
+                CAST(:tenant_id AS uuid), :vcard_uid, :etag
+            )
+            """
+        ),
+        {
+            "id": str(person_id),
+            "display_name": display_name,
+            "given_name": payload.get("given_name"),
+            "family_name": payload.get("family_name"),
+            "additional_names": payload.get("additional_names") or [],
+            "honorific_prefix": payload.get("honorific_prefix"),
+            "honorific_suffix": payload.get("honorific_suffix"),
+            "nicknames": payload.get("nicknames") or [],
+            "birthday": json.dumps(payload.get("birthday")) if payload.get("birthday") else None,
+            "headline": payload.get("headline"),
+            "occupation_title": payload.get("occupation_title"),
+            "tenant_id": str(tenant_id),
+            "vcard_uid": f"urn:uuid:{person_id}",
+            "etag": str(uuid.uuid4()),
+        },
+    )
+    await db.execute(
+        text(
+            """
+            INSERT INTO person_tenant_membership (
+                person_id, tenant_id, notes, tags
+            ) VALUES (
+                CAST(:person_id AS uuid), CAST(:tenant_id AS uuid),
+                :notes, CAST(:tags AS text[])
+            )
+            ON CONFLICT (person_id, tenant_id) DO NOTHING
+            """
+        ),
+        {
+            "person_id": str(person_id),
+            "tenant_id": str(tenant_id),
+            "notes": payload.get("notes"),
+            "tags": payload.get("tags") or [],
+        },
+    )
+    await _insert_person_children(db, person_id, payload)
+
+
+def _payload_after(payload: Any, decision_payload: Any) -> dict[str, Any]:
+    if isinstance(decision_payload, str):
+        decision_payload = json.loads(decision_payload)
+    if isinstance(decision_payload, dict):
+        after = decision_payload.get("payload_after")
+        if isinstance(after, dict):
+            return after
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if isinstance(payload, dict):
+        after = payload.get("after")
+        if isinstance(after, dict):
+            return after
+    return {}
+
+
+async def _insert_person_children(
+    db: AsyncSession,
+    person_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> None:
+    for index, email in enumerate(_list_of_dicts(payload.get("emails"))):
+        await db.execute(
+            text(
+                """
+                INSERT INTO emails (person_id, address, type, label, is_primary, confidence)
+                VALUES (
+                    CAST(:person_id AS uuid), lower(:address),
+                    CAST(:type AS email_type), :label, :is_primary, :confidence
+                )
+                """
+            ),
+            {
+                "person_id": str(person_id),
+                "address": str(email.get("address") or ""),
+                "type": _email_type(str(email.get("type") or "other")),
+                "label": email.get("label"),
+                "is_primary": bool(email.get("is_primary")) or index == 0,
+                "confidence": 0.9,
+            },
+        )
+    for index, phone in enumerate(_list_of_dicts(payload.get("phones"))):
+        await db.execute(
+            text(
+                """
+                INSERT INTO phones (person_id, e164, type, label, is_primary, confidence)
+                VALUES (
+                    CAST(:person_id AS uuid), :e164,
+                    CAST(:type AS phone_type), :label, :is_primary, :confidence
+                )
+                """
+            ),
+            {
+                "person_id": str(person_id),
+                "e164": str(phone.get("e164") or ""),
+                "type": _phone_type(str(phone.get("type") or "other")),
+                "label": phone.get("label"),
+                "is_primary": bool(phone.get("is_primary")) or index == 0,
+                "confidence": 0.9,
+            },
+        )
+    for index, address in enumerate(_list_of_dicts(payload.get("addresses"))):
+        await db.execute(
+            text(
+                """
+                INSERT INTO postal_addresses (
+                    person_id, type, label, is_primary, po_box, street_address,
+                    extended_address, locality, region, postal_code, country_name,
+                    country_code, confidence
+                ) VALUES (
+                    CAST(:person_id AS uuid), CAST(:type AS address_type), :label,
+                    :is_primary, :po_box, :street_address, :extended_address,
+                    :locality, :region, :postal_code, :country_name, :country_code,
+                    :confidence
+                )
+                """
+            ),
+            {
+                "person_id": str(person_id),
+                "type": _address_type(str(address.get("type") or "other")),
+                "label": address.get("label"),
+                "is_primary": bool(address.get("is_primary")) or index == 0,
+                "po_box": address.get("po_box"),
+                "street_address": address.get("street_address"),
+                "extended_address": address.get("extended_address"),
+                "locality": address.get("locality"),
+                "region": address.get("region"),
+                "postal_code": address.get("postal_code"),
+                "country_name": address.get("country_name"),
+                "country_code": address.get("country_code"),
+                "confidence": 0.9,
+            },
+        )
+    for identifier in _list_of_dicts(payload.get("identifiers")):
+        await db.execute(
+            text(
+                """
+                INSERT INTO identifiers (person_id, namespace, value, url, verified, confidence)
+                VALUES (
+                    CAST(:person_id AS uuid), :namespace, :value, :url, :verified, :confidence
+                )
+                """
+            ),
+            {
+                "person_id": str(person_id),
+                "namespace": str(identifier.get("namespace") or "external"),
+                "value": str(identifier.get("value") or ""),
+                "url": identifier.get("url"),
+                "verified": bool(identifier.get("verified")),
+                "confidence": 0.9,
+            },
+        )
+
+
+def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _email_type(value: str) -> str:
+    if value == "home":
+        return "personal"
+    if value in {"personal", "work", "school", "other", "alias"}:
+        return value
+    return "other"
+
+
+def _phone_type(value: str) -> str:
+    if value in {"mobile", "home", "work", "fax", "main", "other"}:
+        return value
+    return "other"
+
+
+def _address_type(value: str) -> str:
+    if value in {"home", "work", "billing", "shipping", "mailing", "other"}:
+        return value
+    return "other"
 
 
 # ---- reject ----

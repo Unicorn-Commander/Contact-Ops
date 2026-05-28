@@ -287,3 +287,77 @@ export type BulkActionPayload = {
   blocked_mixed_tenant: number;
   blocked_tier_4: number;
 };
+
+// ---- Connectors (matches feat-connectors-backend MCP tools) ---------------
+//
+// The /connectors page pulls contacts from third-party sources. Each provider
+// has its own auth flow (iCloud = app password, M365/Gmail = OAuth) but the
+// connector record itself is uniform. Triggering a pull spawns a connector_run
+// row that the page polls until it flips out of `running`.
+
+/** Which third-party we're talking to. */
+export type ConnectorProvider = "icloud" | "m365" | "gmail";
+
+/**
+ * Lifecycle status of a single configured connector:
+ *
+ *   - "configured"   credentials saved, no pulls yet (or last pull cleared)
+ *   - "connected"    at least one successful pull on file
+ *   - "disconnected" user explicitly disconnected (creds removed)
+ *   - "error"        last pull / token check failed; `last_error` carries why
+ */
+export type ConnectorStatus = "configured" | "connected" | "disconnected" | "error";
+
+/**
+ * Per-run status — drives the inline spinner + polling loop on the page.
+ * Backend reports `running` while a pull is in-flight, then transitions to
+ * one of the terminal states.
+ */
+export type ConnectorRunStatus = "running" | "succeeded" | "failed" | "partial";
+
+/** Summary fields a run can fill in. Counts may be missing on a `running` row. */
+export type ConnectorRunSummary = {
+  parsed_count?: number;
+  proposed_count?: number;
+  deduped_count?: number;
+  skipped_count?: number;
+  /** Free-form summary the backend ships for the expansion row (jsonb on the wire). */
+  details?: Record<string, unknown> | null;
+};
+
+export type Connector = ToolEnvelope & {
+  id: UUID;
+  provider: ConnectorProvider;
+  display_name: string;
+  status: ConnectorStatus;
+  /** ISO 8601 timestamp; null when never pulled. */
+  last_pull_at?: string | null;
+  /**
+   * Inline counts from the most recent run. Backend mirrors the run row so the
+   * card can render "47 proposed" without a separate runs lookup. */
+  last_pull_summary?: ConnectorRunSummary | null;
+  /** Backend-formatted user-facing reason — surfaced verbatim in the Error state. */
+  last_error?: string | null;
+  configured_at: string;
+};
+
+export type ConnectorRun = ToolEnvelope & {
+  run_id: UUID;
+  connector_id: UUID;
+  provider: ConnectorProvider;
+  /** Optional but populated for the recent-runs table. */
+  display_name?: string;
+  status: ConnectorRunStatus;
+  /** ISO 8601 timestamps. `finished_at` is null while running. */
+  started_at: string;
+  finished_at?: string | null;
+  /** Whether this run was triggered with `dry_run=true`. */
+  dry_run?: boolean;
+  parsed_count?: number;
+  proposed_count?: number;
+  deduped_count?: number;
+  skipped_count?: number;
+  /** Per-run free-form summary; the expansion row pretty-prints this JSON. */
+  summary?: Record<string, unknown> | null;
+  error?: string | null;
+};
