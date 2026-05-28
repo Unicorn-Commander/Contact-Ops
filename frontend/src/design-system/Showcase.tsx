@@ -6,6 +6,7 @@ import { ScreensPreview } from "@/design-system/ScreensPreview";
 import { CommandPalettePreview } from "@/design-system/CommandPalettePreview";
 import { AIAnalystPreview } from "@/design-system/AIAnalystPreview";
 import { NotesPreview } from "@/design-system/NotesPreview";
+import { ImportPreview } from "@/design-system/ImportPreview";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
@@ -330,6 +331,7 @@ export function DesignSystemShowcase() {
               <TabsTrigger value="cmdk">⌘K Palette</TabsTrigger>
               <TabsTrigger value="ai-analyst">AI Analyst</TabsTrigger>
               <TabsTrigger value="notes">Notes & Log</TabsTrigger>
+              <TabsTrigger value="import">Import</TabsTrigger>
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
               <TabsTrigger value="gradients">Gradients</TabsTrigger>
@@ -378,6 +380,9 @@ export function DesignSystemShowcase() {
             </TabsContent>
             <TabsContent value="ai-analyst">
               <AIAnalystPreview />
+            </TabsContent>
+            <TabsContent value="import">
+              <ImportPreview />
             </TabsContent>
             <TabsContent value="notes">
               <NotesPreview />
