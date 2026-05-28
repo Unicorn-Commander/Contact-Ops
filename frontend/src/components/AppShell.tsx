@@ -14,6 +14,7 @@ import {
   Sparkles,
   Tags,
   Sun,
+  Upload,
   Users
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -53,7 +54,8 @@ const nav = [
   { to: "/orgs", label: "Organizations", icon: Building2, accent: "text-[oklch(var(--co-emerald-500))]" },
   { to: "/tags", label: "Tags", icon: Tags, accent: "text-[oklch(var(--co-amber-500))]" },
   { to: "/graph", label: "Graph", icon: Network, accent: "text-[oklch(var(--co-fuchsia-500))]" },
-  { to: "/review", label: "Review Queue", icon: ListChecks, accent: "text-[oklch(var(--co-rose-500))]" }
+  { to: "/review", label: "Review Queue", icon: ListChecks, accent: "text-[oklch(var(--co-rose-500))]" },
+  { to: "/import", label: "Import", icon: Upload, accent: "text-[oklch(var(--co-emerald-500))]" }
 ] as const;
 
 const adminNav = [

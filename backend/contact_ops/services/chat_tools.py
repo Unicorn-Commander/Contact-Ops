@@ -30,6 +30,7 @@ CURATED_MCP_TOOLS: tuple[str, ...] = (
     "propose_merge",
     "list_notes",
     "append_note",
+    "propose_vcard_records",
 )
 
 AI_CONTACTS_ANALYST_AGENT_SLUG = "ai-contacts-analyst"

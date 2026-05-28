@@ -14,6 +14,7 @@ import { OrgsRoute, OrgDetailRoute } from "@/routes/pages/Orgs";
 import { TagsRoute } from "@/routes/pages/Tags";
 import { TenantsRoute } from "@/routes/pages/Tenants";
 import { SettingsRoute } from "@/routes/pages/Settings";
+import { ImportRoute } from "@/routes/pages/Import";
 
 const GraphRoute = lazy(() =>
   import("@/routes/pages/Graph").then((m) => ({ default: m.GraphRoute }))
@@ -45,6 +46,14 @@ const AIAnalystPreviewRoute = import.meta.env.DEV
 const NotesPreviewRoute = import.meta.env.DEV
   ? lazy(() =>
       import("@/design-system/NotesPreview").then((m) => ({ default: m.NotesPreview }))
+    )
+  : null;
+
+// vCard Import auth-free preview — mirrors AIAnalystPreviewRoute / NotesPreviewRoute
+// so the Showcase tab + screenshot harness can capture every state offline.
+const ImportPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/ImportPreview").then((m) => ({ default: m.ImportPreview }))
     )
   : null;
 
@@ -117,6 +126,25 @@ function LazyNotesPreviewRoute() {
       <div className="min-h-screen bg-background p-4 lg:p-6">
         <div className="mx-auto max-w-[1500px]">
           <NotesPreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
+function LazyImportPreviewRoute() {
+  if (!ImportPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <ImportPreviewRoute />
         </div>
       </div>
     </Suspense>
@@ -220,6 +248,7 @@ const inboxRedirectRoute = createRoute({
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
+const importRoute = createRoute({ getParentRoute: () => appRoute, path: "/import", component: ImportRoute });
 const designSystemRoute = import.meta.env.DEV
   ? createRoute({
       getParentRoute: () => rootRoute,
@@ -239,6 +268,13 @@ const designSystemNotesRoute = import.meta.env.DEV
       getParentRoute: () => rootRoute,
       path: "/design-system/notes",
       component: LazyNotesPreviewRoute
+    })
+  : null;
+const designSystemImportRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/import",
+      component: LazyImportPreviewRoute
     })
   : null;
 const callbackRoute = createRoute({
@@ -267,8 +303,9 @@ function CallbackRoute() {
 export const routeTree = rootRoute.addChildren([
   ...(designSystemAIAnalystRoute ? [designSystemAIAnalystRoute] : []),
   ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
+  ...(designSystemImportRoute ? [designSystemImportRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute]),
   callbackRoute
 ]);
 
