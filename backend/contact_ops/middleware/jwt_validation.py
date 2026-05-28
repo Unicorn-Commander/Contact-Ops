@@ -59,9 +59,18 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     # bearer tokens). Every request under ``/carddav`` and the discovery
     # endpoint at ``/.well-known/carddav`` therefore bypasses JWT and is
     # authenticated inline by :mod:`contact_ops.carddav.auth`.
+    #
+    # OAuth callbacks for the M365/Gmail connectors are top-level browser
+    # navigations from the provider (no bearer header possible). The
+    # endpoint authenticates the originating user by validating the signed
+    # ``state`` parameter that was issued at oauth-start time and stored
+    # in ``oauth_pending`` (or short-TTL Redis); see
+    # :mod:`contact_ops.connectors.oauth_state`.
     SKIP_PREFIXES: tuple[str, ...] = (
         "/carddav",
         "/.well-known/carddav",
+        "/api/connectors/m365/oauth/callback",
+        "/api/connectors/gmail/oauth/callback",
     )
 
     def __init__(self, app: Any, settings: Settings) -> None:
