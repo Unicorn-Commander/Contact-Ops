@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { BookUser, ListChecks, Moon, Sparkles, Sun } from "lucide-react";
 import { ActionAttribution } from "@/design-system/ActionAttribution";
 import { ShellPreview } from "@/design-system/ShellPreview";
+import { ScreensPreview } from "@/design-system/ScreensPreview";
+import { CommandPalettePreview } from "@/design-system/CommandPalettePreview";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
@@ -322,6 +324,8 @@ export function DesignSystemShowcase() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <TabsList className="flex h-auto flex-wrap">
               <TabsTrigger value="shell">Shell + Dashboard</TabsTrigger>
+              <TabsTrigger value="screens">Screens</TabsTrigger>
+              <TabsTrigger value="cmdk">⌘K Palette</TabsTrigger>
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
               <TabsTrigger value="gradients">Gradients</TabsTrigger>
@@ -343,6 +347,28 @@ export function DesignSystemShowcase() {
                 <h2 className="text-base font-semibold">Mobile (375px, sidebar collapsed)</h2>
                 <div className="mx-auto w-[375px] max-w-full">
                   <ShellPreview theme="dark" compact />
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="screens" className="space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Inner screens — dark</h2>
+                <ScreensPreview theme="dark" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Inner screens — light</h2>
+                <ScreensPreview theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="cmdk" className="space-y-6">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <div className="space-y-2">
+                  <h2 className="text-base font-semibold">Command palette — dark</h2>
+                  <CommandPalettePreview theme="dark" mode="search" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-base font-semibold">Command palette — light</h2>
+                  <CommandPalettePreview theme="light" mode="search" />
                 </div>
               </div>
             </TabsContent>
