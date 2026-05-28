@@ -11,8 +11,9 @@ request). Routers run after all three.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 from contact_ops.agents.observability.metrics import metrics_endpoint
 from contact_ops.agents.observability.otel import init_otel
+from contact_ops.api.chat import router as chat_router
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
@@ -115,6 +117,7 @@ def create_application() -> FastAPI:
 
     # Routes
     app.include_router(health_router)
+    app.include_router(chat_router)
     app.include_router(mcp_router)
     # CardDAV runs its own HTTP Basic auth (per-device app passwords).
     # The JWT middleware skips /carddav and /.well-known/carddav via
