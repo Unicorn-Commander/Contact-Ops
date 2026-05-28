@@ -126,6 +126,27 @@ export type CardDavPassword = {
   last_used_at?: string | null;
 };
 
+// ---- Notes / Log (Settings + future profile-page surface) ----
+// Matches the backend MCP `list_notes` / `append_note` shape on `feat-notes-backend`.
+
+export type NoteTargetType = "user" | "person" | "org";
+export type NoteAuthorType = "user" | "agent";
+
+export type Note = {
+  id: UUID;
+  target_type: NoteTargetType;
+  /** null when target_type === "user" (the note is on the calling user themself). */
+  target_id?: UUID | null;
+  author_type: NoteAuthorType;
+  /** uc_uid for `user`, agent slug (e.g. "ai-contacts-analyst") for `agent`. */
+  author_id: string;
+  /** Plain text with newlines preserved. Markdown-ish formatting is rendered loosely. */
+  text: string;
+  /** Optional one-line context, e.g. "from proposal #abc123" or "from chat turn". */
+  source?: string | null;
+  created_at: string;
+};
+
 // ---- Phase 3.3 inbox types (mirror of backend schemas/inbox.py) ----
 
 export type Tier = 0 | 1 | 2 | 3 | 4;
