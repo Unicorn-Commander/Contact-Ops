@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NotesSection } from "@/components/profile/NotesSection";
 import { useCardDavPasswords, useMcpMutation } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { compactDate, initials } from "@/lib/utils";
@@ -80,6 +81,9 @@ export function SettingsRoute() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Notes & Log — Phase 1 user-target surface; same component drops into person/org pages later. */}
+      <NotesSection targetType="user" />
 
       {/* Appearance */}
       <Card>

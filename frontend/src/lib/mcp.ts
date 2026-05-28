@@ -5,6 +5,8 @@ import type {
   CardDavPassword,
   ListPendingProposalsResult,
   ListResult,
+  Note,
+  NoteTargetType,
   Organization,
   OrganizationSummary,
   Person,
@@ -346,5 +348,38 @@ export const tools = {
       conflicting_applied: boolean;
       conflict_id: UUID;
       inbox_decision_id: UUID;
-    }>("resolve_conflict_keep_both", args as unknown as Record<string, unknown>, token)
+    }>("resolve_conflict_keep_both", args as unknown as Record<string, unknown>, token),
+
+  // ---- Notes / Log (matches feat-notes-backend MCP tools) ----
+  // target_type defaults to 'user'; target_id is omitted for user-targeted notes.
+  listNotes: (
+    args: {
+      target_type?: NoteTargetType;
+      target_id?: UUID | null;
+      limit?: number;
+      offset?: number;
+    },
+    token: string
+  ) =>
+    callTool<ListResult<Note>>(
+      "list_notes",
+      { target_type: "user", ...args } as unknown as Record<string, unknown>,
+      token
+    ),
+  appendNote: (
+    args: {
+      text: string;
+      target_type?: NoteTargetType;
+      target_id?: UUID | null;
+      source?: string | null;
+    },
+    token: string
+  ) =>
+    callTool<Note>(
+      "append_note",
+      { target_type: "user", ...args } as unknown as Record<string, unknown>,
+      token
+    ),
+  deleteNote: (args: { note_id: UUID }, token: string) =>
+    callTool<{ ok: true }>("delete_note", args as unknown as Record<string, unknown>, token)
 };

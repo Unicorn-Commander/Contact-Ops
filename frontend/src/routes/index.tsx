@@ -40,6 +40,14 @@ const AIAnalystPreviewRoute = import.meta.env.DEV
     )
   : null;
 
+// Notes & Log auth-free preview — same shape as AIAnalystPreviewRoute so the
+// orchestrator can wire it into the Showcase tab list when both tracks land.
+const NotesPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/NotesPreview").then((m) => ({ default: m.NotesPreview }))
+    )
+  : null;
+
 function LazyInboxRoute() {
   return (
     <Suspense
@@ -90,6 +98,25 @@ function LazyAIAnalystPreviewRoute() {
       <div className="min-h-screen bg-background p-4 lg:p-6">
         <div className="mx-auto max-w-[1500px]">
           <AIAnalystPreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
+function LazyNotesPreviewRoute() {
+  if (!NotesPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <NotesPreviewRoute />
         </div>
       </div>
     </Suspense>
@@ -207,6 +234,13 @@ const designSystemAIAnalystRoute = import.meta.env.DEV
       component: LazyAIAnalystPreviewRoute
     })
   : null;
+const designSystemNotesRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/notes",
+      component: LazyNotesPreviewRoute
+    })
+  : null;
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
@@ -232,6 +266,7 @@ function CallbackRoute() {
 
 export const routeTree = rootRoute.addChildren([
   ...(designSystemAIAnalystRoute ? [designSystemAIAnalystRoute] : []),
+  ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
   appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute]),
   callbackRoute

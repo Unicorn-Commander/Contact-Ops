@@ -15,6 +15,7 @@ _OPTIONAL_TOOL_MODULES = (
     "employment",
     "identifiers",
     "imports",
+    "notes",
     "orgs",
     "phones",
     "tags",
