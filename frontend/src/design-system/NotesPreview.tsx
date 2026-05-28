@@ -27,6 +27,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, initials } from "@/lib/utils";
 import type { ThemeMode } from "@/design-system/tokens";
 
+// ---- Source formatter -----------------------------------------------------
+// Mirrors the same helper in NotesSection so the offline preview renders
+// `source` objects with the same conventions the live component uses.
+
+function formatNoteSource(source: Record<string, unknown> | null | undefined): string | null {
+  if (!source) return null;
+  if (typeof source.proposal_id === "string") return `from proposal ${source.proposal_id.slice(0, 8)}`;
+  if (typeof source.cluster_id === "string") return `from cluster ${source.cluster_id.slice(0, 8)}`;
+  if (typeof source.action === "string") return String(source.action);
+  const entries = Object.entries(source);
+  if (entries.length === 0) return null;
+  const [k, v] = entries[0];
+  return `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`;
+}
+
 // ---- Mock note shape (matches lib/types Note) -----------------------------
 
 type PreviewNote = {
@@ -35,7 +50,7 @@ type PreviewNote = {
   author_id: string;
   author_display_name?: string;
   text: string;
-  source?: string | null;
+  source?: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -49,7 +64,7 @@ const POPULATED_NOTES: PreviewNote[] = [
     author_type: "agent",
     author_id: "ai-contacts-analyst",
     text: "Confirmed primary email for Rocky Doe from the latest proposal — REMOVED (last verified by SES bounce check).\n\nNo conflicting addresses on file.",
-    source: "from proposal #4f2a91",
+    source: { proposal_id: "4f2a9192-3e4a-4f5b-8c6d-7e8f9a0b1c2d" },
     created_at: subMinutes(NOW, 8).toISOString()
   },
   {
@@ -65,7 +80,7 @@ const POPULATED_NOTES: PreviewNote[] = [
     author_type: "agent",
     author_id: "dedup-agent",
     text: "Found 3 dedup candidates against the Sullivan case file. Routed to the Review Queue at `tier=2` — see `https://contacts.example/review?cluster=8aa1`.",
-    source: "from inbox cluster 8aa1",
+    source: { cluster_id: "8aa19208-5b6c-4d7e-8f9a-0b1c2d3e4f5a" },
     created_at: subHours(NOW, 7).toISOString()
   },
   {
@@ -255,11 +270,14 @@ function NoteEntryMock({
       <div className="mt-2">
         <NoteBodyMock text={note.text} />
       </div>
-      {note.source ? (
-        <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-          <span className="font-mono">{note.source}</span>
-        </p>
-      ) : null}
+      {(() => {
+        const sourceLabel = formatNoteSource(note.source);
+        return sourceLabel ? (
+          <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+            <span className="font-mono">{sourceLabel}</span>
+          </p>
+        ) : null;
+      })()}
     </div>
   );
 }

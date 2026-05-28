@@ -142,8 +142,8 @@ export type Note = {
   author_id: string;
   /** Plain text with newlines preserved. Markdown-ish formatting is rendered loosely. */
   text: string;
-  /** Optional one-line context, e.g. "from proposal #abc123" or "from chat turn". */
-  source?: string | null;
+  /** Optional structured context, e.g. `{proposal_id, cluster_id, action}`; rendered as a compact one-line label. */
+  source?: Record<string, unknown> | null;
   created_at: string;
 };
 

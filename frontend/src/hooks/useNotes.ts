@@ -132,7 +132,7 @@ export interface UseAppendNoteArgs {
 
 export interface AppendNotePayload {
   text: string;
-  source?: string | null;
+  source?: Record<string, unknown> | null;
 }
 
 /**

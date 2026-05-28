@@ -50,6 +50,22 @@ export interface NotesSectionProps {
   className?: string;
 }
 
+// ---- Source formatter -----------------------------------------------------
+// The backend returns `source` as a JSON object (e.g. {proposal_id, cluster_id,
+// action}); render it as a compact one-line label. Common conventions get
+// pretty labels; anything else falls back to first-key:value.
+
+function formatNoteSource(source: Record<string, unknown> | null | undefined): string | null {
+  if (!source) return null;
+  if (typeof source.proposal_id === "string") return `from proposal ${source.proposal_id.slice(0, 8)}`;
+  if (typeof source.cluster_id === "string") return `from cluster ${source.cluster_id.slice(0, 8)}`;
+  if (typeof source.action === "string") return String(source.action);
+  const entries = Object.entries(source);
+  if (entries.length === 0) return null;
+  const [k, v] = entries[0];
+  return `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`;
+}
+
 // ---- Author chips ---------------------------------------------------------
 // Built inline (vs reusing AgentBadge / HumanBadge from design-system) so they
 // can be slimmer for an inline-list context — same tokens, same intent.
@@ -287,11 +303,14 @@ function NoteEntry({ note, canDelete, onDelete, deleting, userDisplayName }: Not
       <div className="mt-2">
         <NoteBody text={note.text} />
       </div>
-      {note.source ? (
-        <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-          <span className="font-mono">{note.source}</span>
-        </p>
-      ) : null}
+      {(() => {
+        const sourceLabel = formatNoteSource(note.source);
+        return sourceLabel ? (
+          <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+            <span className="font-mono">{sourceLabel}</span>
+          </p>
+        ) : null;
+      })()}
     </div>
   );
 }
