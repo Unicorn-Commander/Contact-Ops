@@ -3,6 +3,9 @@ import type {
   ActionEvent,
   BulkActionResult,
   CardDavPassword,
+  Connector,
+  ConnectorProvider,
+  ConnectorRun,
   ListPendingProposalsResult,
   ListResult,
   Note,
@@ -381,5 +384,44 @@ export const tools = {
       token
     ),
   deleteNote: (args: { note_id: UUID }, token: string) =>
-    callTool<{ ok: true }>("delete_note", args as unknown as Record<string, unknown>, token)
+    callTool<{ ok: true }>("delete_note", args as unknown as Record<string, unknown>, token),
+
+  // ---- Connectors (matches feat-connectors-backend MCP tools) -------------
+  // Each provider has its own configure path; OAuth providers (m365 / gmail)
+  // hit `get_oauth_start_url` and then the backend handles the callback +
+  // 302 back to `/connectors?success=<provider>`.
+  listConnectors: (token: string) =>
+    callTool<ListResult<Connector>>("list_connectors", {}, token).catch(() => ({
+      items: [],
+      count: 0
+    })),
+  configureIcloudConnector: (
+    args: { apple_id: string; app_password: string; display_name: string },
+    token: string
+  ) =>
+    callTool<{ id: UUID; provider: "icloud"; status: "configured" }>(
+      "configure_icloud_connector",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  getOauthStartUrl: (args: { provider: Exclude<ConnectorProvider, "icloud"> }, token: string) =>
+    callTool<{ redirect_url: string; state: string }>(
+      "get_oauth_start_url",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  pullConnectorNow: (args: { connector_id: UUID; dry_run?: boolean }, token: string) =>
+    callTool<ConnectorRun>("pull_connector_now", args as unknown as Record<string, unknown>, token),
+  listConnectorRuns: (args: { connector_id?: UUID; limit?: number }, token: string) =>
+    callTool<ListResult<ConnectorRun>>(
+      "list_connector_runs",
+      args as unknown as Record<string, unknown>,
+      token
+    ).catch(() => ({ items: [], count: 0 })),
+  disconnectConnector: (args: { connector_id: UUID; reason?: string }, token: string) =>
+    callTool<{ ok: true }>(
+      "disconnect_connector",
+      args as unknown as Record<string, unknown>,
+      token
+    )
 };
