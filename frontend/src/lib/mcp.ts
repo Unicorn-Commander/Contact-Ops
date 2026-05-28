@@ -371,7 +371,7 @@ export const tools = {
       text: string;
       target_type?: NoteTargetType;
       target_id?: UUID | null;
-      source?: string | null;
+      source?: Record<string, unknown> | null;
     },
     token: string
   ) =>
