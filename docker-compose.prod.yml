@@ -39,6 +39,14 @@ services:
       - "traefik.http.routers.contact-ops-mcp.tls=true"
       - "traefik.http.routers.contact-ops-mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.contact-ops-mcp.loadbalancer.server.port=8501"
+      # CardDAV: same backend container, separate host. Backend's JWT middleware
+      # bypasses /carddav and /.well-known/carddav (HTTP Basic auth instead).
+      # /.well-known/carddav → 301 /carddav/ — Apple discovery flow works.
+      - "traefik.http.routers.contact-ops-carddav.rule=Host(`carddav.contacts.magicunicorn.dev`)"
+      - "traefik.http.routers.contact-ops-carddav.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-carddav.tls=true"
+      - "traefik.http.routers.contact-ops-carddav.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.contact-ops-carddav.service=contact-ops-mcp"
       - "traefik.docker.network=web"
 
   contact-ops-frontend:
