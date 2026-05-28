@@ -31,17 +31,17 @@ import {
 } from "@/design-system/tokens";
 
 const nav = [
-  { to: "/", label: "Dashboard", icon: Home },
-  { to: "/people", label: "People", icon: Users },
-  { to: "/orgs", label: "Organizations", icon: Building2 },
-  { to: "/tags", label: "Tags", icon: Tags },
-  { to: "/graph", label: "Graph", icon: Network },
-  { to: "/review", label: "Review Queue", icon: ListChecks }
+  { to: "/", label: "Dashboard", icon: Home, accent: "text-[oklch(var(--co-brand-500))]" },
+  { to: "/people", label: "People", icon: Users, accent: "text-[oklch(var(--co-sky-500))]" },
+  { to: "/orgs", label: "Organizations", icon: Building2, accent: "text-[oklch(var(--co-emerald-500))]" },
+  { to: "/tags", label: "Tags", icon: Tags, accent: "text-[oklch(var(--co-amber-500))]" },
+  { to: "/graph", label: "Graph", icon: Network, accent: "text-[oklch(var(--co-fuchsia-500))]" },
+  { to: "/review", label: "Review Queue", icon: ListChecks, accent: "text-[oklch(var(--co-rose-500))]" }
 ] as const;
 
 const adminNav = [
-  { to: "/tenants", label: "Tenants", icon: Building2 },
-  { to: "/settings", label: "Settings", icon: Settings }
+  { to: "/tenants", label: "Tenants", icon: Building2, accent: "text-[oklch(var(--co-sky-500))]" },
+  { to: "/settings", label: "Settings", icon: Settings, accent: "text-muted-foreground" }
 ] as const;
 
 /** The gradient logo mark + wordmark lockup — the brand signature. */
@@ -63,12 +63,14 @@ function NavItem({
   to,
   label,
   icon: Icon,
+  accent,
   active,
   onNavigate
 }: {
   to: string;
   label: string;
   icon: typeof Home;
+  accent: string;
   active: boolean;
   onNavigate?: () => void;
 }) {
@@ -84,7 +86,7 @@ function NavItem({
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
       )}
     >
-      <Icon className={cn("h-[18px] w-[18px]", active && "text-primary")} strokeWidth={1.8} />
+      <Icon className={cn("h-[18px] w-[18px] shrink-0", accent)} strokeWidth={1.8} />
       {label}
     </Link>
   );
@@ -186,7 +188,7 @@ export function AppShell() {
       ) : null}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-64 border-r bg-card transition-transform duration-200 lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 w-64 border-r bg-[oklch(var(--sidebar))] transition-transform duration-200 lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >

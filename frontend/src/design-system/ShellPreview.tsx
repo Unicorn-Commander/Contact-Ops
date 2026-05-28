@@ -41,17 +41,17 @@ import type { ThemeMode } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { label: "Dashboard", icon: Home, active: true },
-  { label: "People", icon: Users },
-  { label: "Organizations", icon: Building2 },
-  { label: "Tags", icon: Tags },
-  { label: "Graph", icon: Network },
-  { label: "Review Queue", icon: ListChecks }
+  { label: "Dashboard", icon: Home, active: true, accent: "text-[oklch(var(--co-brand-500))]" },
+  { label: "People", icon: Users, accent: "text-[oklch(var(--co-sky-500))]" },
+  { label: "Organizations", icon: Building2, accent: "text-[oklch(var(--co-emerald-500))]" },
+  { label: "Tags", icon: Tags, accent: "text-[oklch(var(--co-amber-500))]" },
+  { label: "Graph", icon: Network, accent: "text-[oklch(var(--co-fuchsia-500))]" },
+  { label: "Review Queue", icon: ListChecks, accent: "text-[oklch(var(--co-rose-500))]" }
 ] as const;
 
 const adminNav = [
-  { label: "Tenants", icon: Building2 },
-  { label: "Settings", icon: Settings }
+  { label: "Tenants", icon: Building2, accent: "text-[oklch(var(--co-sky-500))]" },
+  { label: "Settings", icon: Settings, accent: "text-muted-foreground" }
 ] as const;
 
 type StatTone = "fuchsia" | "sky" | "amber" | "emerald";
@@ -62,7 +62,7 @@ const toneClasses: Record<StatTone, { tile: string; icon: string }> = {
   emerald: { tile: "ring-[oklch(var(--co-emerald-500)/0.22)]", icon: "text-[oklch(var(--co-emerald-500))]" }
 };
 
-function NavItem({ label, icon: Icon, active }: { label: string; icon: LucideIcon; active?: boolean }) {
+function NavItem({ label, icon: Icon, active, accent }: { label: string; icon: LucideIcon; active?: boolean; accent: string }) {
   return (
     <span
       className={cn(
@@ -70,7 +70,7 @@ function NavItem({ label, icon: Icon, active }: { label: string; icon: LucideIco
         active ? "border-primary bg-primary/10 text-foreground" : "text-muted-foreground"
       )}
     >
-      <Icon className={cn("h-[18px] w-[18px]", active && "text-primary")} strokeWidth={1.8} />
+      <Icon className={cn("h-[18px] w-[18px] shrink-0", accent)} strokeWidth={1.8} />
       {label}
     </span>
   );
@@ -330,7 +330,7 @@ export function ShellPreview({ theme, compact = false }: { theme: ThemeMode; com
       <div className="flex h-[760px]">
         {/* Sidebar (hidden in compact/mobile preview) */}
         {!compact ? (
-          <aside className="hidden w-64 shrink-0 border-r bg-card sm:flex sm:flex-col">
+          <aside className="hidden w-64 shrink-0 border-r bg-[oklch(var(--sidebar))] sm:flex sm:flex-col">
             <div className="flex h-16 items-center border-b px-4">
               <span className="flex items-center gap-3">
                 <span className="bg-gradient-brand flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-primary-foreground shadow-[var(--shadow-1)]">

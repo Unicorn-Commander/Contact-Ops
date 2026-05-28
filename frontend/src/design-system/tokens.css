@@ -95,11 +95,12 @@
   --co-rose-900: 0.39 0.121 18;
   --co-rose-950: 0.286 0.085 18;
 
-  --background: var(--co-neutral-950);
+  --background: 0.13 0.012 280;
   --foreground: 0.965 0.004 280;
-  --card: 0.178 0.013 280;
+  --sidebar: 0.168 0.014 282;
+  --card: 0.205 0.014 281;
   --card-foreground: var(--foreground);
-  --popover: 0.165 0.013 280;
+  --popover: 0.205 0.014 281;
   --popover-foreground: var(--foreground);
   --primary: var(--co-brand-600);
   --link: var(--co-brand-300);
@@ -217,8 +218,9 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  --background: var(--co-neutral-50);
+  --background: 0.975 0.004 300;
   --foreground: 0.2 0.014 280;
+  --sidebar: 0.964 0.011 304;
   --card: 0.999 0.001 280;
   --card-foreground: var(--foreground);
   --popover: 0.999 0.001 280;
