@@ -1,7 +1,15 @@
 export type ThemeMode = "dark" | "light";
 export type DensityMode = "compact" | "default" | "comfortable";
 export type ConfidenceTier = "high" | "good" | "review" | "low";
+export type ItemStatus = "proposed" | "applied" | "rejected" | "snoozed";
 export type CSSVarStyle = Record<`--${string}`, string | number>;
+
+export const itemStatusConfig: Record<ItemStatus, { label: string; tone: string }> = {
+  proposed: { label: "Proposed", tone: "amber" },
+  applied: { label: "Applied", tone: "emerald" },
+  rejected: { label: "Rejected", tone: "rose" },
+  snoozed: { label: "Snoozed", tone: "sky" }
+};
 
 export const colorRamps = {
   neutral: {
@@ -115,6 +123,18 @@ export const motionTokens = {
     snappy: { type: "spring", stiffness: 420, damping: 34, mass: 0.9, bounce: 0.04 },
     bouncy: { type: "spring", stiffness: 360, damping: 22, mass: 0.8, bounce: 0.1 }
   }
+} as const;
+
+export const motionConfig = {
+  durations: {
+    fast: 120,
+    base: 200,
+    slow: 360
+  } as const,
+  easings: {
+    easeOut: "cubic-bezier(0, 0, 0.2, 1)",
+    easeInOut: "cubic-bezier(0.4, 0, 0.2, 1)"
+  } as const
 } as const;
 
 export const confidenceTiers: Record<

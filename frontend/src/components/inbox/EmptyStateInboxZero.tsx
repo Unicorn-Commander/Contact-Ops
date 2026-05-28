@@ -56,7 +56,7 @@ export function EmptyStateInboxZero({
   if (!stats) {
     return (
       <section className="mx-auto max-w-md rounded-md border border-border bg-card px-co-24 py-co-32 text-center text-13 text-muted-foreground shadow-[var(--shadow-1)]">
-        <h2 className="mb-co-8 text-18 font-semibold text-foreground">Inbox is clear.</h2>
+        <h2 className="mb-co-8 text-18 font-semibold text-foreground">Review is clear.</h2>
         <p>Stats loading...</p>
       </section>
     );

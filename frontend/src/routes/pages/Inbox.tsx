@@ -1,5 +1,5 @@
 /**
- * /inbox - the Phase 3.3b approval inbox cockpit.
+ * /review - the Phase 3.3b Review Queue cockpit.
  *
  * Layout (desktop >=1024px):
  *   Header: stats, filter chips, FocusMode
@@ -10,7 +10,7 @@
  * left snoozes; long-press opens detail; T4/dedup/bulk blocked with
  * "send link to desktop" toast.
  *
- * Keyboard (active when /inbox is the route): J/K nav · E expand
+ * Keyboard (active when /review is the route): J/K nav · E expand
  * detail · Y approve · N reject · H snooze · M mute · D dismiss · Esc
  * clear, Cmd+A select all, Cmd+K command palette, Cmd+. focus mode, Cmd+Z undo.
  */
@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
 import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertTriangle, Bell, ExternalLink, Monitor } from "lucide-react";
+import { AlertTriangle, Bell, ExternalLink, ListChecks, Monitor } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -650,6 +650,13 @@ function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals,
 
   return (
     <header className="flex flex-wrap items-center gap-co-12 border-b border-border bg-background/95 px-co-16 py-co-8 shadow-[var(--shadow-1)]">
+      <span className="inline-flex items-center gap-co-8">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[oklch(var(--co-rose-500)/0.14)] text-[oklch(var(--co-rose-500))]">
+          <ListChecks className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+        </span>
+        <h1 className="text-14 font-semibold tracking-tight text-foreground">Review Queue</h1>
+      </span>
+      <span aria-hidden className="hidden h-5 w-px bg-border sm:block" />
       <span className="inline-flex flex-wrap items-center gap-co-6 text-13 text-muted-foreground">
         <MonoNumeric tone="muted">{totals.today}</MonoNumeric>
         <span>today</span>
@@ -713,7 +720,7 @@ function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
     { id: "resolved", label: "Recently Resolved", count: 0 },
   ];
   return (
-    <nav className="co-scrollbar h-full overflow-y-auto border-r border-border bg-card/85 p-co-8" aria-label="Inbox sections">
+    <nav className="co-scrollbar h-full overflow-y-auto border-r border-border bg-card/85 p-co-8" aria-label="Review Queue sections">
       <ul className="space-y-co-4">
         {items.map((it) => (
           <li key={it.id}>

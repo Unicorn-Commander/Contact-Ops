@@ -1,6 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Moon, Sun } from "lucide-react";
+import { BookUser, ListChecks, Moon, Sparkles, Sun } from "lucide-react";
 import { ActionAttribution } from "@/design-system/ActionAttribution";
+import { ShellPreview } from "@/design-system/ShellPreview";
+import { ScreensPreview } from "@/design-system/ScreensPreview";
+import { CommandPalettePreview } from "@/design-system/CommandPalettePreview";
+import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
 import { DensityControl, DensityProvider } from "@/design-system/Density";
@@ -77,7 +81,7 @@ function PrimitiveGallery({ theme }: { theme: ThemeMode }) {
           <ActionAttribution actor={{ type: "human", name: "Aaron Stransky", label: "Aaron" }} verb="Reverted" timestamp={now - 9000} compact />
         </StateBlock>
         <StateBlock title="Keyboard Hint">
-          <KeyboardHint keys="mod+K" label="Command menu" />
+          <KeyboardHint keys="mod+K" label="Command command" />
           <KeyboardHint keys="Y" label="Approve" />
           <KeyboardHint keys={["shift", "J"]} label="Jump" />
           <KeyboardHint keys="esc" label="Close" />
@@ -106,6 +110,172 @@ function PrimitiveGallery({ theme }: { theme: ThemeMode }) {
   );
 }
 
+function GradientGallery({ theme }: { theme: ThemeMode }) {
+  return (
+    <div data-theme={theme} className="rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold capitalize">{theme} mode</h2>
+        <p className="text-xs text-muted-foreground">Brand gradients, surface washes, and elevated header treatments.</p>
+      </div>
+
+      <div className="space-y-3">
+        <StateBlock title="Brand Gradient (purple → fuchsia)">
+          <div className="h-10 w-full rounded-md bg-gradient-brand" />
+        </StateBlock>
+
+        <StateBlock title="Logo Mark">
+          <span className="bg-gradient-brand co-glow-brand flex h-9 w-9 items-center justify-center rounded-xl text-primary-foreground">
+            <Sparkles className="h-4 w-4" />
+          </span>
+        </StateBlock>
+
+        <StateBlock title="Gradient Button">
+          <Button variant="gradient" size="sm">
+            <Sparkles className="h-3.5 w-3.5" />
+            Primary Action
+          </Button>
+        </StateBlock>
+
+        <StateBlock title="Gradient Text">
+          <span className="text-lg font-semibold bg-gradient-brand-text">Contact-Ops</span>
+        </StateBlock>
+
+        <StateBlock title="Surfaces (flat, cool neutral)">
+          <Swatch label="background" className="bg-background" />
+          <Swatch label="card" className="bg-card" />
+          <Swatch label="muted" className="bg-muted" />
+          <Swatch label="primary" className="bg-primary" />
+          <Swatch label="fuchsia" className="bg-[oklch(var(--accent-fuchsia))]" />
+        </StateBlock>
+      </div>
+    </div>
+  );
+}
+
+function LivingDataGallery({ theme }: { theme: ThemeMode }) {
+  return (
+    <div data-theme={theme} className="rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold capitalize">{theme} mode</h2>
+        <p className="text-xs text-muted-foreground">Living data: agent vs human, confidence tiers, and item status.</p>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        <StateBlock title="Agent Indicator">
+          <span className="co-agent-indicator inline-flex h-6 w-6 items-center justify-center rounded-md border">
+            <ListChecks className="h-3 w-3 text-[oklch(var(--co-agent-color))]" />
+          </span>
+          <AgentBadge slug="dedupe-agent" />
+        </StateBlock>
+
+        <StateBlock title="Human Indicator">
+          <span className="co-human-indicator inline-flex h-6 w-6 items-center justify-center rounded-full border">
+            <span className="text-[9px] font-semibold">AS</span>
+          </span>
+          <HumanBadge name="Aaron Stransky" />
+        </StateBlock>
+
+        <StateBlock title="Confidence Tiers">
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-emerald-500))]" />
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-sky-500))]" />
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-amber-500))]" />
+          <span className="inline-flex h-2 w-2 rounded-full bg-[oklch(var(--co-rose-500))]" />
+        </StateBlock>
+
+        <StateBlock title="Item Status">
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-proposed">Proposed</span>
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-applied">Applied</span>
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-rejected">Rejected</span>
+          <span className="rounded px-2 py-0.5 text-[10px] font-medium co-status-snoozed">Snoozed</span>
+        </StateBlock>
+      </div>
+    </div>
+  );
+}
+
+function MotionGallery({ theme }: { theme: ThemeMode }) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => setVisible((v) => !v), 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div data-theme={theme} className="rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold capitalize">{theme} mode</h2>
+        <p className="text-xs text-muted-foreground">Micro-interactions: fade-in, slide-up, pulse, shimmer.</p>
+      </div>
+
+      <div className="space-y-3">
+        <StateBlock title="Fade In">
+          <div className="flex items-center gap-2">
+            {visible && (
+              <span className="co-animate-fade-in inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs">
+                <ListChecks className="h-3 w-3" />
+                Fade in
+              </span>
+            )}
+          </div>
+        </StateBlock>
+
+        <StateBlock title="Slide Up">
+          <div className="flex items-center gap-2">
+            {visible && (
+              <span className="co-animate-slide-up inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs">
+                <ListChecks className="h-3 w-3" />
+                Slide up
+              </span>
+            )}
+          </div>
+        </StateBlock>
+
+        <StateBlock title="Pulse Subtle">
+          <span className="co-animate-pulse-subtle inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs">
+            <ListChecks className="h-3 w-3" />
+            Pulse
+          </span>
+        </StateBlock>
+
+        <StateBlock title="Shimmer">
+          <div className="h-8 w-48 rounded-md co-shimmer" />
+        </StateBlock>
+      </div>
+    </div>
+  );
+}
+
+/** Auth-free twin of the AuthGate login screen (routes/index.tsx). */
+function LoginPreview({ theme }: { theme: ThemeMode }) {
+  return (
+    <div
+      data-theme={theme}
+      className="flex min-h-[560px] items-center justify-center rounded-[var(--radius-lg)] border border-border bg-background p-4 text-foreground shadow-[var(--shadow-2)]"
+    >
+      <div className="w-full max-w-md">
+        <Card className="border-border">
+          <CardContent className="px-8 py-10 text-center">
+            <div className="bg-gradient-brand co-glow-brand mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
+              <BookUser className="h-7 w-7" strokeWidth={1.6} />
+            </div>
+            <h1 className="bg-gradient-brand-text text-3xl font-bold tracking-tight">Contact-Ops</h1>
+            <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
+              The canonical identity hub. Sign in with Magic Unicorn to manage people, organizations, and the agents
+              that keep them clean.
+            </p>
+            <Button className="mt-8 h-11 w-full" variant="gradient">
+              Sign in
+            </Button>
+            <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
+          </CardContent>
+        </Card>
+        <p className="mt-4 text-center text-xs text-muted-foreground">by Magic Unicorn</p>
+      </div>
+    </div>
+  );
+}
+
 export function DesignSystemShowcase() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const requested = new URLSearchParams(window.location.search).get("theme");
@@ -113,7 +283,8 @@ export function DesignSystemShowcase() {
   });
   const [activeTab, setActiveTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
-    return requested === "inbox" || requested === "graph" ? requested : "primitives";
+    const valid = ["shell", "login", "primitives", "gradients", "living-data", "motion", "inbox", "graph"] as const;
+    return valid.includes(requested as typeof valid[number]) ? (requested as string) : "shell";
   });
 
   useEffect(() => {
@@ -151,15 +322,84 @@ export function DesignSystemShowcase() {
           </header>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-            <TabsList>
+            <TabsList className="flex h-auto flex-wrap">
+              <TabsTrigger value="shell">Shell + Dashboard</TabsTrigger>
+              <TabsTrigger value="screens">Screens</TabsTrigger>
+              <TabsTrigger value="cmdk">⌘K Palette</TabsTrigger>
+              <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
-              <TabsTrigger value="inbox">Inbox Stress</TabsTrigger>
+              <TabsTrigger value="gradients">Gradients</TabsTrigger>
+              <TabsTrigger value="living-data">Living Data</TabsTrigger>
+              <TabsTrigger value="motion">Motion</TabsTrigger>
+              <TabsTrigger value="inbox">Review Queue</TabsTrigger>
               <TabsTrigger value="graph">Graph Labels</TabsTrigger>
             </TabsList>
+            <TabsContent value="shell" className="space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Command center — dark</h2>
+                <ShellPreview theme="dark" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Command center — light</h2>
+                <ShellPreview theme="light" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Mobile (375px, sidebar collapsed)</h2>
+                <div className="mx-auto w-[375px] max-w-full">
+                  <ShellPreview theme="dark" compact />
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="screens" className="space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Inner screens — dark</h2>
+                <ScreensPreview theme="dark" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold">Inner screens — light</h2>
+                <ScreensPreview theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="cmdk" className="space-y-6">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <div className="space-y-2">
+                  <h2 className="text-base font-semibold">Command palette — dark</h2>
+                  <CommandPalettePreview theme="dark" mode="search" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-base font-semibold">Command palette — light</h2>
+                  <CommandPalettePreview theme="light" mode="search" />
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="login" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <LoginPreview theme="dark" />
+                <LoginPreview theme="light" />
+              </div>
+            </TabsContent>
             <TabsContent value="primitives" className="space-y-4">
               <div className="grid gap-4 2xl:grid-cols-2">
                 <PrimitiveGallery theme="dark" />
                 <PrimitiveGallery theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="gradients" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <GradientGallery theme="dark" />
+                <GradientGallery theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="living-data" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <LivingDataGallery theme="dark" />
+                <LivingDataGallery theme="light" />
+              </div>
+            </TabsContent>
+            <TabsContent value="motion" className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <MotionGallery theme="dark" />
+                <MotionGallery theme="light" />
               </div>
             </TabsContent>
             <TabsContent value="inbox">

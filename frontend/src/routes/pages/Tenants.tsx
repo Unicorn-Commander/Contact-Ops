@@ -1,11 +1,12 @@
-import { Building2, Plus, Save, Shield, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { Building2, Plus, Save, Shield, ShieldCheck, Users } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { useMcpMutation, useTenants } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { cn } from "@/lib/utils";
@@ -35,18 +36,28 @@ function KindChip({ kind }: { kind?: string }) {
   );
 }
 
-function AddTenantDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (next: boolean) => void }) {
+function AddTenantDialog({
+  open,
+  onOpenChange,
+  hideTrigger = false
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  hideTrigger?: boolean;
+}) {
   const create = useMcpMutation(tools.createTenant);
   const [name, setName] = useState("");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4" strokeWidth={1.6} />
-          Add tenant
-        </Button>
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          <Button>
+            <Plus className="h-4 w-4" strokeWidth={1.6} />
+            Add tenant
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add tenant</DialogTitle>
@@ -82,13 +93,19 @@ function AddTenantDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
 export function TenantsRoute() {
   const tenants = useTenants();
   const [open, setOpen] = useState(false);
-  const items = tenants.data?.items ?? [];
+  const items = useMemo(() => tenants.data?.items ?? [], [tenants.data]);
+
+  const totalMembers = useMemo(() => items.reduce((sum, t) => sum + (t.member_count ?? 0), 0), [items]);
+  const hipaaCount = useMemo(() => items.filter((t) => t.hipaa_mode).length, [items]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2.5">
+            <span className="inline-flex h-6 items-center rounded-full border border-primary/30 bg-primary/10 px-2 text-[11px] font-semibold uppercase tracking-wider text-primary">
+              Admin
+            </span>
             <h1 className="text-2xl font-semibold tracking-tight">Tenants</h1>
             {!tenants.isLoading && tenants.data ? (
               <span className="co-mono-numeric rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
@@ -98,8 +115,33 @@ export function TenantsRoute() {
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Manage tenant membership, branding, retention, and HIPAA flags.</p>
         </div>
-        <AddTenantDialog open={open} onOpenChange={setOpen} />
+        <Button variant="gradient" className="h-9" onClick={() => setOpen(true)}>
+          <Plus className="h-4 w-4" strokeWidth={1.8} />
+          Add tenant
+        </Button>
+        <AddTenantDialog open={open} onOpenChange={setOpen} hideTrigger />
       </div>
+
+      {/* Overview stat strip */}
+      {tenants.isLoading ? (
+        <StatStrip>
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+          <StatTileSkeleton />
+        </StatStrip>
+      ) : items.length ? (
+        <StatStrip>
+          <StatTile label="Tenants" value={items.length} icon={Building2} tone="sky" />
+          <StatTile label="Members" value={totalMembers} icon={Users} tone="emerald" hint="across all workspaces" />
+          <StatTile
+            label="HIPAA tenants"
+            value={hipaaCount}
+            icon={ShieldCheck}
+            tone="amber"
+            hint={hipaaCount === 1 ? "compliance-gated" : "compliance-gated"}
+          />
+        </StatStrip>
+      ) : null}
 
       {tenants.isLoading ? (
         <div className="grid gap-4 lg:grid-cols-2">

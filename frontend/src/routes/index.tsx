@@ -4,7 +4,7 @@ import { useAuth } from "react-oidc-context";
 import { BookUser, Compass } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/design-system/Spinner";
 import { ActionEventRow } from "@/components/domain/Lists";
@@ -80,24 +80,25 @@ function AuthGate() {
   if (!auth.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md text-center shadow-co3">
-          <CardHeader className="items-center space-y-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/12 text-primary">
-              <BookUser className="h-7 w-7" strokeWidth={1.5} />
-            </div>
-            <div className="space-y-1.5">
-              <CardTitle className="text-xl">Contact-Ops</CardTitle>
-              <CardDescription>
-                Sign in with Magic Unicorn Keycloak to manage people, organizations, tenants, tags, and audit history.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full" onClick={() => void auth.signinRedirect()}>
-              Sign in
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="co-animate-fade-in w-full max-w-md">
+          <Card className="border-border">
+            <CardContent className="px-8 py-10 text-center">
+              <div className="bg-gradient-brand co-glow-brand mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
+                <BookUser className="h-7 w-7" strokeWidth={1.6} />
+              </div>
+              <h1 className="bg-gradient-brand-text text-3xl font-bold tracking-tight">Contact-Ops</h1>
+              <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
+                The canonical identity hub. Sign in with Magic Unicorn to manage people, organizations, and the
+                agents that keep them clean.
+              </p>
+              <Button className="mt-8 h-11 w-full" variant="gradient" onClick={() => void auth.signinRedirect()}>
+                Sign in
+              </Button>
+              <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
+            </CardContent>
+          </Card>
+          <p className="mt-4 text-center text-xs text-muted-foreground">by Magic Unicorn</p>
+        </div>
       </div>
     );
   }
@@ -153,7 +154,14 @@ const personGraphRoute = createRoute({ getParentRoute: () => appRoute, path: "/p
 const orgsRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs", component: OrgsRoute });
 const orgRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs/$id", component: OrgDetailRoute });
 const tagsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tags", component: TagsRoute });
-const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox", component: LazyInboxRoute });
+const reviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/review", component: LazyInboxRoute });
+const inboxRedirectRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/inbox",
+  beforeLoad: () => {
+    throw { replace: true, to: "/review" };
+  }
+});
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
@@ -180,7 +188,7 @@ function CallbackRoute() {
 
 export const routeTree = rootRoute.addChildren([
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, inboxRoute, tenantsRoute, settingsRoute, graphRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute]),
   callbackRoute
 ]);
 
