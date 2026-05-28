@@ -147,11 +147,11 @@ function InboxCockpit() {
 
   // Flatten pages
   const allProposalsRaw: Proposal[] = useMemo(
-    () => list.data?.pages.flatMap((p) => p.proposals) ?? [],
+    () => list.data?.pages.flatMap((p) => p.proposals ?? []) ?? [],
     [list.data],
   );
   const allClustersRaw = useMemo(
-    () => list.data?.pages.flatMap((p) => p.clusters) ?? [],
+    () => list.data?.pages.flatMap((p) => p.clusters ?? []) ?? [],
     [list.data],
   );
 
