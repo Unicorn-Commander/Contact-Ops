@@ -113,6 +113,7 @@ async def _handle_approve_proposal(
     try:
         result = await approve_proposal(
             db=ctx.audit_db,
+            app_db=ctx.db,
             tenant_id=ctx.tenant_id,
             reviewer_id=_reviewer_id(ctx),
             proposal_id=payload.proposal_id,

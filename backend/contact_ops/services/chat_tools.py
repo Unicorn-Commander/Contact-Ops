@@ -31,6 +31,9 @@ CURATED_MCP_TOOLS: tuple[str, ...] = (
     "list_notes",
     "append_note",
     "propose_vcard_records",
+    "list_connectors",
+    "pull_connector_now",
+    "list_connector_runs",
 )
 
 AI_CONTACTS_ANALYST_AGENT_SLUG = "ai-contacts-analyst"
