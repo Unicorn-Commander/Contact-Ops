@@ -50,7 +50,7 @@ export function GraphRoute() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-[1.25rem] font-semibold leading-7">Graph</h1>
+              <h1 className="text-xl font-semibold leading-7 tracking-tight">Graph</h1>
               {renderMode === "2d" ? <Badge variant="secondary">2D</Badge> : null}
               {renderMode === "auto" ? <Badge variant="outline">Auto</Badge> : null}
             </div>
