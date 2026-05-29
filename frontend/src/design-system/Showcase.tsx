@@ -8,6 +8,7 @@ import { AIAnalystPreview } from "@/design-system/AIAnalystPreview";
 import { NotesPreview } from "@/design-system/NotesPreview";
 import { ImportPreview } from "@/design-system/ImportPreview";
 import { ConnectorsPreview } from "@/design-system/ConnectorsPreview";
+import { HelpConnectorsPreview } from "@/design-system/HelpConnectorsPreview";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
@@ -334,6 +335,7 @@ export function DesignSystemShowcase() {
               <TabsTrigger value="notes">Notes & Log</TabsTrigger>
               <TabsTrigger value="import">Import</TabsTrigger>
               <TabsTrigger value="connectors">Connectors</TabsTrigger>
+              <TabsTrigger value="connectors-help">Connector Help</TabsTrigger>
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
               <TabsTrigger value="gradients">Gradients</TabsTrigger>
@@ -388,6 +390,9 @@ export function DesignSystemShowcase() {
             </TabsContent>
             <TabsContent value="connectors">
               <ConnectorsPreview />
+            </TabsContent>
+            <TabsContent value="connectors-help">
+              <HelpConnectorsPreview />
             </TabsContent>
             <TabsContent value="notes">
               <NotesPreview />
