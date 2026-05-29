@@ -17,11 +17,34 @@
  * Contact-Ops canon: card surface, brand purple primary, semantic accents.
  */
 import { type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, PlugZap, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, HelpCircle, PlugZap, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { ConnectorRunSummary, ConnectorStatus } from "@/lib/types";
+import type { ConnectorProvider, ConnectorRunSummary, ConnectorStatus } from "@/lib/types";
+
+/**
+ * Auth-shape hints — surfaced beneath the provider name in the Not configured
+ * state so the user knows whether to brace for an app-specific password vs.
+ * a sign-in popup before clicking Connect. Copy is intentionally tiny and
+ * verb-led; the deep walkthrough lives on /help/connectors.
+ */
+export const PROVIDER_AUTH_HINT: Record<ConnectorProvider, string> = {
+  icloud: "Apple ID + an app-specific password",
+  m365: "Sign in with Microsoft (read-only contacts)",
+  gmail: "Sign in with Google (read-only contacts)"
+};
+
+/**
+ * Subtle context line — same audience as PROVIDER_AUTH_HINT but placed in
+ * the action area on the per-card slot in Connectors.tsx. iCloud reuses the
+ * modal disclosure (so we return null); OAuth providers get a single muted
+ * sentence so the popup isn't a surprise.
+ */
+export const PROVIDER_ACTION_HINT: Partial<Record<ConnectorProvider, string>> = {
+  m365: "Opens Microsoft sign-in in a popup. You'll grant Contact-Ops read-only access to your contacts.",
+  gmail: "Opens Google sign-in in a popup. You'll grant Contact-Ops read-only access to your contacts."
+};
 
 // ---- Status tone map -------------------------------------------------------
 
@@ -181,6 +204,19 @@ export interface ProviderCardProps {
   actions: ReactNode;
   /** Extra slot above the actions (e.g. a "Run with Preview only" toggle/menu). */
   toolbar?: ReactNode;
+  /**
+   * Provider key — when set together with `status === "not_configured"`, the
+   * card renders the auth-shape hint beneath the name and a "Learn more" link
+   * to the per-provider help-page anchor. Optional so the card stays purely
+   * presentational for callers that don't need the hint.
+   */
+  provider?: ConnectorProvider;
+  /**
+   * Optional sub-text rendered above the action row in the Not configured
+   * state — used by the page to surface the OAuth-popup explanation. Kept
+   * deliberately small + muted so it never competes with the primary CTA.
+   */
+  actionHint?: string | null;
 }
 
 export function ProviderCard({
@@ -194,7 +230,9 @@ export function ProviderCard({
   accent = "brand",
   isPulling,
   actions,
-  toolbar
+  toolbar,
+  provider,
+  actionHint
 }: ProviderCardProps) {
   // The status-coloured rail lives outside the card body so it's flush.
   const railClass: Record<ProviderCardStatus, string> = {
@@ -238,6 +276,11 @@ export function ProviderCard({
             </span>
             <div className="min-w-0">
               <h3 className="text-base font-semibold leading-tight tracking-tight">{name}</h3>
+              {status === "not_configured" && provider ? (
+                <p className="mt-0.5 text-[11px] font-medium text-foreground/80">
+                  {PROVIDER_AUTH_HINT[provider]}
+                </p>
+              ) : null}
               <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
             </div>
           </div>
@@ -255,10 +298,30 @@ export function ProviderCard({
             />
           ) : null}
           {status === "not_configured" ? (
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <PlugZap className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-              Not connected yet
-            </p>
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <PlugZap className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
+                Not connected yet
+              </p>
+              {actionHint ? (
+                <p className="text-[11px] leading-snug text-muted-foreground">{actionHint}</p>
+              ) : null}
+              {provider ? (
+                <p className="flex items-center gap-1 text-[11px]">
+                  <HelpCircle
+                    className="h-3 w-3 text-muted-foreground"
+                    strokeWidth={1.8}
+                    aria-hidden="true"
+                  />
+                  <a
+                    href={`/help/connectors#${provider}`}
+                    className="text-link underline-offset-2 hover:underline focus-ring rounded-sm"
+                  >
+                    Learn more
+                  </a>
+                </p>
+              ) : null}
+            </div>
           ) : null}
           {status === "disconnected" ? (
             <p className="text-xs text-muted-foreground">

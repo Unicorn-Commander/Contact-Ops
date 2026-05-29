@@ -318,6 +318,21 @@ function formatRelativeShort(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+// Auth-shape hint + per-card action hint mirror PROVIDER_AUTH_HINT /
+// PROVIDER_ACTION_HINT in ProviderCard.tsx so the preview matches the
+// real component byte-for-byte.
+const AUTH_HINT: Record<ConnectorProvider, string> = {
+  icloud: "Apple ID + an app-specific password",
+  m365: "Sign in with Microsoft (read-only contacts)",
+  gmail: "Sign in with Google (read-only contacts)"
+};
+const ACTION_HINT: Partial<Record<ConnectorProvider, string>> = {
+  m365:
+    "Opens Microsoft sign-in in a popup. You'll grant Contact-Ops read-only access to your contacts.",
+  gmail:
+    "Opens Google sign-in in a popup. You'll grant Contact-Ops read-only access to your contacts."
+};
+
 function MockProviderCard({
   def,
   connector,
@@ -423,6 +438,11 @@ function MockProviderCard({
             </span>
             <div className="min-w-0">
               <h3 className="text-base font-semibold leading-tight tracking-tight">{def.name}</h3>
+              {status === "not_configured" ? (
+                <p className="mt-0.5 text-[11px] font-medium text-foreground/80">
+                  {AUTH_HINT[def.provider]}
+                </p>
+              ) : null}
               <p className="mt-0.5 text-xs text-muted-foreground">{def.description}</p>
             </div>
           </div>
@@ -470,10 +490,21 @@ function MockProviderCard({
           ) : null}
 
           {status === "not_configured" ? (
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Plug className="h-3.5 w-3.5" strokeWidth={1.8} />
-              Not connected yet
-            </p>
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Plug className="h-3.5 w-3.5" strokeWidth={1.8} />
+                Not connected yet
+              </p>
+              {ACTION_HINT[def.provider] ? (
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  {ACTION_HINT[def.provider]}
+                </p>
+              ) : null}
+              <p className="flex items-center gap-1 text-[11px]">
+                <span className="inline-block h-3 w-3 rounded-full border border-muted-foreground/40" aria-hidden="true" />
+                <span className="text-link underline-offset-2">Learn more</span>
+              </p>
+            </div>
           ) : null}
         </div>
 
