@@ -43,7 +43,10 @@ class ConnectorRecord(BaseModel):
 
 
 class ListConnectorsOutput(BaseModel):
-    connectors: list[ConnectorRecord]
+    # NOTE: field names match the ListResult<T> convention used elsewhere in the
+    # codebase (frontend hooks expect `items` + `count`). Don't rename.
+    items: list[ConnectorRecord]
+    count: int
 
 
 class ConfigureICloudConnectorInput(BaseModel):
@@ -96,7 +99,9 @@ class ConnectorRunRecord(BaseModel):
 
 
 class ListConnectorRunsOutput(BaseModel):
-    runs: list[ConnectorRunRecord]
+    # Same convention as ListConnectorsOutput — see note above.
+    items: list[ConnectorRunRecord]
+    count: int
 
 
 class DisconnectConnectorInput(BaseModel):
@@ -124,21 +129,23 @@ async def list_connectors(ctx: MCPContext, _req: BaseModel) -> ListConnectorsOut
         ),
         {"tenant_id": str(ctx.tenant_id)},
     )
+    records = [
+        ConnectorRecord(
+            id=uuid.UUID(str(row["id"])),
+            provider=row["provider"],
+            display_name=row["display_name"],
+            configured_by=row["configured_by"],
+            status=row["status"],
+            last_error=row["last_error"],
+            configured_at=row["configured_at"].isoformat(),
+            last_pull_at=row["last_pull_at"].isoformat() if row["last_pull_at"] else None,
+            last_pull_summary=row["last_pull_summary"],
+        )
+        for row in rows.mappings()
+    ]
     return ListConnectorsOutput(
-        connectors=[
-            ConnectorRecord(
-                id=uuid.UUID(str(row["id"])),
-                provider=row["provider"],
-                display_name=row["display_name"],
-                configured_by=row["configured_by"],
-                status=row["status"],
-                last_error=row["last_error"],
-                configured_at=row["configured_at"].isoformat(),
-                last_pull_at=row["last_pull_at"].isoformat() if row["last_pull_at"] else None,
-                last_pull_summary=row["last_pull_summary"],
-            )
-            for row in rows.mappings()
-        ]
+        items=records,
+        count=len(records),
     )
 
 
@@ -269,9 +276,8 @@ async def list_connector_runs(
             """
         )
     rows = await ctx.db.execute(query, params)
-    return ListConnectorRunsOutput(
-        runs=[
-            ConnectorRunRecord(
+    records = [
+        ConnectorRunRecord(
                 id=uuid.UUID(str(row["id"])),
                 connector_id=uuid.UUID(str(row["connector_id"])),
                 started_at=row["started_at"].isoformat(),
@@ -284,9 +290,9 @@ async def list_connector_runs(
                 error_message=row["error_message"],
                 triggered_by=row["triggered_by"],
             )
-            for row in rows.mappings()
-        ]
-    )
+        for row in rows.mappings()
+    ]
+    return ListConnectorRunsOutput(items=records, count=len(records))
 
 
 async def disconnect_connector(
