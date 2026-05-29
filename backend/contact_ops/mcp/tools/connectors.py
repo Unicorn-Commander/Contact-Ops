@@ -42,6 +42,13 @@ class ConnectorRecord(BaseModel):
     last_pull_summary: dict[str, Any] | None = None
 
 
+class ListConnectorsInput(BaseModel):
+    # No args today, but Pydantic 2 refuses to validate against bare BaseModel
+    # ("BaseModel cannot be instantiated directly") so the tool registry needs
+    # a concrete empty subclass here.
+    pass
+
+
 class ListConnectorsOutput(BaseModel):
     # NOTE: field names match the ListResult<T> convention used elsewhere in the
     # codebase (frontend hooks expect `items` + `count`). Don't rename.
@@ -114,7 +121,7 @@ class DisconnectConnectorOutput(BaseModel):
     status: str
 
 
-async def list_connectors(ctx: MCPContext, _req: BaseModel) -> ListConnectorsOutput:
+async def list_connectors(ctx: MCPContext, _req: ListConnectorsInput) -> ListConnectorsOutput:
     require_role(ctx, "CLIENT")
     require_scopes(ctx, ("connectors:read",))
     rows = await ctx.db.execute(
@@ -374,7 +381,7 @@ _TOOL_SPECS: tuple[
 ] = (
     (
         "list_connectors",
-        BaseModel,
+        ListConnectorsInput,
         ListConnectorsOutput,
         list_connectors,
         "CLIENT",
