@@ -33,7 +33,7 @@ export function GraphRoute() {
 
   useEffect(() => {
     if (!selectedNodeId) return;
-    if (!graph.data?.nodes.some((node) => node.id === selectedNodeId)) {
+    if (!graph.data?.nodes?.some((node) => node.id === selectedNodeId)) {
       setSelectedNodeId(null);
     }
   }, [graph.data, selectedNodeId]);

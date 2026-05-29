@@ -203,5 +203,7 @@ export function useDisconnectConnector() {
 
 /** Any of the rows in `running`? Used to drive `enabledPoll`. */
 export function hasInflightRun(runs?: ListResult<ConnectorRun>): boolean {
-  return Boolean(runs?.items.some((row) => row.status === "running"));
+  // Guard both levels: runs may be undefined (query not yet resolved) AND
+  // runs.items may be undefined (server returned an unexpected envelope).
+  return Boolean(runs?.items?.some((row) => row.status === "running"));
 }
