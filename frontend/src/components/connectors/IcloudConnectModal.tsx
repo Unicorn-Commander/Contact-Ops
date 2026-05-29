@@ -19,7 +19,16 @@
  *     and resets any local form state on subsequent opens.
  */
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { AlertCircle, Cloud, Eye, EyeOff, ExternalLink, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Cloud,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  HelpCircle,
+  KeyRound,
+  Loader2
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -49,6 +58,110 @@ export interface IcloudConnectModalProps {
 }
 
 const APPLE_HELP_URL = "https://appleid.apple.com/account/manage";
+const HELP_PAGE_URL = "/help/connectors#icloud";
+
+// ---- App-Specific Password disclosure --------------------------------------
+//
+// Native <details>/<summary> gives us free keyboard support and a built-in
+// aria-expanded — we just style the chrome away. The 7-step list mirrors the
+// canonical Apple flow exactly; copy lives here so the help page can pull
+// the same text without drift.
+function AppPasswordDisclosure() {
+  return (
+    <details
+      className={cn(
+        // Reduced-motion safe: only a max-height transition on the inner
+        // content; the <details> open/close itself is instantaneous in CSS.
+        "co-disclosure group rounded-md border border-border bg-background/40 text-xs"
+      )}
+    >
+      <summary
+        className={cn(
+          "focus-ring flex cursor-pointer list-none items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-foreground",
+          "hover:bg-muted/60"
+        )}
+      >
+        <KeyRound
+          className="h-3.5 w-3.5 text-[oklch(var(--co-sky-500))]"
+          strokeWidth={1.8}
+          aria-hidden="true"
+        />
+        <span className="flex-1">How do I get an app-specific password?</span>
+        <span
+          aria-hidden="true"
+          className="text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none"
+        >
+          ›
+        </span>
+      </summary>
+      <div className="space-y-3 border-t border-border px-3 py-3 leading-snug text-muted-foreground">
+        <div className="flex items-start gap-2 rounded-md border border-[oklch(var(--co-amber-500)/0.35)] bg-[oklch(var(--co-amber-500)/0.08)] px-2.5 py-2 text-[11px] leading-snug text-foreground">
+          <AlertCircle
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[oklch(var(--co-amber-500))]"
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+          <span>
+            Apple requires two-factor authentication enabled on your Apple ID before you can
+            generate an app-specific password. If 2FA isn't enabled, the App-Specific Passwords
+            menu won't appear on your account page.
+          </span>
+        </div>
+        <ol className="list-decimal space-y-1.5 pl-4 text-[11px] leading-snug marker:text-muted-foreground">
+          <li>
+            Open{" "}
+            <a
+              href={APPLE_HELP_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-link underline-offset-2 hover:underline focus-ring rounded-sm"
+            >
+              account.apple.com
+              <ExternalLink
+                className="ml-0.5 inline-block h-2.5 w-2.5"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            </a>
+            .
+          </li>
+          <li>Sign in with the Apple ID whose contacts you want to pull.</li>
+          <li>
+            Open <span className="font-medium text-foreground">Sign-In and Security</span> →{" "}
+            <span className="font-medium text-foreground">App-Specific Passwords</span>.
+          </li>
+          <li>
+            Click <span className="font-medium text-foreground">+ Generate an app-specific
+            password</span>.
+          </li>
+          <li>
+            Label it <span className="font-mono text-foreground">Contact-Ops</span> (or whatever
+            you'll recognize).
+          </li>
+          <li>
+            Apple will show a 16-character password formatted as{" "}
+            <span className="font-mono text-foreground">xxxx-xxxx-xxxx-xxxx</span>.{" "}
+            <span className="font-medium text-foreground">Copy it now</span> — same as
+            Contact-Ops's own passwords, Apple only shows this once.
+          </li>
+          <li>Paste it into the field below.</li>
+        </ol>
+        <p className="text-[11px] leading-snug">
+          The dashes are visual; pasting the password with or without dashes both work.
+        </p>
+        <p className="flex items-center gap-1 text-[11px]">
+          <HelpCircle className="h-3 w-3" strokeWidth={1.8} aria-hidden="true" />
+          <a
+            href={HELP_PAGE_URL}
+            className="text-link underline-offset-2 hover:underline focus-ring rounded-sm"
+          >
+            Open the full walkthrough &amp; troubleshooting
+          </a>
+        </p>
+      </div>
+    </details>
+  );
+}
 
 // Tolerant: Apple emails come in a few flavours and corporate Managed Apple IDs
 // have arbitrary suffixes. We only enforce the @-shape and let the backend say
@@ -227,6 +340,8 @@ export function IcloudConnectModal({
               </p>
             )}
           </div>
+
+          <AppPasswordDisclosure />
 
           <div className="space-y-1.5">
             <label htmlFor={displayNameId} className="text-xs font-medium text-foreground">

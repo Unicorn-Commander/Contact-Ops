@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+  AlertCircle,
   Cable,
   Cloud,
   CheckCircle2,
@@ -54,11 +55,13 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import {
+  PROVIDER_ACTION_HINT,
   ProviderCard,
   type ProviderCardStatus
 } from "@/components/connectors/ProviderCard";
 import { IcloudConnectModal } from "@/components/connectors/IcloudConnectModal";
 import { RunsTable } from "@/components/connectors/RunsTable";
+import { decodeConnectorError } from "@/components/connectors/decodeConnectorError";
 import {
   hasInflightRun,
   useConfigureIcloud,
@@ -242,6 +245,44 @@ function OauthSuccessBanner({
   );
 }
 
+// ---- OAuth error banner ----------------------------------------------------
+
+function OauthErrorBanner({
+  message,
+  onDismiss
+}: {
+  message: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className={cn(
+        "co-animate-slide-up flex items-start gap-3 rounded-xl border border-[oklch(var(--co-rose-500)/0.4)] bg-[oklch(var(--co-rose-500)/0.08)] px-4 py-3 text-sm"
+      )}
+    >
+      <span
+        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[oklch(var(--co-rose-500)/0.18)] text-[oklch(var(--co-rose-500))]"
+        aria-hidden="true"
+      >
+        <AlertCircle className="h-4 w-4" strokeWidth={2} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium leading-snug">Sign-in didn't finish</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{message}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        aria-label="Dismiss"
+      >
+        <X className="h-3.5 w-3.5" strokeWidth={1.8} />
+      </button>
+    </div>
+  );
+}
+
 // ---- Page ------------------------------------------------------------------
 
 export function ConnectorsRoute() {
@@ -260,7 +301,35 @@ export function ConnectorsRoute() {
     return null;
   }, [search]);
 
+  // ---- Read `?error=<CODE>&provider=<provider>` ------------------------
+  // The OAuth callback bounces back here when Microsoft/Google refused the
+  // exchange (state mismatch, user un-ticked Contacts, etc). We decode the
+  // code into actionable copy via decodeConnectorError so the user sees a
+  // sentence rather than a raw machine string.
+  const oauthErrorInfo = useMemo<{ code: string; provider?: ConnectorProvider } | null>(() => {
+    // Prefer the router-provided search object (so the memo re-runs when
+    // TanStack Router updates it), then fall back to the raw window URL.
+    const fromRouter = (search as Record<string, unknown> | undefined) ?? {};
+    const routerCode = typeof fromRouter.error === "string" ? fromRouter.error : null;
+    const routerProvider =
+      typeof fromRouter.provider === "string" ? fromRouter.provider : null;
+    let code = routerCode;
+    let providerRaw = routerProvider;
+    if (!code && typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      code = params.get("error");
+      providerRaw = params.get("provider");
+    }
+    if (!code) return null;
+    const provider: ConnectorProvider | undefined =
+      providerRaw === "icloud" || providerRaw === "m365" || providerRaw === "gmail"
+        ? providerRaw
+        : undefined;
+    return { code, provider };
+  }, [search]);
+
   const [bannerProvider, setBannerProvider] = useState<ConnectorProvider | null>(null);
+  const [oauthErrorMessage, setOauthErrorMessage] = useState<string | null>(null);
 
   // ---- Modals + transient state ---------------------------------------
   const [icloudOpen, setIcloudOpen] = useState(false);
@@ -312,6 +381,23 @@ export function ConnectorsRoute() {
     return () => window.clearTimeout(timer);
   }, [successProvider]);
 
+  // ---- OAuth error banner ↔ URL bookkeeping ----------------------------
+  useEffect(() => {
+    if (!oauthErrorInfo) return;
+    const decoded = decodeConnectorError(
+      { code: oauthErrorInfo.code },
+      { provider: oauthErrorInfo.provider }
+    );
+    setOauthErrorMessage(decoded ?? oauthErrorInfo.code);
+    // Drop the `?error=` + `?provider=` so a refresh doesn't re-surface it.
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("error");
+      url.searchParams.delete("provider");
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    }
+  }, [oauthErrorInfo]);
+
   // ---- Handlers --------------------------------------------------------
   const handleConnectIcloud = useCallback(() => {
     setIcloudError(null);
@@ -326,10 +412,16 @@ export function ConnectorsRoute() {
         setIcloudOpen(false);
       } catch (error) {
         if (error instanceof UnauthorizedError) return;
+        // Decode known codes (e.g. INVALID_CREDENTIALS) into actionable copy;
+        // unknown errors fall through to error.message verbatim so we never
+        // hide a genuine bug behind a generic line.
+        const decoded = decodeConnectorError(
+          error instanceof Error ? error : { message: String(error) },
+          { provider: "icloud" }
+        );
         setIcloudError(
-          error instanceof Error
-            ? error.message
-            : "Couldn't connect iCloud. Re-check the Apple ID and app-specific password."
+          decoded ??
+            "Couldn't connect iCloud. Re-check the Apple ID and app-specific password."
         );
       }
     },
@@ -388,6 +480,13 @@ export function ConnectorsRoute() {
   return (
     <div className="space-y-6">
       <PageHeader />
+
+      {oauthErrorMessage ? (
+        <OauthErrorBanner
+          message={oauthErrorMessage}
+          onDismiss={() => setOauthErrorMessage(null)}
+        />
+      ) : null}
 
       {bannerProvider ? (
         <OauthSuccessBanner
@@ -555,6 +654,8 @@ function EmptyStateGrid({
             }
             status="not_configured"
             accent="neutral"
+            provider={def.provider}
+            actionHint={PROVIDER_ACTION_HINT[def.provider] ?? null}
             actions={
               <Button
                 variant="default"
@@ -610,9 +711,18 @@ function ProviderCardSlot({
       icon={<Icon className={cn("h-5 w-5", iconColorClass)} strokeWidth={1.8} />}
       status={status}
       accent={accent}
+      provider={def.provider}
+      actionHint={
+        status === "not_configured" ? PROVIDER_ACTION_HINT[def.provider] ?? null : null
+      }
       lastPullAt={connector?.last_pull_at ?? null}
       lastPullSummary={connector?.last_pull_summary ?? null}
-      lastError={connector?.last_error ?? null}
+      lastError={
+        connector?.last_error
+          ? decodeConnectorError(connector.last_error, { provider: def.provider }) ??
+            connector.last_error
+          : null
+      }
       isPulling={isPulling}
       actions={
         <ActionRow

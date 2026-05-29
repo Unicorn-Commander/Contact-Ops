@@ -16,6 +16,7 @@ import { TenantsRoute } from "@/routes/pages/Tenants";
 import { SettingsRoute } from "@/routes/pages/Settings";
 import { ImportRoute } from "@/routes/pages/Import";
 import { ConnectorsRoute } from "@/routes/pages/Connectors";
+import { HelpConnectorsRoute } from "@/routes/pages/HelpConnectors";
 
 const GraphRoute = lazy(() =>
   import("@/routes/pages/Graph").then((m) => ({ default: m.GraphRoute }))
@@ -63,6 +64,29 @@ const ImportPreviewRoute = import.meta.env.DEV
 const ConnectorsPreviewRoute = import.meta.env.DEV
   ? lazy(() =>
       import("@/design-system/ConnectorsPreview").then((m) => ({ default: m.ConnectorsPreview }))
+    )
+  : null;
+
+// Connectors-help auth-free preview — mirrors ConnectorsPreviewRoute so the
+// orchestrator can wire the Showcase tab + screenshot harness on the same
+// pattern. Page is light (no graph/canvas) so eager-loading would be fine,
+// but staying lazy keeps parity with the other previews.
+const HelpConnectorsPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/HelpConnectorsPreview").then((m) => ({
+        default: m.HelpConnectorsPreview
+      }))
+    )
+  : null;
+
+// iCloud modal preview — mounts the *real* IcloudConnectModal so the
+// disclosure + decoded error banner are screenshottable without auth. Used
+// by the connectors-help screenshot harness for the modal captures.
+const IcloudModalPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/IcloudModalPreview").then((m) => ({
+        default: m.IcloudModalPreview
+      }))
     )
   : null;
 
@@ -179,6 +203,44 @@ function LazyConnectorsPreviewRoute() {
   );
 }
 
+function LazyHelpConnectorsPreviewRoute() {
+  if (!HelpConnectorsPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <HelpConnectorsPreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
+function LazyIcloudModalPreviewRoute() {
+  if (!IcloudModalPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <IcloudModalPreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
 function AuthGate() {
   const auth = useAuth();
   if (auth.isLoading) {
@@ -278,6 +340,11 @@ const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/sett
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
 const importRoute = createRoute({ getParentRoute: () => appRoute, path: "/import", component: ImportRoute });
 const connectorsRoute = createRoute({ getParentRoute: () => appRoute, path: "/connectors", component: ConnectorsRoute });
+const helpConnectorsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/help/connectors",
+  component: HelpConnectorsRoute
+});
 const designSystemRoute = import.meta.env.DEV
   ? createRoute({
       getParentRoute: () => rootRoute,
@@ -313,6 +380,20 @@ const designSystemConnectorsRoute = import.meta.env.DEV
       component: LazyConnectorsPreviewRoute
     })
   : null;
+const designSystemHelpConnectorsRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/help-connectors",
+      component: LazyHelpConnectorsPreviewRoute
+    })
+  : null;
+const designSystemIcloudModalRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/icloud-modal",
+      component: LazyIcloudModalPreviewRoute
+    })
+  : null;
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
@@ -341,8 +422,10 @@ export const routeTree = rootRoute.addChildren([
   ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
   ...(designSystemImportRoute ? [designSystemImportRoute] : []),
   ...(designSystemConnectorsRoute ? [designSystemConnectorsRoute] : []),
+  ...(designSystemHelpConnectorsRoute ? [designSystemHelpConnectorsRoute] : []),
+  ...(designSystemIcloudModalRoute ? [designSystemIcloudModalRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
   callbackRoute
 ]);
 
