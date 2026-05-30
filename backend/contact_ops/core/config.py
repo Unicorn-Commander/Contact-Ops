@@ -130,9 +130,16 @@ class Settings(BaseSettings):
     DATA_INTEL_CLIENT_ID: str = "contact-ops-publisher"
     DATA_INTEL_TOKEN_EXCHANGE_URL: str = ""
 
-    # Brigade ecosystem registry
-    BRIGADE_REGISTRY_URL: str = "https://brigade.magicunicorn.dev/api/registry/services"
+    # Brigade ecosystem registry (per the federation integration spec the
+    # ecosystem standardizes on brigade.unicorncommander.ai as the gateway).
+    BRIGADE_REGISTRY_URL: str = "https://brigade.unicorncommander.ai/api/registry/services"
     BRIGADE_SERVICE_TOKEN: str = ""
+    # Brigade-JWT verifier inputs (used by the verifier the follow-up Codex
+    # prompt ships). expected_audience MUST match what Brigade signs tokens
+    # with for THIS app; pick a stable string and never change it.
+    BRIGADE_TRUSTED_ISSUER: str = "https://brigade.unicorncommander.ai"
+    BRIGADE_JWKS_URL: str = "https://brigade.unicorncommander.ai/.well-known/jwks.json"
+    BRIGADE_EXPECTED_AUDIENCE: str = "contact-ops"
 
     # Seed data
     SEED_OWNER_USER_ID: str = "00000000-0000-0000-0000-000000000001"

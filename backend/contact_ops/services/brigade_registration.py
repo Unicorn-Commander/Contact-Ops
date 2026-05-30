@@ -21,22 +21,46 @@ def build_brigade_descriptor(settings: Settings | None = None) -> dict[str, Any]
 
     settings = settings or get_settings()
     register_all_tools()
+    # Schema matches brigade.unicorncommander.ai/.well-known/mcps-schema-v1.json
+    # per the federation integration doc Aaron pasted 2026-05-30. Key federation
+    # primitives that go beyond the basic discovery shape:
+    #   - tool_namespace : Brigade prepends "contact." to each tool name in
+    #     unified catalogs (list_people → contact.list_people).
+    #   - federated_auth.expected_audience : Brigade signs JWTs with this aud
+    #     claim; our verifier MUST reject anything else.
+    #   - per-tool tier_required + read_only : let Brigade pre-filter by
+    #     customer tier and decide propose/confirm UX.
     return {
+        "$schema": "https://brigade.unicorncommander.ai/.well-known/mcps-schema-v1.json",
+        "name": "Contact-Ops",
+        "version": settings.APP_VERSION,
         "service_id": "contact-ops",
         "service_name": "Contact-Ops",
         "mcp_endpoint": "https://mcp.contacts.magicunicorn.dev/mcp",
+        "tool_namespace": "contact",
         "auth": {
-            "type": "bearer",
+            "type": "pat",
+            "prefix": "co_pat_",
+            "mint_url": "https://contacts.magicunicorn.dev/settings",
             "issuer": settings.KEYCLOAK_ISSUER or "https://auth.magicunicorn.dev/realms/uchub",
             "audience": settings.KEYCLOAK_AUDIENCE,
-            "pat_format": "co_pat_*",
+            "federated_auth": {
+                "type": "brigade_jwt",
+                "trusted_issuer": settings.BRIGADE_TRUSTED_ISSUER,
+                "jwks_url": settings.BRIGADE_JWKS_URL,
+                "expected_audience": settings.BRIGADE_EXPECTED_AUDIENCE,
+                "signing_algorithm": "ed25519",
+            },
         },
         "tools": [
             {
                 "name": tool.name,
                 "description": tool.description,
                 "input_schema": tool.input_model.model_json_schema(),
-                "scopes": list(tool.required_scopes),
+                "scopes_required": list(tool.required_scopes),
+                "tier_required": "free" if _is_read_only(tool.name) else "pro",
+                "read_only": _is_read_only(tool.name),
+                "expected_latency_ms": 250 if _is_read_only(tool.name) else 800,
             }
             for tool in list_tools()
         ],
@@ -46,8 +70,36 @@ def build_brigade_descriptor(settings: Settings | None = None) -> dict[str, Any]
             {"slug": "confidence-approver", "kind": "background_processor"},
             {"slug": "quality-filter-agent", "kind": "background_processor"},
         ],
+        "resources": [
+            {"uri_template": "people://list", "description": "Overview of all people in the tenant"},
+            {"uri_template": "people://{person_id}", "description": "Single person record"},
+            {"uri_template": "orgs://list", "description": "Overview of all organizations"},
+            {"uri_template": "orgs://{org_id}", "description": "Single organization record"},
+            {"uri_template": "proposals://pending", "description": "Pending Review Queue proposals"},
+        ],
+        "prompts": [
+            {"name": "contact_summary", "description": "Summarize a person's interaction history + relationships"},
+            {"name": "dedup_review", "description": "Audit pending dedup-agent merges before approval"},
+        ],
+        "rate_limits": {
+            "per_user_per_minute": 60,
+            "per_user_per_hour": 1000,
+        },
+        "contact": "REMOVED",
         "updated_at": datetime.now(UTC).isoformat(),
     }
+
+
+# Read-only tool predicate — anything starting with these prefixes is flagged
+# read-only in the manifest. Brigade can use this to pre-filter tools that
+# don't need propose/confirm.
+_READ_ONLY_PREFIXES = (
+    "list_", "get_", "search_", "find_", "describe_", "show_", "preview_",
+)
+
+
+def _is_read_only(tool_name: str) -> bool:
+    return tool_name.startswith(_READ_ONLY_PREFIXES)
 
 
 async def register_with_brigade(settings: Settings | None = None) -> None:

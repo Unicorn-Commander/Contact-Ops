@@ -9,6 +9,8 @@ import { NotesPreview } from "@/design-system/NotesPreview";
 import { ImportPreview } from "@/design-system/ImportPreview";
 import { ConnectorsPreview } from "@/design-system/ConnectorsPreview";
 import { HelpConnectorsPreview } from "@/design-system/HelpConnectorsPreview";
+import { BulkApprovePreview } from "@/design-system/BulkApprovePreview";
+import { PATPreview } from "@/design-system/PATPreview";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentBadge } from "@/design-system/AgentBadge";
 import { ConfidenceIndicator } from "@/design-system/ConfidenceIndicator";
@@ -335,6 +337,8 @@ export function DesignSystemShowcase() {
               <TabsTrigger value="notes">Notes & Log</TabsTrigger>
               <TabsTrigger value="import">Import</TabsTrigger>
               <TabsTrigger value="connectors">Connectors</TabsTrigger>
+              <TabsTrigger value="bulk-approve">Bulk Approve</TabsTrigger>
+              <TabsTrigger value="pats">PATs</TabsTrigger>
               <TabsTrigger value="connectors-help">Connector Help</TabsTrigger>
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="primitives">Primitives</TabsTrigger>
@@ -393,6 +397,12 @@ export function DesignSystemShowcase() {
             </TabsContent>
             <TabsContent value="connectors-help">
               <HelpConnectorsPreview />
+            </TabsContent>
+            <TabsContent value="bulk-approve">
+              <BulkApprovePreview />
+            </TabsContent>
+            <TabsContent value="pats">
+              <PATPreview />
             </TabsContent>
             <TabsContent value="notes">
               <NotesPreview />
