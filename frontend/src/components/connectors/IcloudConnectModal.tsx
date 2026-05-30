@@ -211,18 +211,46 @@ export function IcloudConnectModal({
     password.replace(/-/g, "").length >= PASSWORD_MIN_CHARS &&
     fieldFilled(displayName);
 
+  // Temp diagnostic — surface what the modal actually sees on a Save click.
+  // Mask the password value, only the length matters. Remove once we close
+  // out the "Save does nothing" report.
+  const debugSnapshot = () => ({
+    canSubmit,
+    isSubmitting,
+    appleId_value: appleId,
+    appleId_trimmed: appleId.trim(),
+    appleId_regex_match: APPLE_ID_RE.test(appleId.trim()),
+    password_length_raw: password.length,
+    password_length_no_dashes: password.replace(/-/g, "").length,
+    displayName_value: displayName,
+    displayName_filled: fieldFilled(displayName)
+  });
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    console.log("[iCloud Connect] Save clicked. State:", debugSnapshot());
     if (!canSubmit) {
       setTouched({ appleId: true, password: true });
+      console.warn("[iCloud Connect] canSubmit=false → request NOT sent. Reasons above.");
       return;
     }
+    console.log("[iCloud Connect] canSubmit=true → calling onSubmit() now…");
     void onSubmit({
       apple_id: appleId.trim(),
       app_password: password,
       display_name: displayName.trim() || "iCloud"
     });
   };
+
+  // Inline "Save disabled because…" hint so it's obvious without DevTools.
+  const disabledReasons: string[] = [];
+  if (!APPLE_ID_RE.test(appleId.trim())) disabledReasons.push("Apple ID isn't a valid email shape");
+  if (password.replace(/-/g, "").length < PASSWORD_MIN_CHARS) {
+    const got = password.replace(/-/g, "").length;
+    disabledReasons.push(`App-specific password needs 16 characters (after dashes); got ${got}`);
+  }
+  if (!fieldFilled(displayName)) disabledReasons.push("Display name can't be empty");
+  if (isSubmitting) disabledReasons.push("A previous Save is still in flight");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -370,6 +398,20 @@ export function IcloudConnectModal({
                 aria-hidden="true"
               />
               <span className="min-w-0">{errorMessage}</span>
+            </div>
+          ) : null}
+
+          {/* Diagnostic: when Save is disabled, show why inline so the user
+              never sees a silent no-op. Temporary — remove once Aaron has a
+              working iCloud connector path. */}
+          {!canSubmit && disabledReasons.length > 0 ? (
+            <div className="rounded-md border border-[oklch(var(--co-amber-500)/0.4)] bg-[oklch(var(--co-amber-500)/0.08)] px-3 py-2 text-[11.5px] text-foreground">
+              <p className="mb-1 font-medium">Save is disabled because:</p>
+              <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                {disabledReasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
 
