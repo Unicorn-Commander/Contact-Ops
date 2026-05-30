@@ -144,7 +144,7 @@ async def _finish_run(
             SET completed_at = now(), status = :status,
                 parsed_count = :parsed, proposed_count = :proposed,
                 deduped_count = :deduped, skipped_count = :skipped,
-                error_message = :error_message
+                error_message = CAST(:error_message AS text)
             WHERE id = CAST(:run_id AS uuid)
               AND tenant_id = CAST(:tenant_id AS uuid)
             """
@@ -166,8 +166,8 @@ async def _finish_run(
             UPDATE connector_configs
             SET last_pull_at = now(),
                 last_pull_summary = CAST(:summary AS jsonb),
-                last_error = :error_message,
-                status = CASE WHEN :error_message IS NULL THEN 'configured' ELSE 'error' END
+                last_error = CAST(:error_message AS text),
+                status = CASE WHEN CAST(:error_message AS text) IS NULL THEN 'configured' ELSE 'error' END
             WHERE id = CAST(:connector_id AS uuid)
               AND tenant_id = CAST(:tenant_id AS uuid)
             """
