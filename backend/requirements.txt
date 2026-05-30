@@ -1309,6 +1309,10 @@ python-dotenv==1.2.2 \
     # via
     #   pydantic-settings
     #   uvicorn
+pyjwt[crypto]==2.10.1 \
+    --hash=sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb \  # trufflehog:ignore
+    --hash=sha256:3cc5772eb20009233caf06e9d8a0577824723b44e6648ee0a2aedb6cf9381953
+    # via -r requirements.in
 python-jose[cryptography]==3.5.0 \
     --hash=sha256:abd1202f23d34dfad2c3d28cb8617b90acf34132c7afd60abd0b0b7d3cb55771 \  # trufflehog:ignore
     --hash=sha256:fb4eaa44dbeb1c26dcc69e4bd7ec54a1cb8dd64d3b4d81ef08d90ff453f2b01b

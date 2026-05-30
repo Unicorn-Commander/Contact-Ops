@@ -52,7 +52,7 @@ sentence-transformers~=3.2
 jellyfish~=1.1
 rapidfuzz~=3.10
 usaddress~=0.5
-pyarrow~=18
+pyarrow~=18.0
 
 # Phase 3.1 Dedup Agent tie-breaker: LiteLLM gateway client (Aaron's
 # `project_llm_routing` — agent calls flow through commander's LiteLLM).
