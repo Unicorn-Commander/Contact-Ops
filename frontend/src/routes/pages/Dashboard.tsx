@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboard, useRecentEvents, useToolsList } from "@/hooks/useMcp";
 import { useApproveMutation, useInboxList, useRejectMutation, type InboxFilters } from "@/hooks/useInbox";
+import { useConnectors } from "@/hooks/useConnectors";
 import { AuditList } from "@/routes";
 import { cn } from "@/lib/utils";
 import {
@@ -177,6 +178,12 @@ export function DashboardRoute() {
     return ids.size;
   }, [proposals.data]);
 
+  // Hooks must run unconditionally before any early-return branch — react-hooks
+  // rules-of-hooks. Move connector lookup above the loading-skeleton return.
+  const connectors = useConnectors();
+  const connectorRows = connectors.data?.items ?? [];
+  const configuredConnectors = connectorRows.filter((c) => c.status === "configured");
+
   if (dashboard.isLoading) {
     return <DashboardSkeleton />;
   }
@@ -187,8 +194,16 @@ export function DashboardRoute() {
   const eventItems = events.data?.items ?? [];
   const pending = pendingCount ?? 0;
 
-  // True empty tenant → guided onboarding instead of a void dashboard.
-  const isEmptyTenant = peopleCount === 0 && orgCount === 0;
+  // Truly fresh tenant means NO connectors configured AND no work in flight.
+  // Just because peopleCount is 0 doesn't mean we should nag — they may have
+  // 800 proposals waiting in /review or 3 connectors configured that haven't
+  // landed approvals yet. Don't show the "go set things up" onboarding when
+  // setup is clearly already done.
+  const isEmptyTenant =
+    peopleCount === 0 &&
+    orgCount === 0 &&
+    pending === 0 &&
+    configuredConnectors.length === 0;
 
   // AI "at a glance" — built only from signals the registry actually exposes.
   // Likely-duplicates / stale records require backend metrics we don't have on
@@ -439,16 +454,52 @@ export function DashboardRoute() {
               <DataHealth coverage={[]} />
 
               <Card>
-                <CardHeader>
+                <CardHeader className="flex-row items-center justify-between space-y-0">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Plug className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
                     Sync &amp; integrations
                   </CardTitle>
+                  {configuredConnectors.length > 0 ? (
+                    <Button asChild variant="ghost" size="sm" className="text-link">
+                      <Link to="/connectors">Manage</Link>
+                    </Button>
+                  ) : null}
                 </CardHeader>
                 <CardContent className="divide-y divide-border py-0">
-                  <StatusRow label="MCP surface" detail={toolCount ? `${toolCount} tools` : "Unavailable"} ok={toolCount > 0} />
-                  <StatusRow label="CardDAV sync" detail="Connected" ok />
-                  <StatusRow label="Agent pipeline" detail={pending ? `${pending} pending` : "Idle"} ok />
+                  <StatusRow
+                    label="MCP surface"
+                    detail={toolCount ? `${toolCount} tools` : "Unavailable"}
+                    ok={toolCount > 0}
+                  />
+                  {/* Real connector state, not a hardcoded "CardDAV: Connected"
+                      banner. Reflects what /connectors actually shows so the
+                      dashboard never lies about setup. */}
+                  {configuredConnectors.length > 0 ? (
+                    <StatusRow
+                      label="Contact sources"
+                      detail={
+                        configuredConnectors
+                          .map((c) =>
+                            c.provider === "icloud"
+                              ? "iCloud"
+                              : c.provider === "m365"
+                                ? "Microsoft 365"
+                                : c.provider === "gmail"
+                                  ? "Gmail"
+                                  : c.provider
+                          )
+                          .join(" · ")
+                      }
+                      ok
+                    />
+                  ) : (
+                    <StatusRow label="Contact sources" detail="None connected" ok={false} />
+                  )}
+                  <StatusRow
+                    label="Agent pipeline"
+                    detail={pending ? `${pending.toLocaleString()} proposals queued` : "Idle"}
+                    ok
+                  />
                 </CardContent>
               </Card>
 
