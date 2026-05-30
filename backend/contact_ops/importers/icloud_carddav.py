@@ -11,6 +11,9 @@ from contact_ops.importers.nextcloud_carddav import _chunks, _extract_address_da
 from contact_ops.importers.vcard import record_from_vcard_text
 
 DEFAULT_ICLOUD_URL = "https://contacts.icloud.com/"
+# RFC 6764 service discovery — Apple returns 404 on PROPFIND to the bare root
+# but 301s from .well-known/carddav to the user's shard (p0X-contacts.icloud.com).
+DEFAULT_ICLOUD_DISCOVERY_URL = "https://contacts.icloud.com/.well-known/carddav"
 
 
 class ICloudCardDAVImporter(Importer):
@@ -34,8 +37,16 @@ class ICloudCardDAVImporter(Importer):
     async def records(self) -> list[CanonicalImportRecord]:
         if not self.apple_id or not self.app_password:
             raise RuntimeError("ICLOUD_APPLE_ID and ICLOUD_APP_PASSWORD are required")
-        async with httpx.AsyncClient(auth=(self.apple_id, self.app_password), timeout=30) as client:
-            addressbooks = await _discover_addressbooks(client, self.url)
+        # follow_redirects=True is required: iCloud CardDAV discovery starts at
+        # contacts.icloud.com and 301s (even on PROPFIND) to a shard URL before
+        # serving the address-book response. Without follow_redirects=True,
+        # httpx returns the 301 directly and PROPFIND never reaches the shard.
+        async with httpx.AsyncClient(
+            auth=(self.apple_id, self.app_password),
+            timeout=30,
+            follow_redirects=True,
+        ) as client:
+            addressbooks = await _discover_addressbooks(client, DEFAULT_ICLOUD_DISCOVERY_URL)
             records: list[CanonicalImportRecord] = []
             for addressbook_url in addressbooks:
                 hrefs = await _list_vcard_hrefs(client, addressbook_url)
