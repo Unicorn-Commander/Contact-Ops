@@ -33,7 +33,7 @@ async def emit_person_create_proposal(
             """
             SELECT event_id
             FROM action_event
-            WHERE tenant_id = :tenant_id
+            WHERE tenant_id = CAST(:tenant_id AS uuid)
               AND idempotency_key = :idempotency_key
             LIMIT 1
             """
@@ -73,7 +73,7 @@ async def emit_person_create_proposal(
                 decision_payload = CAST(:decision_payload AS jsonb),
                 reversibility_class = 'reversible',
                 triggered_by = :triggered_by
-            WHERE event_id = :event_id
+            WHERE event_id = CAST(:event_id AS uuid)
             """
         ),
         {
