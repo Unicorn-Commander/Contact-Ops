@@ -104,6 +104,7 @@ class EventStatus(str, enum.Enum):
     rejected = "rejected"
     reverted = "reverted"
     superseded = "superseded"
+    resolved = "resolved"
 
 
 class SourceType(str, enum.Enum):

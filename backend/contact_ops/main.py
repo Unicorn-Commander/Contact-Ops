@@ -11,6 +11,7 @@ request). Routers run after all three.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -25,11 +26,13 @@ from contact_ops.agents.observability.otel import init_otel
 from contact_ops.api.chat import router as chat_router
 from contact_ops.api.connectors import router as connectors_router
 from contact_ops.api.import_vcard import router as import_vcard_router
+from contact_ops.api.well_known import router as well_known_router
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
 from contact_ops.middleware import AuditMiddleware, JWTValidationMiddleware
 from contact_ops.routers import health_router
+from contact_ops.services.brigade_registration import register_with_brigade
 
 # Configure structured logging (JSON for prod-ready ingestion via Loki/Promtail)
 structlog.configure(
@@ -72,6 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is
     # missing (e.g. dev without OTel installed).
     init_otel(service_name=f"{settings.APP_NAME.lower()}-api")
+    asyncio.create_task(register_with_brigade(settings))
 
     yield
 
@@ -122,6 +126,7 @@ def create_application() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(connectors_router)
     app.include_router(import_vcard_router)
+    app.include_router(well_known_router)
     app.include_router(mcp_router)
     # CardDAV runs its own HTTP Basic auth (per-device app passwords).
     # The JWT middleware skips /carddav and /.well-known/carddav via

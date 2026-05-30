@@ -126,6 +126,33 @@ export type CardDavPassword = {
   last_used_at?: string | null;
 };
 
+// ---- Personal Access Tokens (matches Codex PAT backend) ----
+//
+// PATs let an external MCP client (Claude Code, Cline, Cursor, etc.) connect
+// to mcp.contacts.magicunicorn.dev as the issuing user. The plaintext token
+// (`co_pat_<48 chars>`) is shown exactly once on issuance — every subsequent
+// list response carries only the last_4 suffix.
+
+/** Row shape returned by `list_personal_access_tokens` — no plaintext, ever. */
+export type PersonalAccessToken = {
+  id: UUID;
+  display_name: string;
+  /** Last four characters of the plaintext, safe to render for identification. */
+  last_4: string;
+  /** Subset of the issuing user's scopes; empty array = inherits all. */
+  scopes: string[];
+  /** ISO 8601. Null = never expires. */
+  expires_at: string | null;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+/** Returned only by `issue_personal_access_token` — includes plaintext once. */
+export type PersonalAccessTokenIssued = PersonalAccessToken & {
+  /** Full bearer token, e.g. `co_pat_…48`. Show once, then drop. */
+  plaintext_token: string;
+};
+
 // ---- Notes / Log (Settings + future profile-page surface) ----
 // Matches the backend MCP `list_notes` / `append_note` shape on `feat-notes-backend`.
 

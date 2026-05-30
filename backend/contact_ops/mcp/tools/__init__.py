@@ -10,6 +10,7 @@ from contact_ops.mcp.tools.relationships import register_relationship_tools
 
 _OPTIONAL_TOOL_MODULES = (
     "addresses",
+    "agent_pipeline",
     "carddav_passwords",
     "connectors",
     "emails",
@@ -20,6 +21,7 @@ _OPTIONAL_TOOL_MODULES = (
     "notes",
     "orgs",
     "phones",
+    "personal_access_tokens",
     "tags",
 )
 

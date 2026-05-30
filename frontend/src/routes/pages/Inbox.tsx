@@ -32,6 +32,15 @@ import { Button } from "@/components/ui/button";
 import { ClusterCard } from "@/components/inbox/ClusterCard";
 import { FocusModeToggle } from "@/components/inbox/FocusModeToggle";
 import { BulkActionBar } from "@/components/inbox/BulkActionBar";
+import { BulkApproveBar } from "@/components/inbox/BulkApproveBar";
+import {
+  EMPTY_QUALITY_FILTER,
+  QualityFilterChips,
+  proposalMatchesQualityFilter,
+  qualityFilterIsEmpty,
+  type ConnectorProviderFilter,
+  type QualityFilterState
+} from "@/components/inbox/QualityFilterChips";
 import { CommandPalette } from "@/components/inbox/CommandPalette";
 import { EmptyStateInboxZero } from "@/components/inbox/EmptyStateInboxZero";
 import { EvidencePanel } from "@/components/inbox/EvidencePanel";
@@ -76,6 +85,43 @@ type View = "needs-review" | "snoozed" | "resolved";
 
 const PANE_DEFAULTS = { nav: "18%", list: "42%", detail: "40%" };
 
+// ---- URL <-> QualityFilterState (shareable approve-all links) ----
+
+const VALID_PROVIDERS: ConnectorProviderFilter[] = ["gmail", "m365", "icloud"];
+
+function readQualityFilterFromUrl(params: URLSearchParams): QualityFilterState {
+  const confRaw = params.get("confMin");
+  let confMin: QualityFilterState["confMin"] = null;
+  if (confRaw === "0.95") confMin = 0.95;
+  else if (confRaw === "0.90" || confRaw === "0.9") confMin = 0.9;
+  else if (confRaw === "0.80" || confRaw === "0.8") confMin = 0.8;
+
+  const providerRaw = (params.get("provider") ?? "").split(",").filter(Boolean);
+  const providers = providerRaw.filter((p): p is ConnectorProviderFilter =>
+    (VALID_PROVIDERS as string[]).includes(p)
+  );
+
+  return {
+    confMin,
+    hasEmail: params.get("hasEmail") === "1",
+    hasPhone: params.get("hasPhone") === "1",
+    providers
+  };
+}
+
+function writeQualityFilterToUrl(next: QualityFilterState) {
+  const url = new URL(window.location.href);
+  if (next.confMin != null) url.searchParams.set("confMin", String(next.confMin));
+  else url.searchParams.delete("confMin");
+  if (next.hasEmail) url.searchParams.set("hasEmail", "1");
+  else url.searchParams.delete("hasEmail");
+  if (next.hasPhone) url.searchParams.set("hasPhone", "1");
+  else url.searchParams.delete("hasPhone");
+  if (next.providers.length > 0) url.searchParams.set("provider", next.providers.join(","));
+  else url.searchParams.delete("provider");
+  window.history.replaceState({}, "", url);
+}
+
 export function InboxRoute() {
   return (
     <HotkeysProvider initiallyActiveScopes={[INBOX_HOTKEY_SCOPE]}>
@@ -103,6 +149,13 @@ function InboxCockpit() {
   const [tenantIds, setTenantIds] = useState<string[] | undefined>(undefined);
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [hipaaOnlyFromUrl, setHipaaOnlyFromUrl] = useState(false);
+  const [qualityFilter, setQualityFilter] = useState<QualityFilterState>(EMPTY_QUALITY_FILTER);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    settled: number;
+    total: number;
+    failed: number;
+  } | null>(null);
 
   const focusMode = useFocusMode();
 
@@ -114,6 +167,7 @@ function InboxCockpit() {
     setTenantIds(tenantParam ? [tenantParam] : undefined);
     setAgentFilter(agentParam);
     setHipaaOnlyFromUrl(hipaaParam === "true");
+    setQualityFilter(readQualityFilterFromUrl(params));
   }
 
   // Read URL params on mount
@@ -155,10 +209,19 @@ function InboxCockpit() {
     [list.data],
   );
 
-  const visibleProposals = useMemo(
+  const focusFiltered = useMemo(
     () => applyFocusMode(allProposalsRaw, focusMode.enabled),
     [allProposalsRaw, focusMode.enabled],
   );
+  const visibleProposals = useMemo(
+    () =>
+      qualityFilterIsEmpty(qualityFilter)
+        ? focusFiltered
+        : focusFiltered.filter((p) => proposalMatchesQualityFilter(p, qualityFilter)),
+    [focusFiltered, qualityFilter],
+  );
+  const qualityMatchedCount = visibleProposals.length;
+  const totalAfterFocus = focusFiltered.length;
   const hydrated = useMemo(
     () => hydrateClusters(allClustersRaw, visibleProposals),
     [allClustersRaw, visibleProposals],
@@ -295,6 +358,81 @@ function InboxCockpit() {
     setSelectedIds(new Set(visibleProposals.map((p) => p.proposal_id)));
   }
 
+  // ---- quality filter batch (filter-driven bulk approve) ----
+  //
+  // Runs the existing single-approve / single-reject mutation across every
+  // proposal that matches the quality filter, using Promise.allSettled so
+  // partial failures don't abort the batch. We collapse all the optimistic-
+  // remove churn into a single invalidation at the end.
+  async function runQualityBatch(mode: "approve" | "reject") {
+    const targets = visibleProposals.slice();
+    if (targets.length === 0) return;
+    setBatchBusy(true);
+    setBatchProgress({ settled: 0, total: targets.length, failed: 0 });
+
+    let settled = 0;
+    let failed = 0;
+
+    // Important: don't await each call serially — let them race. We track
+    // settlement through .then/.catch on each call instead of .allSettled so
+    // the progress count ticks live as each settles.
+    const promises = targets.map((p) => {
+      const tier = selectTier(p, { tenantAutoApprove: {} });
+      const safeTier = tier <= 2 ? tier : 1;
+      const work =
+        mode === "approve"
+          ? approve
+              .mutateAsync({
+                proposalId: p.proposal_id,
+                tier: safeTier,
+                typedPhrase: null,
+                keyboardPath: true,
+              })
+              .then(() => undefined)
+          : reject
+              .mutateAsync({
+                proposalId: p.proposal_id,
+                mode: "reject",
+                tier: safeTier,
+                reason: "Bulk reject from quality filter",
+                keyboardPath: true,
+              })
+              .then(() => undefined);
+
+      return work
+        .catch((err: unknown) => {
+          failed += 1;
+          return err;
+        })
+        .finally(() => {
+          settled += 1;
+          setBatchProgress({ settled, total: targets.length, failed });
+        });
+    });
+
+    await Promise.allSettled(promises);
+
+    const verbed = mode === "approve" ? "Approved" : "Rejected";
+    const applied = targets.length - failed;
+    const suffix =
+      failed > 0
+        ? `${applied} ${mode === "approve" ? "approved" : "rejected"} (${failed} failed — see Recent activity).`
+        : `${applied} ${mode === "approve" ? "proposals" : "proposals rejected"}.`;
+    if (failed > 0) {
+      toast.warning(`${verbed} ${suffix}`);
+    } else {
+      toast.success(`${verbed} ${suffix}`);
+    }
+
+    // Single refetch — invalidate the inbox query family so the list updates
+    // after the batch completes.
+    void list.refetch();
+
+    setBatchBusy(false);
+    // Keep the final settled-count visible for a moment so users can confirm.
+    window.setTimeout(() => setBatchProgress(null), 2000);
+  }
+
   // ---- keyboard ----
   useInboxShortcuts({
     j: () => focusDelta(1),
@@ -428,6 +566,25 @@ function InboxCockpit() {
         onToggleConflicts={() => setConflictsOnly((v) => !v)}
       />
 
+      <QualityFilterChips
+        value={qualityFilter}
+        matchedCount={qualityMatchedCount}
+        totalCount={totalAfterFocus}
+        onChange={(next) => {
+          setQualityFilter(next);
+          writeQualityFilterToUrl(next);
+        }}
+      />
+
+      <BulkApproveBar
+        visible={!qualityFilterIsEmpty(qualityFilter)}
+        matchedCount={qualityMatchedCount}
+        busy={batchBusy}
+        progress={batchProgress}
+        onApproveAll={() => runQualityBatch("approve")}
+        onRejectAll={() => runQualityBatch("reject")}
+      />
+
       {/* Desktop 3-pane */}
       <div className="hidden flex-1 overflow-hidden lg:flex">
         <ResizablePanelGroup orientation="horizontal">
@@ -456,22 +613,28 @@ function InboxCockpit() {
               onLoadMore={() => list.fetchNextPage()}
               emptyState={
                 visibleProposals.length === 0 && !list.isPending ? (
-                  <EmptyStateInboxZero
-                    coldStart={allProposalsRaw.length === 0}
-                    stats={{
-                      today: 0,
-                      approved: 0,
-                      rejected: 0,
-                      snoozed: 0,
-                      topAgentToday: null,
-                      bestCalibratedAgent: null,
-                      bestCalibratedRate: null,
-                      nextBatchEtaMinutes: null,
-                    }}
-                    onReviewSnoozed={() => setView("snoozed")}
-                    onOpenAgentReport={() => navigate({ to: "/settings" })}
-                    onOpenAutoApproveSettings={() => navigate({ to: "/settings" })}
-                  />
+                  !qualityFilterIsEmpty(qualityFilter) && focusFiltered.length > 0 ? (
+                    <p className="px-co-12 py-co-8 text-13 text-muted-foreground">
+                      No proposals match these filters.
+                    </p>
+                  ) : (
+                    <EmptyStateInboxZero
+                      coldStart={allProposalsRaw.length === 0}
+                      stats={{
+                        today: 0,
+                        approved: 0,
+                        rejected: 0,
+                        snoozed: 0,
+                        topAgentToday: null,
+                        bestCalibratedAgent: null,
+                        bestCalibratedRate: null,
+                        nextBatchEtaMinutes: null,
+                      }}
+                      onReviewSnoozed={() => setView("snoozed")}
+                      onOpenAgentReport={() => navigate({ to: "/settings" })}
+                      onOpenAutoApproveSettings={() => navigate({ to: "/settings" })}
+                    />
+                  )
                 ) : null
               }
             />
@@ -522,10 +685,16 @@ function InboxCockpit() {
       {/* Mobile single-pane (≤ lg) */}
       <div className="co-scrollbar flex-1 overflow-y-auto p-co-12 lg:hidden">
         {visibleProposals.length === 0 && !list.isPending ? (
-          <EmptyStateInboxZero
-            coldStart={allProposalsRaw.length === 0}
-            stats={{ today: 0, approved: 0, rejected: 0, snoozed: 0 }}
-          />
+          !qualityFilterIsEmpty(qualityFilter) && focusFiltered.length > 0 ? (
+            <p className="text-13 text-muted-foreground">
+              No proposals match these filters.
+            </p>
+          ) : (
+            <EmptyStateInboxZero
+              coldStart={allProposalsRaw.length === 0}
+              stats={{ today: 0, approved: 0, rejected: 0, snoozed: 0 }}
+            />
+          )
         ) : (
           <MobileList
             clusters={hydrated}
