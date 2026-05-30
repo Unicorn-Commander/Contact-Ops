@@ -9,6 +9,7 @@ from contact_ops.mcp.errors import INSUFFICIENT_ROLE, INSUFFICIENT_SCOPE, ToolEr
 from contact_ops.mcp.registry import MCPContext
 
 ROLE_LADDER = {"CLIENT": 0, "STAFF": 1, "MANAGER": 2, "ADMIN": 3}
+KNOWN_SCOPES = frozenset({"admin:debug"})
 
 
 def get_role(claims: dict[str, Any]) -> str:
