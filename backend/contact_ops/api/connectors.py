@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import text
@@ -21,11 +23,39 @@ router = APIRouter(tags=["Connectors"])
 @router.get("/api/connectors/{provider}/oauth/callback")
 async def connector_oauth_callback(
     provider: str,
-    code: str = Query(...),
-    state: str = Query(...),
+    # OAuth providers may redirect either with a `code` (success) OR with an
+    # `error` (rejection / consent declined / scope refused / etc.) — accept
+    # both as optional and surface the rejection to the user instead of 422.
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    error_description: str | None = Query(default=None),
 ) -> RedirectResponse:
     if provider not in {"m365", "gmail"}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown provider")
+
+    settings = get_settings()
+
+    def _redirect_with_error(msg: str) -> RedirectResponse:
+        # Provider-specific error path: bounce back to /connectors with the
+        # raw message so the frontend's OauthErrorBanner can show it.
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/connectors?error={quote(msg)}&provider={provider}"
+        )
+
+    # Provider rejected the auth — surface what they actually said before
+    # touching state or attempting any token exchange.
+    if error:
+        full = f"{error}: {error_description}" if error_description else error
+        return _redirect_with_error(full)
+
+    # We expect both code + state on the success path; if either is missing
+    # at this point, the provider sent us a malformed callback.
+    if not code or not state:
+        return _redirect_with_error(
+            "missing code or state in OAuth callback — provider redirected without a complete payload"
+        )
+
     try:
         stored = consume_state(provider, state)
         token_payload = (
@@ -34,7 +64,7 @@ async def connector_oauth_callback(
             else await exchange_gmail_code(code, stored.code_verifier)
         )
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return _redirect_with_error(str(exc))
 
     tenant_id = uuid.UUID(stored.tenant_id)
     settings = get_settings()
