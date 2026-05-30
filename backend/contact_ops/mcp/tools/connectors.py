@@ -94,6 +94,11 @@ class ListConnectorRunsInput(BaseModel):
 class ConnectorRunRecord(BaseModel):
     id: uuid.UUID
     connector_id: uuid.UUID
+    # JOIN'd from connector_configs so the frontend RunsTable can show a chip
+    # without a second lookup. Default to None for runs whose config has been
+    # disconnected/deleted (LEFT JOIN result).
+    provider: str | None = None
+    display_name: str | None = None
     started_at: str
     completed_at: str | None = None
     status: str
@@ -260,25 +265,31 @@ async def list_connector_runs(
         params["connector_id"] = str(req.connector_id)
         query = text(
             """
-            SELECT id, connector_id, started_at, completed_at, status,
-                   parsed_count, proposed_count, deduped_count, skipped_count,
-                   error_message, triggered_by
-            FROM connector_runs
-            WHERE tenant_id = CAST(:tenant_id AS uuid)
-              AND connector_id = CAST(:connector_id AS uuid)
-            ORDER BY started_at DESC
+            SELECT r.id, r.connector_id,
+                   c.provider, c.display_name,
+                   r.started_at, r.completed_at, r.status,
+                   r.parsed_count, r.proposed_count, r.deduped_count, r.skipped_count,
+                   r.error_message, r.triggered_by
+            FROM connector_runs r
+            LEFT JOIN connector_configs c ON c.id = r.connector_id
+            WHERE r.tenant_id = CAST(:tenant_id AS uuid)
+              AND r.connector_id = CAST(:connector_id AS uuid)
+            ORDER BY r.started_at DESC
             LIMIT :limit
             """
         )
     else:
         query = text(
             """
-            SELECT id, connector_id, started_at, completed_at, status,
-                   parsed_count, proposed_count, deduped_count, skipped_count,
-                   error_message, triggered_by
-            FROM connector_runs
-            WHERE tenant_id = CAST(:tenant_id AS uuid)
-            ORDER BY started_at DESC
+            SELECT r.id, r.connector_id,
+                   c.provider, c.display_name,
+                   r.started_at, r.completed_at, r.status,
+                   r.parsed_count, r.proposed_count, r.deduped_count, r.skipped_count,
+                   r.error_message, r.triggered_by
+            FROM connector_runs r
+            LEFT JOIN connector_configs c ON c.id = r.connector_id
+            WHERE r.tenant_id = CAST(:tenant_id AS uuid)
+            ORDER BY r.started_at DESC
             LIMIT :limit
             """
         )
@@ -287,6 +298,8 @@ async def list_connector_runs(
         ConnectorRunRecord(
                 id=uuid.UUID(str(row["id"])),
                 connector_id=uuid.UUID(str(row["connector_id"])),
+                provider=row["provider"],
+                display_name=row["display_name"],
                 started_at=row["started_at"].isoformat(),
                 completed_at=row["completed_at"].isoformat() if row["completed_at"] else None,
                 status=row["status"],

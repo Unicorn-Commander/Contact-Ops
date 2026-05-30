@@ -56,8 +56,26 @@ const PROVIDER_CHIPS: Record<ConnectorProvider, ProviderChipSpec> = {
   }
 };
 
-function ProviderChip({ provider, name }: { provider: ConnectorProvider; name?: string }) {
-  const spec = PROVIDER_CHIPS[provider];
+function ProviderChip({
+  provider,
+  name
+}: {
+  // Defensive: backend JOIN can return NULL on a disconnected connector
+  // (LEFT JOIN miss) and historical bundles returned no provider field
+  // at all — render an "unknown" chip instead of crashing.
+  provider: ConnectorProvider | null | undefined;
+  name?: string | null;
+}) {
+  const spec = provider ? PROVIDER_CHIPS[provider] : undefined;
+  if (!spec) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
+        <span className="truncate" title={name ?? "Unknown source"}>
+          {name ?? "Unknown source"}
+        </span>
+      </span>
+    );
+  }
   const Icon = spec.icon;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-2 py-0.5 text-xs">
