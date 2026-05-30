@@ -34,6 +34,13 @@ const DesignSystemRoute = import.meta.env.DEV
   ? lazy(() => import("@/design-system/Showcase").then((m) => ({ default: m.DesignSystemShowcase })))
   : null;
 
+// Design Language v2 showcase — a bolder "near-future" visual direction proposed
+// for owner approval before any real-page refactor. Showcase-only; imports the
+// additive tokens-v2.css and the v2/* components and touches nothing in the app.
+const DesignSystemV2Route = import.meta.env.DEV
+  ? lazy(() => import("@/design-system/ShowcaseV2").then((m) => ({ default: m.ShowcaseV2 })))
+  : null;
+
 // AI Analyst auth-free preview lives on a dedicated sub-route so the
 // screenshot harness can capture it without touching the main Showcase file.
 // The Showcase will pick it up via the orchestrator wiring at integration time.
@@ -145,6 +152,21 @@ function LazyDesignSystemRoute() {
       }
     >
       <DesignSystemRoute />
+    </Suspense>
+  );
+}
+
+function LazyDesignSystemV2Route() {
+  if (!DesignSystemV2Route) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <DesignSystemV2Route />
     </Suspense>
   );
 }
@@ -412,6 +434,13 @@ const designSystemRoute = import.meta.env.DEV
       component: LazyDesignSystemRoute
     })
   : null;
+const designSystemV2Route = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/v2",
+      component: LazyDesignSystemV2Route
+    })
+  : null;
 const designSystemAIAnalystRoute = import.meta.env.DEV
   ? createRoute({
       getParentRoute: () => rootRoute,
@@ -492,6 +521,7 @@ function CallbackRoute() {
 }
 
 export const routeTree = rootRoute.addChildren([
+  ...(designSystemV2Route ? [designSystemV2Route] : []),
   ...(designSystemAIAnalystRoute ? [designSystemAIAnalystRoute] : []),
   ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
   ...(designSystemImportRoute ? [designSystemImportRoute] : []),

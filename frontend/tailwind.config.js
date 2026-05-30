@@ -6,6 +6,7 @@ const content = [
   ...(production
     ? [
         "!./src/design-system/Showcase.tsx",
+        "!./src/design-system/ShowcaseV2.tsx",
         "!./src/design-system/InboxStressTest.tsx",
         "!./src/design-system/GraphLabelStressTest.tsx"
       ]
