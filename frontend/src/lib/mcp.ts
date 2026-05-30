@@ -170,9 +170,62 @@ export async function mcpCall<R>(method: MCPRequest["method"], params: unknown, 
   if (response.status === 401) throw new UnauthorizedError();
   if (!response.ok) throw new MCPError(response.status, `MCP request failed with HTTP ${response.status}`);
 
-  const body = (await response.json()) as MCPResponse<R>;
+  const body = (await response.json()) as MCPResponse<unknown>;
   if (body.error) throw new MCPError(body.error.code, body.error.message);
-  return body.result as R;
+  return unwrapMcpResult<R>(body.result);
+}
+
+/**
+ * Unwrap the MCP `tools/call` envelope.
+ *
+ * Every backend tool wraps its return value as:
+ *   { content: [{type: "text", text: <JSON>}],
+ *     structuredContent: <typed Pydantic dump>,
+ *     isError: boolean }
+ *
+ * - On `isError: true`, throw an MCPError with the human-readable message
+ *   extracted from `content[0].text` (which can itself be JSON-encoded with
+ *   `code` + `message` — try to parse, fall back to the raw text).
+ * - On success, return `structuredContent` as the typed result; if it's
+ *   missing, fall back to parsing `content[0].text`, then to the raw value.
+ *
+ * Non-tools/call responses (e.g. `initialize`, `tools/list`) don't use the
+ * envelope; they pass through unchanged.
+ */
+function unwrapMcpResult<R>(result: unknown): R {
+  if (!result || typeof result !== "object") return result as R;
+  const env = result as { isError?: boolean; content?: Array<{ type?: string; text?: string }>; structuredContent?: unknown };
+
+  if (env.isError === true) {
+    const firstText = Array.isArray(env.content) && env.content[0]?.type === "text" ? env.content[0]!.text ?? "" : "";
+    let code: string | number = "TOOL_ERROR";
+    let message = firstText || "Tool error";
+    try {
+      const parsed = JSON.parse(firstText);
+      if (parsed && typeof parsed === "object") {
+        const p = parsed as { code?: unknown; message?: unknown };
+        if (typeof p.code === "string" || typeof p.code === "number") code = p.code;
+        if (typeof p.message === "string") message = p.message;
+      }
+    } catch {
+      // not JSON; firstText is already the message
+    }
+    throw new MCPError(code, message);
+  }
+
+  if ("structuredContent" in env && env.structuredContent !== undefined) {
+    return env.structuredContent as R;
+  }
+  // Last resort: try to JSON.parse content[0].text
+  const firstText = Array.isArray(env.content) && env.content[0]?.type === "text" ? env.content[0]!.text ?? "" : "";
+  if (firstText) {
+    try {
+      return JSON.parse(firstText) as R;
+    } catch {
+      // Pass through
+    }
+  }
+  return result as R;
 }
 
 export function callTool<R>(name: string, args: Record<string, unknown>, token: string) {
