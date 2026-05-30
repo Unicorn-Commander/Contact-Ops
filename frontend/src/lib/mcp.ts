@@ -13,6 +13,8 @@ import type {
   Organization,
   OrganizationSummary,
   Person,
+  PersonalAccessToken,
+  PersonalAccessTokenIssued,
   PersonSummary,
   Photo,
   ProposalEvidence,
@@ -296,6 +298,30 @@ export const tools = {
   generateCardDavPassword: (args: Record<string, unknown>, token: string) =>
     callTool("generate_carddav_app_password", args, token),
   revokeCardDavPassword: (args: Record<string, unknown>, token: string) => callTool("revoke_carddav_app_password", args, token),
+
+  // ---- Personal Access Tokens (matches Codex PAT backend) ----
+  //
+  // Plaintext is shown exactly once on issue. List/revoke never carry it.
+  issuePat: (
+    args: { display_name: string; scopes?: string[]; expires_in_days?: number | null },
+    token: string
+  ) =>
+    callTool<PersonalAccessTokenIssued>(
+      "issue_personal_access_token",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  listPats: (token: string) =>
+    callTool<ListResult<PersonalAccessToken>>("list_personal_access_tokens", {}, token).catch(() => ({
+      items: [],
+      count: 0
+    })),
+  revokePat: (args: { pat_id: UUID }, token: string) =>
+    callTool<{ ok: true }>(
+      "revoke_personal_access_token",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
 
   // ---- Phase 3.3 inbox tools ----
   listPendingProposals: (args: Record<string, unknown>, token: string) =>

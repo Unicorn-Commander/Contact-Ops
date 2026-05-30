@@ -90,6 +90,28 @@ const IcloudModalPreviewRoute = import.meta.env.DEV
     )
   : null;
 
+// Bulk-approve preview — quality-filter chips + bulk action row rendered with
+// a synthetic 839-proposal corpus so the screenshot harness can capture the
+// surface without a live MCP backend or auth.
+const BulkApprovePreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/BulkApprovePreview").then((m) => ({
+        default: m.BulkApprovePreview
+      }))
+    )
+  : null;
+
+// Personal Access Tokens preview — empty / issued / populated / help expanded
+// scenarios of the Settings PAT card. Network-free presentational mirror of
+// `PersonalAccessTokensSection`.
+const PATPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/PATPreview").then((m) => ({
+        default: m.PATPreview
+      }))
+    )
+  : null;
+
 function LazyInboxRoute() {
   return (
     <Suspense
@@ -235,6 +257,44 @@ function LazyIcloudModalPreviewRoute() {
       <div className="min-h-screen bg-background p-4 lg:p-6">
         <div className="mx-auto max-w-[1500px]">
           <IcloudModalPreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
+function LazyBulkApprovePreviewRoute() {
+  if (!BulkApprovePreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <BulkApprovePreviewRoute />
+        </div>
+      </div>
+    </Suspense>
+  );
+}
+
+function LazyPATPreviewRoute() {
+  if (!PATPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-background p-4 lg:p-6">
+        <div className="mx-auto max-w-[1500px]">
+          <PATPreviewRoute />
         </div>
       </div>
     </Suspense>
@@ -394,6 +454,20 @@ const designSystemIcloudModalRoute = import.meta.env.DEV
       component: LazyIcloudModalPreviewRoute
     })
   : null;
+const designSystemBulkApproveRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/bulk-approve",
+      component: LazyBulkApprovePreviewRoute
+    })
+  : null;
+const designSystemPATsRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/pats",
+      component: LazyPATPreviewRoute
+    })
+  : null;
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
@@ -424,6 +498,8 @@ export const routeTree = rootRoute.addChildren([
   ...(designSystemConnectorsRoute ? [designSystemConnectorsRoute] : []),
   ...(designSystemHelpConnectorsRoute ? [designSystemHelpConnectorsRoute] : []),
   ...(designSystemIcloudModalRoute ? [designSystemIcloudModalRoute] : []),
+  ...(designSystemBulkApproveRoute ? [designSystemBulkApproveRoute] : []),
+  ...(designSystemPATsRoute ? [designSystemPATsRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
   appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
   callbackRoute

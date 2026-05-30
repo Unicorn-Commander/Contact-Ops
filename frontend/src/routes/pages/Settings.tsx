@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotesSection } from "@/components/profile/NotesSection";
+import { PersonalAccessTokensSection } from "@/components/profile/PersonalAccessTokensSection";
 import { useCardDavPasswords, useMcpMutation } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { compactDate, initials } from "@/lib/utils";
@@ -70,7 +71,7 @@ export function SettingsRoute() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Profile, CardDAV app passwords, appearance, and session controls.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Profile, CardDAV app passwords, personal access tokens, appearance, and session controls.</p>
       </div>
 
       {/* Profile */}
@@ -232,6 +233,9 @@ export function SettingsRoute() {
           )}
         </CardContent>
       </Card>
+
+      {/* Personal Access Tokens — paired with CardDAV; both are scoped credentials. */}
+      <PersonalAccessTokensSection />
 
       {/* Session */}
       <Card className="border-destructive/30">
