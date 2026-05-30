@@ -77,7 +77,7 @@ async def _discover_addressbooks(client: httpx.AsyncClient, root_url: str) -> li
     r1 = await client.request("PROPFIND", root_url, content=body1, headers={"Depth": "0"})
     log.warning(
         "icloud_discovery step1 url=%s status=%d body=%s",
-        str(r1.request.url), r1.status_code, r1.text[:600]
+        str(r1.request.url), r1.status_code, repr(r1.text[:600])
     )
     r1.raise_for_status()
     principal_href = _extract_principal(r1.text)
@@ -94,7 +94,7 @@ async def _discover_addressbooks(client: httpx.AsyncClient, root_url: str) -> li
     r2 = await client.request("PROPFIND", principal_url, content=body2, headers={"Depth": "0"})
     log.warning(
         "icloud_discovery step2 url=%s status=%d body=%s",
-        str(r2.request.url), r2.status_code, r2.text[:600]
+        str(r2.request.url), r2.status_code, repr(r2.text[:600])
     )
     r2.raise_for_status()
     home_href = _extract_addressbook_home(r2.text)
@@ -109,7 +109,7 @@ async def _discover_addressbooks(client: httpx.AsyncClient, root_url: str) -> li
     r3 = await client.request("PROPFIND", home_url, content=body3, headers={"Depth": "1"})
     log.warning(
         "icloud_discovery step3 url=%s status=%d body=%s",
-        str(r3.request.url), r3.status_code, r3.text[:800]
+        str(r3.request.url), r3.status_code, repr(r3.text[:800])
     )
     r3.raise_for_status()
     addressbook_hrefs = _extract_addressbook_collections(r3.text)
