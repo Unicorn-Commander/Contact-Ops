@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from contact_ops.core.config import Settings
 from contact_ops.core.database import async_session_maker
+from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
 
@@ -119,6 +120,8 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
                 asyncio.create_task(self._mark_pat_used(pat_id))
         else:
             claims = await self._validate(token)
+            if claims is None:
+                claims = await self._validate_brigade(token)
         if claims is None:
             return _unauthorized("invalid token")
 
@@ -201,6 +204,66 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             return None
 
         return claims
+
+    async def _validate_brigade(self, token: str) -> dict[str, Any] | None:
+        brigade_claims = verify_brigade_jwt(token)
+        if brigade_claims is None:
+            return None
+
+        tenant_id = str(brigade_claims.get("org_id") or "")
+        uc_uid = str(brigade_claims.get("sub") or "")
+        if not tenant_id or not uc_uid:
+            logger.warning(
+                "brigade_identity_missing",
+                has_tenant=bool(tenant_id),
+                has_sub=bool(uc_uid),
+            )
+            return None
+
+        try:
+            async with async_session_maker() as db:
+                row = await db.execute(
+                    text(
+                        """
+                        SELECT id, slug, hipaa_mode
+                        FROM tenants
+                        WHERE id = CAST(:tenant_id AS uuid)
+                          AND deprecated_at IS NULL
+                        """
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+                tenant = row.mappings().first()
+        except Exception as exc:
+            logger.warning(
+                "brigade_identity_lookup_failed",
+                reason="tenant-lookup-failed",
+                error=str(exc),
+            )
+            return None
+
+        if tenant is None:
+            logger.warning("brigade_identity_lookup_failed", reason="tenant-not-found")
+            return None
+
+        scopes = brigade_claims.get("scopes", [])
+        if not isinstance(scopes, list):
+            logger.warning("brigade_identity_lookup_failed", reason="scopes-not-list")
+            return None
+        role = str(brigade_claims.get("role") or _role_from_scopes(scopes)).upper()
+        return {
+            "sub": uc_uid,
+            "uc_uid": uc_uid,
+            "tenant_id": str(tenant["id"]),
+            "tenant_slug": str(tenant["slug"]),
+            "tenant_hipaa": bool(tenant["hipaa_mode"]),
+            "iss": self.settings.BRIGADE_TRUSTED_ISSUER,
+            "aud": self.settings.BRIGADE_EXPECTED_AUDIENCE,
+            "preferred_username": uc_uid,
+            "scope": " ".join(str(scope) for scope in scopes),
+            "realm_access": {"roles": [role]},
+            "brigade_claims": brigade_claims,
+        }
 
     async def _validate_pat(
         self,
@@ -388,6 +451,15 @@ def _root_subject(claims: dict[str, Any]) -> str:
             return str(sub) if sub else ""
         current = act
     return ""
+
+
+def _role_from_scopes(scopes: list[Any]) -> str:
+    normalized = {str(scope) for scope in scopes}
+    if "admin:debug" in normalized or "admin:*" in normalized:
+        return "ADMIN"
+    if any(scope.startswith("write:") for scope in normalized):
+        return "STAFF"
+    return "CLIENT"
 
 
 def _unauthorized(reason: str) -> Response:
