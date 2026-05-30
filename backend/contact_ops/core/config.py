@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     M365_CLIENT_ID: str = ""
     M365_CLIENT_SECRET: str = ""
     M365_REDIRECT_URI: str = ""
+    # Single-tenant apps (sign-in-audience AzureADMyOrg) must use the tenant
+    # GUID in the OAuth URLs; /common is multi-tenant-only after 2018-10-15
+    # (AADSTS50194). Defaults to "common" so multi-tenant apps still work.
+    M365_TENANT_ID: str = "common"
     GMAIL_CLIENT_ID: str = ""
     GMAIL_CLIENT_SECRET: str = ""
     GMAIL_REDIRECT_URI: str = ""
