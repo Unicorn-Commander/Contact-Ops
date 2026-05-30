@@ -57,19 +57,105 @@ class ICloudCardDAVImporter(Importer):
 
 
 async def _discover_addressbooks(client: httpx.AsyncClient, root_url: str) -> list[str]:
-    body = """<?xml version="1.0" encoding="utf-8" ?>
+    """Apple's iCloud CardDAV discovery is a 3-step PROPFIND chain.
+
+    1. PROPFIND root for `current-user-principal` → principal URL
+    2. PROPFIND principal for `addressbook-home-set` → home URL
+    3. PROPFIND home with Depth:1 → individual address-book collections
+
+    The previous one-shot PROPFIND for both properties at the root works for
+    some servers (Nextcloud, Radicale) but iCloud returns the principal alone
+    at the root, so we have to do the full chain. Logging at each step so
+    failures surface in the connector_runs error message.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    # Step 1 — current-user-principal
+    body1 = """<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal /></d:prop></d:propfind>"""
+    r1 = await client.request("PROPFIND", root_url, content=body1, headers={"Depth": "0"})
+    log.warning(
+        "icloud_discovery step1 url=%s status=%d body=%s",
+        str(r1.request.url), r1.status_code, r1.text[:600]
+    )
+    r1.raise_for_status()
+    principal_href = _extract_principal(r1.text)
+    if not principal_href:
+        log.warning("icloud_discovery step1 NO principal found")
+        return [root_url]
+    principal_url = _absolute(str(r1.request.url), principal_href)
+
+    # Step 2 — addressbook-home-set
+    body2 = """<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav">
-  <d:prop><d:current-user-principal /><card:addressbook-home-set /></d:prop>
+  <d:prop><card:addressbook-home-set /></d:prop>
 </d:propfind>"""
-    response = await client.request("PROPFIND", root_url, content=body, headers={"Depth": "0"})
-    response.raise_for_status()
-    hrefs = _extract_hrefs_any(response.text)
-    candidates = [
-        href for href in hrefs if "addressbook" in href.lower() or "contacts" in href.lower()
-    ]
-    if candidates:
-        return [_absolute(root_url, href) for href in candidates]
-    return [root_url]
+    r2 = await client.request("PROPFIND", principal_url, content=body2, headers={"Depth": "0"})
+    log.warning(
+        "icloud_discovery step2 url=%s status=%d body=%s",
+        str(r2.request.url), r2.status_code, r2.text[:600]
+    )
+    r2.raise_for_status()
+    home_href = _extract_addressbook_home(r2.text)
+    if not home_href:
+        log.warning("icloud_discovery step2 NO addressbook-home-set found, falling back to principal_url")
+        return [principal_url]
+    home_url = _absolute(str(r2.request.url), home_href)
+
+    # Step 3 — enumerate address books inside the home
+    body3 = """<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype /><d:displayname /></d:prop></d:propfind>"""
+    r3 = await client.request("PROPFIND", home_url, content=body3, headers={"Depth": "1"})
+    log.warning(
+        "icloud_discovery step3 url=%s status=%d body=%s",
+        str(r3.request.url), r3.status_code, r3.text[:800]
+    )
+    r3.raise_for_status()
+    addressbook_hrefs = _extract_addressbook_collections(r3.text)
+    if not addressbook_hrefs:
+        log.warning("icloud_discovery step3 NO addressbook collections found, returning home_url alone")
+        return [home_url]
+    addressbook_urls = [_absolute(str(r3.request.url), h) for h in addressbook_hrefs]
+    log.warning("icloud_discovery DONE — %d addressbook(s): %s", len(addressbook_urls), addressbook_urls)
+    return addressbook_urls
+
+
+def _extract_principal(xml_text: str) -> str | None:
+    """Return the first <current-user-principal><href>…</href></…> value."""
+    import re
+    m = re.search(
+        r"<[^>]*current-user-principal[^>]*>.*?<[^>]*href[^>]*>([^<]+)</",
+        xml_text, re.DOTALL | re.IGNORECASE,
+    )
+    return m.group(1).strip() if m else None
+
+
+def _extract_addressbook_home(xml_text: str) -> str | None:
+    """Return the first <addressbook-home-set><href>…</href></…> value."""
+    import re
+    m = re.search(
+        r"<[^>]*addressbook-home-set[^>]*>.*?<[^>]*href[^>]*>([^<]+)</",
+        xml_text, re.DOTALL | re.IGNORECASE,
+    )
+    return m.group(1).strip() if m else None
+
+
+def _extract_addressbook_collections(xml_text: str) -> list[str]:
+    """Return href values for <response> blocks whose resourcetype contains <addressbook/>."""
+    import re
+    hrefs: list[str] = []
+    for response_block in re.finditer(
+        r"<[^>]*response[^>]*>(.*?)</[^>]*response[^>]*>",
+        xml_text, re.DOTALL | re.IGNORECASE,
+    ):
+        block = response_block.group(1)
+        if not re.search(r"<[^>]*addressbook[^>]*/?>", block, re.IGNORECASE):
+            continue
+        href_match = re.search(r"<[^>]*href[^>]*>([^<]+)</", block, re.IGNORECASE)
+        if href_match:
+            hrefs.append(href_match.group(1).strip())
+    return hrefs
 
 
 async def _list_vcard_hrefs(client: httpx.AsyncClient, url: str) -> list[str]:
