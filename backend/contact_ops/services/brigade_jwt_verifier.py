@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import httpx
-import jwt
+from jose import jwk, jwt
+from jose.exceptions import (
+    ExpiredSignatureError,
+    JWKError,
+    JWTClaimsError,
+    JWTError,
+)
 import structlog
 
 from contact_ops.core.config import Settings, get_settings
@@ -134,7 +140,7 @@ def _verify_brigade_jwt_with_reason(
 
     try:
         header = jwt.get_unverified_header(token)
-    except jwt.InvalidTokenError as exc:
+    except JWTError as exc:
         return _reject("header-unparseable", error=str(exc))
 
     alg = header.get("alg")
@@ -150,39 +156,56 @@ def _verify_brigade_jwt_with_reason(
         return _reject("kid-not-found", kid=kid)
 
     try:
-        signing_key = jwt.PyJWK.from_dict(key).key
-    except (jwt.InvalidKeyError, ValueError, TypeError) as exc:
+        # python-jose's jwk.construct takes the JWK dict + algorithm; both
+        # EdDSA (ed25519) and RS256 are supported.
+        signing_key = jwk.construct(key, algorithm=alg)
+    except (JWKError, ValueError, TypeError) as exc:
         return _reject("invalid-jwks-key", kid=kid, error=str(exc))
 
     try:
+        # python-jose's decode collapses specific exceptions (Expired*,
+        # Audience*, Issuer*) under ExpiredSignatureError or JWTClaimsError.
+        # We catch each and recover the specific reason from the message
+        # to preserve the granular log signal.
         claims = jwt.decode(
             token,
             signing_key,
             algorithms=ALLOWED_BRIGADE_ALGORITHMS,
             audience=settings.BRIGADE_EXPECTED_AUDIENCE,
             issuer=settings.BRIGADE_TRUSTED_ISSUER,
-            leeway=BRIGADE_CLOCK_SKEW_SECONDS,
             options={
-                "require": ["exp", "nbf", "iat", "iss", "aud"],
+                "require_exp": True,
+                "require_nbf": True,
+                "require_iat": True,
+                "require_iss": True,
+                "require_aud": True,
                 "verify_signature": True,
                 "verify_exp": True,
                 "verify_nbf": True,
                 "verify_iat": True,
                 "verify_aud": True,
                 "verify_iss": True,
+                "leeway": BRIGADE_CLOCK_SKEW_SECONDS,
             },
         )
-    except jwt.ExpiredSignatureError:
+    except ExpiredSignatureError:
         return _reject("expired", kid=kid)
-    except jwt.ImmatureSignatureError:
-        return _reject("not-yet-valid", kid=kid)
-    except jwt.InvalidAudienceError:
-        return _reject("aud-mismatch", kid=kid)
-    except jwt.InvalidIssuerError:
-        return _reject("iss-mismatch", kid=kid)
-    except jwt.InvalidSignatureError:
-        return _reject("signature-invalid", kid=kid)
-    except jwt.InvalidTokenError as exc:
+    except JWTClaimsError as exc:
+        # python-jose wraps audience/issuer/nbf failures here. Split by the
+        # message text so the log signal stays granular.
+        msg = str(exc).lower()
+        if "audience" in msg:
+            return _reject("aud-mismatch", kid=kid)
+        if "issuer" in msg:
+            return _reject("iss-mismatch", kid=kid)
+        if "not yet valid" in msg or "before" in msg:
+            return _reject("not-yet-valid", kid=kid)
+        return _reject("claims-invalid", kid=kid, error=str(exc))
+    except JWTError as exc:
+        # Signature failures + any other JWT-level error land here.
+        msg = str(exc).lower()
+        if "signature" in msg:
+            return _reject("signature-invalid", kid=kid)
         return _reject("invalid-token", kid=kid, error=str(exc))
 
     if claims.get("aud") != settings.BRIGADE_EXPECTED_AUDIENCE:
