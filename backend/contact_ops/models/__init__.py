@@ -49,6 +49,7 @@ class Tenant(Base):
     gdpr_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     data_residency: Mapped[str] = mapped_column(Text, default="us-east")
     data_intel_publish_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_approve_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
     carddav_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     graph_mode: Mapped[str] = mapped_column(Text, default="per_org_graph")
     graph_name: Mapped[str | None] = mapped_column(Text)
@@ -212,6 +213,7 @@ from contact_ops.models.person_alias import PersonAlias
 from contact_ops.models.person_org_role import PersonOrgRole
 from contact_ops.models.person_person_relation import PersonPersonRelation
 from contact_ops.models.person_tenant_membership import PersonTenantMembership
+from contact_ops.models.personal_access_token import PersonalAccessToken
 from contact_ops.models.phone import Phone
 from contact_ops.models.photo import Photo
 from contact_ops.models.prov_activity import ProvActivity
@@ -242,6 +244,7 @@ __all__ = [
     "MergeHistory",
     "OrganizationTenantMembership",
     "PersonTenantMembership",
+    "PersonalAccessToken",
     "Photo",
     "PostalAddress",
     "Identifier",

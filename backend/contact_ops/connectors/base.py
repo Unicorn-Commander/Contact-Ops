@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from abc import ABC, abstractmethod
@@ -13,7 +14,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from contact_ops.core.config import get_settings
+from contact_ops.core.database import async_session_maker
 from contact_ops.importers.base import CanonicalImportRecord
+from contact_ops.services.agents.confidence_approver import run_confidence_approver
+from contact_ops.services.agents.dedup_agent import run_dedup_agent
+from contact_ops.services.agents.quality_filter import run_quality_filter
 from contact_ops.services.proposal_emit import emit_person_create_proposal, import_fingerprint
 
 if TYPE_CHECKING:
@@ -167,7 +172,10 @@ async def _finish_run(
             SET last_pull_at = now(),
                 last_pull_summary = CAST(:summary AS jsonb),
                 last_error = CAST(:error_message AS text),
-                status = CASE WHEN CAST(:error_message AS text) IS NULL THEN 'configured' ELSE 'error' END
+                status = CASE
+                    WHEN CAST(:error_message AS text) IS NULL THEN 'configured'
+                    ELSE 'error'
+                END
             WHERE id = CAST(:connector_id AS uuid)
               AND tenant_id = CAST(:tenant_id AS uuid)
             """
@@ -179,6 +187,27 @@ async def _finish_run(
             "error_message": error_message,
         },
     )
+    if status == "succeeded" and result.proposed_count > 0:
+        asyncio.create_task(_run_post_pull_agent_pipeline(ctx.tenant_id))
+
+
+async def _run_post_pull_agent_pipeline(tenant_id: uuid.UUID) -> None:
+    # Let the request transaction commit before the independent worker session reads proposals.
+    await asyncio.sleep(0.1)
+    settings = get_settings()
+    async with async_session_maker() as db:
+        await db.execute(
+            text("SELECT set_config(:k, :v, true)"),
+            {"k": settings.TENANT_GUC_NAME, "v": str(tenant_id)},
+        )
+        try:
+            await run_dedup_agent(db, tenant_id=tenant_id)
+            await run_quality_filter(db, tenant_id=tenant_id)
+            await run_confidence_approver(db, tenant_id=tenant_id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 def _fernet() -> Fernet:

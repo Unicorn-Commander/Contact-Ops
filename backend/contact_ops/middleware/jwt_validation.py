@@ -13,15 +13,19 @@ upstream of the in-app validation step).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 import structlog
 from fastapi import Request, Response, status
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from contact_ops.core.config import Settings
+from contact_ops.core.database import async_session_maker
 
 logger = structlog.get_logger(__name__)
 
@@ -52,6 +56,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         # is read-only and exposes only ``contactops_agent_*`` series. Network
         # ACLs on the scrape source remain the enforcement boundary.
         "/metrics",
+        "/.well-known/mcps.json",
     })
 
     # Prefix-based bypass. CardDAV runs HTTP Basic auth against per-device
@@ -105,7 +110,15 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if not token:
             return _unauthorized("missing bearer token")
 
-        claims = await self._validate(token)
+        pat_error: str | None = None
+        if token.startswith("co_pat_"):
+            claims, pat_error, pat_id = await self._validate_pat(token)
+            if claims is None:
+                return _unauthorized(pat_error or "invalid personal access token")
+            if pat_id is not None:
+                asyncio.create_task(self._mark_pat_used(pat_id))
+        else:
+            claims = await self._validate(token)
         if claims is None:
             return _unauthorized("invalid token")
 
@@ -127,7 +140,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     async def _validate(self, token: str) -> dict[str, Any] | None:
         try:
             from jose import jwt
-            from jose.exceptions import JWTError, ExpiredSignatureError
+            from jose.exceptions import ExpiredSignatureError, JWTError
         except ImportError:
             logger.error("python-jose not installed; cannot validate JWT")
             return None
@@ -189,6 +202,64 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
 
         return claims
 
+    async def _validate_pat(
+        self,
+        token: str,
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        token_hash = hashlib.sha256(token.encode()).digest()
+        try:
+            async with async_session_maker() as db:
+                row = await db.execute(
+                    text(
+                        """
+                        SELECT id, tenant_id, user_uc_uid, display_name,
+                               scopes, expires_at, revoked_at
+                        FROM lookup_personal_access_token(:token_hash)
+                        """
+                    ),
+                    {"token_hash": token_hash},
+                )
+                data = row.mappings().first()
+                if data is None:
+                    return None, "personal access token not found", None
+                if data["revoked_at"] is not None:
+                    return None, "personal access token revoked", None
+                expires_at = data["expires_at"]
+                if expires_at is not None:
+                    expiry = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
+                    if expiry <= datetime.now(UTC):
+                        return None, "personal access token expired", None
+        except Exception as exc:
+            logger.warning("pat_lookup_failed", error=str(exc))
+            return None, "personal access token lookup failed", None
+
+        scopes = list(data["scopes"] or [])
+        claims: dict[str, Any] = {
+            "sub": str(data["user_uc_uid"]),
+            "uc_uid": str(data["user_uc_uid"]),
+            "tenant_id": str(data["tenant_id"]),
+            "iss": "contact-ops:personal-access-token",
+            "aud": self.settings.KEYCLOAK_AUDIENCE,
+            "preferred_username": str(data["user_uc_uid"]),
+            "scope": " ".join(scopes) if scopes else self._pat_inherited_scope(),
+            "realm_access": {"roles": ["STAFF"]},
+            "act": {"sub": f"pat:{data['id']}"},
+            "pat_id": str(data["id"]),
+            "pat_display_name": str(data["display_name"]),
+        }
+        return claims, None, str(data["id"])
+
+    async def _mark_pat_used(self, pat_id: str) -> None:
+        try:
+            async with async_session_maker() as db:
+                await db.execute(
+                    text("SELECT mark_personal_access_token_used(CAST(:pat_id AS uuid))"),
+                    {"pat_id": pat_id},
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.warning("pat_last_used_update_failed", pat_id=pat_id, error=str(exc))
+
     # ---------- JWKS cache ----------
 
     async def _resolve_key(self, kid: str | None) -> dict[str, Any] | None:
@@ -249,6 +320,36 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             "preferred_username": "standalone-user",
             "uc_uid": self.settings.STANDALONE_USER_ID,
         }
+
+    @staticmethod
+    def _pat_inherited_scope() -> str:
+        return (
+            " ".join(
+                [
+                    "people:read",
+                    "people:write",
+                    "orgs:read",
+                    "orgs:write",
+                    "relationships:read",
+                    "relationships:write",
+                    "inbox:read",
+                    "inbox:write",
+                    "connectors:read",
+                    "connectors:write",
+                    "carddav:read",
+                    "carddav:write",
+                    "carddav:admin",
+                    "contactops:inbox.review",
+                    "dedup:read",
+                    "dedup:propose",
+                    "pat:read",
+                    "pat:write",
+                    "dedup:apply",
+                    "proposal:auto-apply",
+                    "proposal:archive",
+                ]
+            )
+        )
 
 
 # ---------- helpers (module level so they're easy to test) ----------

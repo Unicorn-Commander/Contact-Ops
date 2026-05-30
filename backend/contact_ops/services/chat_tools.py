@@ -34,6 +34,11 @@ CURATED_MCP_TOOLS: tuple[str, ...] = (
     "list_connectors",
     "pull_connector_now",
     "list_connector_runs",
+    "list_personal_access_tokens",
+    "run_dedup_agent_now",
+    "run_quality_filter_now",
+    "run_confidence_approver_now",
+    "get_brigade_registration_status",
 )
 
 AI_CONTACTS_ANALYST_AGENT_SLUG = "ai-contacts-analyst"

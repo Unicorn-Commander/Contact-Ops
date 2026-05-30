@@ -130,6 +130,10 @@ class Settings(BaseSettings):
     DATA_INTEL_CLIENT_ID: str = "contact-ops-publisher"
     DATA_INTEL_TOKEN_EXCHANGE_URL: str = ""
 
+    # Brigade ecosystem registry
+    BRIGADE_REGISTRY_URL: str = "https://brigade.magicunicorn.dev/api/registry/services"
+    BRIGADE_SERVICE_TOKEN: str = ""
+
     # Seed data
     SEED_OWNER_USER_ID: str = "00000000-0000-0000-0000-000000000001"
 
