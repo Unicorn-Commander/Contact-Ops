@@ -219,7 +219,10 @@ async def get_oauth_start_url(ctx: MCPContext, req: OAuthStartInput) -> OAuthSta
             "code_challenge": challenge,
             "code_challenge_method": "S256",
         }
-        base = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+        base = (
+            f"https://login.microsoftonline.com/{settings.M365_TENANT_ID}"
+            "/oauth2/v2.0/authorize"
+        )
     else:
         params = {
             "client_id": settings.GMAIL_CLIENT_ID,

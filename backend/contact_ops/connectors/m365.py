@@ -20,8 +20,15 @@ from contact_ops.importers.base import (
 if TYPE_CHECKING:
     from contact_ops.mcp.registry import MCPContext
 
-TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"  # noqa: S105
 CONTACTS_URL = "https://graph.microsoft.com/v1.0/me/contacts"
+
+
+def _token_url() -> str:
+    """Tenant-specific token endpoint; /common only works for multi-tenant apps."""
+    return (
+        f"https://login.microsoftonline.com/{get_settings().M365_TENANT_ID}"
+        "/oauth2/v2.0/token"
+    )
 
 
 class M365Connector(Connector):
@@ -51,7 +58,7 @@ async def exchange_m365_code(code: str, code_verifier: str) -> dict[str, Any]:
     settings = get_settings()
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
-            TOKEN_URL,
+            _token_url(),
             data={
                 "client_id": settings.M365_CLIENT_ID,
                 "client_secret": settings.M365_CLIENT_SECRET,
@@ -69,7 +76,7 @@ async def refresh_m365_token(refresh_token: str) -> dict[str, Any]:
     settings = get_settings()
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
-            TOKEN_URL,
+            _token_url(),
             data={
                 "client_id": settings.M365_CLIENT_ID,
                 "client_secret": settings.M365_CLIENT_SECRET,
