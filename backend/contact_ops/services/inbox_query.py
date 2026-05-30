@@ -235,7 +235,17 @@ async def list_pending_proposals(
             COALESCE(ae.agent_version, ae.actor->>'agent_version') AS agent_version,
             t.slug AS tenant_slug,
             t.hipaa_mode AS tenant_hipaa_mode,
-            COALESCE(p.display_name, o.display_name) AS entity_display_name,
+            -- For proposed person.create / org.create the entity row doesn't
+            -- exist yet (it's only inserted on Approve), so fall back to the
+            -- name carried in the proposal payload. Prevents the entire queue
+            -- from rendering as "(unknown)" when proposed-only writes hit
+            -- before any apply happened.
+            COALESCE(
+                p.display_name,
+                o.display_name,
+                ae.payload->'after'->>'display_name',
+                ae.payload->'after'->>'legal_name'
+            ) AS entity_display_name,
             ph.id AS primary_photo_id,
             EXISTS (
                 SELECT 1 FROM proposal_conflict pc
