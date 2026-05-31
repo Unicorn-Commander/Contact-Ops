@@ -42,6 +42,14 @@ const DesignSystemV2Route = import.meta.env.DEV
   ? lazy(() => import("@/design-system/ShowcaseV2").then((m) => ({ default: m.ShowcaseV2 })))
   : null;
 
+// Shell v2 chrome preview — auth-free twin of the AppShell header with the
+// first-class "Ask AI ⌘J" pill, the docked "Ask the Analyst" launcher, and the
+// v2 glass tenant chip, plus a dark/light toggle. Lets the orchestrator
+// screenshot the Phase-3 shell restyle without a Keycloak session. DEV only.
+const ShellV2PreviewRoute = import.meta.env.DEV
+  ? lazy(() => import("@/design-system/ShellPreviewV2").then((m) => ({ default: m.ShellPreviewV2 })))
+  : null;
+
 // Dashboard command-center hero — auth-free preview of the REAL v2 hero
 // (CommandCenterHero/HeroStat from the live Dashboard) with sample counts, so
 // the hero can be reviewed without a Keycloak session or MCP backend. DEV only.
@@ -189,6 +197,21 @@ function LazyDesignSystemV2Route() {
       }
     >
       <DesignSystemV2Route />
+    </Suspense>
+  );
+}
+
+function LazyShellV2PreviewRoute() {
+  if (!ShellV2PreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <ShellV2PreviewRoute />
     </Suspense>
   );
 }
@@ -544,6 +567,13 @@ const designSystemV2Route = import.meta.env.DEV
       component: LazyDesignSystemV2Route
     })
   : null;
+const designSystemShellV2Route = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/shell-v2",
+      component: LazyShellV2PreviewRoute
+    })
+  : null;
 const designSystemDashboardHeroRoute = import.meta.env.DEV
   ? createRoute({
       getParentRoute: () => rootRoute,
@@ -639,6 +669,7 @@ function CallbackRoute() {
 
 export const routeTree = rootRoute.addChildren([
   ...(designSystemV2Route ? [designSystemV2Route] : []),
+  ...(designSystemShellV2Route ? [designSystemShellV2Route] : []),
   ...(designSystemDashboardHeroRoute ? [designSystemDashboardHeroRoute] : []),
   ...(designSystemAIAnalystRoute ? [designSystemAIAnalystRoute] : []),
   ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
