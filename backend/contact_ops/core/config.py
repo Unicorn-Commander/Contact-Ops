@@ -74,6 +74,11 @@ class Settings(BaseSettings):
 
     # Tenant resolution
     TENANT_GUC_NAME: str = "app.tenant_id"
+    # Actor identity GUC. Set alongside TENANT_GUC_NAME on every RLS-subject
+    # session so the DB layer can attribute writes to a uc_uid (and so future
+    # uc_uid-aware RLS policies have the value available). Phase 4.0a only sets
+    # it; no policy references it yet.
+    UC_UID_GUC_NAME: str = "app.uc_uid"
 
     # Keycloak — uchub realm
     KEYCLOAK_ISSUER: str = Field(

@@ -71,6 +71,38 @@ audit_session_maker = async_sessionmaker(
 )
 
 
+async def bind_session_context(
+    session: AsyncSession,
+    tenant_id: str,
+    uc_uid: str | None,
+    settings: Settings | None = None,
+) -> None:
+    """Bind RLS session context on ``session`` in one place.
+
+    Sets the ``app.tenant_id`` GUC and — when ``uc_uid`` is provided — the
+    ``app.uc_uid`` GUC, both as ``SET LOCAL`` (transaction-scoped) via the
+    parameter-safe ``set_config(name, value, is_local=true)`` idiom. This is
+    the single chokepoint every set-point routes through so the two GUCs are
+    always set together and no call site can drift.
+
+    ``tenant_id`` is required (RLS policies key off ``app.tenant_id``).
+    ``uc_uid`` is optional only because no RLS policy references it yet in
+    Phase 4.0a; callers should still pass a value (a real uc_uid, or a
+    ``service:<name>`` identity for pure service/CLI paths) so attribution is
+    never silently lost.
+    """
+    cfg = settings or _settings
+    await session.execute(
+        text("SELECT set_config(:k, :v, true)"),
+        {"k": cfg.TENANT_GUC_NAME, "v": str(tenant_id)},
+    )
+    if uc_uid:
+        await session.execute(
+            text("SELECT set_config(:k, :v, true)"),
+            {"k": cfg.UC_UID_GUC_NAME, "v": str(uc_uid)},
+        )
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that yields an app-role session without tenant binding.
 
@@ -111,14 +143,16 @@ async def get_tenant_db(
             detail="tenant context unresolved",
         )
     tenant_id = str(claims["tenant_id"])
+    # uc_uid is normalized to a non-empty value in JWTValidationMiddleware
+    # (falls back to `sub`); read it from the same claims source as tenant_id.
+    uc_uid = claims.get("uc_uid") or claims.get("sub")
 
     async with async_session_maker() as session:
         # set_config(name, value, is_local=true) is the parameter-safe way
-        # to SET LOCAL — avoids any need for string interpolation.
-        await session.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": tenant_id},
-        )
+        # to SET LOCAL — avoids any need for string interpolation. Both the
+        # tenant and uc_uid GUCs are set via the shared bind helper so they
+        # never drift apart.
+        await bind_session_context(session, tenant_id, uc_uid, settings)
         try:
             yield session
             await session.commit()
@@ -144,14 +178,27 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 
 
 @asynccontextmanager
-async def get_audit_db_context() -> AsyncGenerator[AsyncSession, None]:
-    """Async context manager yielding an audit-role session.
+async def get_audit_db_context(
+    tenant_id: str,
+    uc_uid: str | None = None,
+) -> AsyncGenerator[AsyncSession, None]:
+    """Async context manager yielding a tenant-bound audit-role session.
 
     The audit middleware uses this to write `action_event` rows under the
     `contact_ops_audit` role, enforcing append-only at the DB layer per
     design doc §4.1.9.
+
+    The `action_event` INSERT policy (`ae_audit_insert`) has
+    `WITH CHECK (tenant_id = current_tenant_id())`, and `current_tenant_id()`
+    reads the `app.tenant_id` GUC. Once the audit role is RLS-subject (the
+    Phase 4 cutover), the GUC MUST be set on this session before the INSERT or
+    the WITH CHECK rejects the row. We therefore bind tenant context here,
+    before yielding, via the shared `bind_session_context` helper. `tenant_id`
+    is required for this reason; `uc_uid` is bound too for attribution parity
+    with the app session.
     """
     async with audit_session_maker() as session:
+        await bind_session_context(session, tenant_id, uc_uid)
         try:
             yield session
             await session.commit()

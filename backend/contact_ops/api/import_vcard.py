@@ -6,10 +6,13 @@ import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
-from sqlalchemy import text
 
 from contact_ops.core.config import get_settings
-from contact_ops.core.database import async_session_maker, audit_session_maker
+from contact_ops.core.database import (
+    async_session_maker,
+    audit_session_maker,
+    bind_session_context,
+)
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.services.vcard_import import (
     MAX_VCARD_SIZE_BYTES,
@@ -43,15 +46,12 @@ async def import_vcard_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     settings = get_settings()
+    # uc_uid source: ctx_base.claims["uc_uid"] (normalized at JWT validation),
+    # falling back to ctx_base.user_id (== claims["sub"]).
+    uc_uid = str(ctx_base.claims.get("uc_uid") or ctx_base.user_id)
     async with async_session_maker() as db, audit_session_maker() as audit_db:
-        await db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(ctx_base.tenant_id)},
-        )
-        await audit_db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(ctx_base.tenant_id)},
-        )
+        await bind_session_context(db, str(ctx_base.tenant_id), uc_uid, settings)
+        await bind_session_context(audit_db, str(ctx_base.tenant_id), uc_uid, settings)
         ctx_base.db = db
         ctx_base.audit_db = audit_db
         try:

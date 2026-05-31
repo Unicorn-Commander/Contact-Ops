@@ -30,10 +30,13 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import text
 
 from contact_ops.core.config import get_settings
-from contact_ops.core.database import async_session_maker, audit_session_maker
+from contact_ops.core.database import (
+    async_session_maker,
+    audit_session_maker,
+    bind_session_context,
+)
 from contact_ops.mcp.errors import ToolError, error_result
 from contact_ops.mcp.registry import MCPContext, get_tool, list_tools
 from contact_ops.mcp.tools import register_all_tools
@@ -146,15 +149,12 @@ class MCPServerInstance:
             return error_result(ToolError("VALIDATION_FAILED", str(exc), retryable=False))
 
         settings = get_settings()
+        # uc_uid source: self.user_id (set from claims["sub"]/uc_uid at
+        # mcp_endpoint); self.claims["uc_uid"] is normalized + guaranteed.
+        uc_uid = self.claims.get("uc_uid") or self.user_id
         async with async_session_maker() as db, audit_session_maker() as audit_db:
-            await db.execute(
-                text("SELECT set_config(:k, :v, true)"),
-                {"k": settings.TENANT_GUC_NAME, "v": str(self.tenant_id)},
-            )
-            await audit_db.execute(
-                text("SELECT set_config(:k, :v, true)"),
-                {"k": settings.TENANT_GUC_NAME, "v": str(self.tenant_id)},
-            )
+            await bind_session_context(db, str(self.tenant_id), uc_uid, settings)
+            await bind_session_context(audit_db, str(self.tenant_id), uc_uid, settings)
             ctx = MCPContext(
                 tenant_id=self.tenant_id,
                 user_id=self.user_id,

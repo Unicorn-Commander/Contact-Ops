@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from contact_ops.core.config import get_settings
-from contact_ops.core.database import async_session_maker
+from contact_ops.core.database import async_session_maker, bind_session_context
 from contact_ops.importers.base import CanonicalImportRecord
 from contact_ops.services.agents.confidence_approver import run_confidence_approver
 from contact_ops.services.agents.dedup_agent import run_dedup_agent
@@ -195,10 +195,11 @@ async def _run_post_pull_agent_pipeline(tenant_id: uuid.UUID) -> None:
     # Let the request transaction commit before the independent worker session reads proposals.
     await asyncio.sleep(0.1)
     settings = get_settings()
+    # Pure background worker (post-pull agent pipeline) — no human uc_uid in
+    # scope. Bind a stable service identity so attribution is never null.
     async with async_session_maker() as db:
-        await db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(tenant_id)},
+        await bind_session_context(
+            db, str(tenant_id), "service:connector-pull-pipeline", settings
         )
         try:
             await run_dedup_agent(db, tenant_id=tenant_id)

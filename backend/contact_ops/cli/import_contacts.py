@@ -43,23 +43,23 @@ async def _main() -> int:
         _out("KC_PUBLISHER_CLIENT_SECRET is required for apply mode")
         return 2
     tenant_id = await _tenant_id(args.tenant)
-    from sqlalchemy import text
 
     from contact_ops.core.config import get_settings
-    from contact_ops.core.database import async_session_maker, audit_session_maker
+    from contact_ops.core.database import (
+        async_session_maker,
+        audit_session_maker,
+        bind_session_context,
+    )
     from contact_ops.importers.mcp_writer import MCPImporterWriter
     from contact_ops.mcp.registry import MCPContext
 
     settings = get_settings()
+    # Pure CLI path — no human uc_uid in scope. Bind a stable service identity
+    # so audit attribution is never null (matches the actor_chain below).
+    uc_uid = "service:import-cli"
     async with async_session_maker() as db, audit_session_maker() as audit_db:
-        await db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(tenant_id)},
-        )
-        await audit_db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(tenant_id)},
-        )
+        await bind_session_context(db, str(tenant_id), uc_uid, settings)
+        await bind_session_context(audit_db, str(tenant_id), uc_uid, settings)
         ctx = MCPContext(
             tenant_id=tenant_id,
             user_id=str(tenant_id),

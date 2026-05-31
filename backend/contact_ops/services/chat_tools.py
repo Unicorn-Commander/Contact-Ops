@@ -8,10 +8,13 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 
 from contact_ops.core.config import get_settings
-from contact_ops.core.database import async_session_maker, audit_session_maker
+from contact_ops.core.database import (
+    async_session_maker,
+    audit_session_maker,
+    bind_session_context,
+)
 from contact_ops.mcp.errors import ToolError
 from contact_ops.mcp.registry import MCPContext, ToolDef, get_tool
 from contact_ops.mcp.tools import register_all_tools
@@ -115,15 +118,13 @@ class ChatToolExecutor:
             }
 
         settings = get_settings()
+        # uc_uid source: ctx.claims["uc_uid"] (normalized at JWT validation),
+        # falling back to ctx.user_id. Use the original ctx.claims, not the
+        # note-author-augmented local `claims`.
+        uc_uid = str(ctx.claims.get("uc_uid") or ctx.user_id)
         async with async_session_maker() as db, audit_session_maker() as audit_db:
-            await db.execute(
-                text("SELECT set_config(:k, :v, true)"),
-                {"k": settings.TENANT_GUC_NAME, "v": str(ctx.tenant_id)},
-            )
-            await audit_db.execute(
-                text("SELECT set_config(:k, :v, true)"),
-                {"k": settings.TENANT_GUC_NAME, "v": str(ctx.tenant_id)},
-            )
+            await bind_session_context(db, str(ctx.tenant_id), uc_uid, settings)
+            await bind_session_context(audit_db, str(ctx.tenant_id), uc_uid, settings)
             mcp_ctx = MCPContext(
                 tenant_id=ctx.tenant_id,
                 user_id=ctx.user_id,

@@ -20,6 +20,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from contact_ops.agents.observability.metrics import metrics_endpoint
 from contact_ops.agents.observability.otel import init_otel
@@ -58,6 +59,132 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
+class RLSSelfTestError(RuntimeError):
+    """Raised to refuse boot when RLS is enforced but does not isolate tenants.
+
+    Only raised for the non-privileged-role case where a cross-tenant
+    ``persons`` count came back non-zero — i.e. the runtime role is RLS-subject
+    yet a tenant can see another tenant's rows. That is a hard fail.
+    """
+
+
+async def _rls_boot_self_test(settings: Any) -> None:
+    """Adaptive RLS self-test. Safe to run pre-cutover (privileged role today).
+
+    In a throwaway, always-rolled-back transaction on ``engine``:
+
+    * Reads ``rolsuper``/``rolbypassrls`` for ``current_user``.
+    * Picks two distinct tenant ids, sets ``app.tenant_id`` to one, and counts
+      ``persons`` owned by the OTHER tenant.
+    * Privileged role (superuser or bypassrls): RLS is inert — log a LOUD
+      WARNING (``rls_inert_privileged_role``) but DO NOT refuse boot. This is
+      today's pre-cutover state.
+    * Non-privileged role: a non-zero cross-tenant count means RLS is not
+      isolating — RAISE (``rls_self_test_failed``) to refuse boot. Zero ->
+      ``rls_self_test_passed``.
+
+    Resilience: any failure to RUN the test (DB hiccup, missing table, etc.)
+    is logged as a WARNING and swallowed, EXCEPT the explicit non-privileged
+    cross-tenant!=0 case, which must propagate and refuse boot.
+    """
+    from contact_ops.core.database import engine
+
+    async with engine.connect() as conn:
+        # Throwaway transaction — we never commit; rollback on exit guarantees
+        # the SET LOCAL app.tenant_id never leaks to a pooled connection.
+        trans = await conn.begin()
+        try:
+            role_row = (
+                await conn.execute(
+                    text(
+                        "SELECT rolsuper, rolbypassrls FROM pg_roles "
+                        "WHERE rolname = current_user"
+                    )
+                )
+            ).first()
+            is_super = bool(role_row[0]) if role_row else False
+            is_bypassrls = bool(role_row[1]) if role_row else False
+            privileged = is_super or is_bypassrls
+
+            tenant_ids = [
+                str(r[0])
+                for r in (
+                    await conn.execute(
+                        text("SELECT id FROM tenants ORDER BY id LIMIT 2")
+                    )
+                ).all()
+            ]
+
+            if len(tenant_ids) < 2:
+                # Can't assert cross-tenant isolation with fewer than two
+                # tenants. Still surface the role posture so operators know.
+                logger.info(
+                    "rls_self_test_skipped",
+                    reason="fewer_than_two_tenants",
+                    tenant_count=len(tenant_ids),
+                    privileged_role=privileged,
+                    rolsuper=is_super,
+                    rolbypassrls=is_bypassrls,
+                )
+                return
+
+            bound_tenant, other_tenant = tenant_ids[0], tenant_ids[1]
+            await conn.execute(
+                text("SELECT set_config(:k, :v, true)"),
+                {"k": settings.TENANT_GUC_NAME, "v": bound_tenant},
+            )
+            cross_count = (
+                await conn.execute(
+                    text(
+                        "SELECT count(*) FROM persons "
+                        "WHERE canonical_owner_tenant_id = CAST(:other AS uuid)"
+                    ),
+                    {"other": other_tenant},
+                )
+            ).scalar_one()
+
+            if privileged:
+                logger.warning(
+                    "rls_inert_privileged_role",
+                    note=(
+                        "Runtime role is superuser/bypassrls; RLS is NOT "
+                        "DB-enforced. Expected pre-cutover. Re-point "
+                        "DATABASE_URL at a non-privileged role to enforce."
+                    ),
+                    rolsuper=is_super,
+                    rolbypassrls=is_bypassrls,
+                    bound_tenant=bound_tenant,
+                    other_tenant=other_tenant,
+                    cross_tenant_person_count=cross_count,
+                )
+                return
+
+            if cross_count != 0:
+                logger.error(
+                    "rls_self_test_failed",
+                    note=(
+                        "Non-privileged role can read another tenant's persons "
+                        "under RLS. Refusing to boot."
+                    ),
+                    bound_tenant=bound_tenant,
+                    other_tenant=other_tenant,
+                    cross_tenant_person_count=cross_count,
+                )
+                raise RLSSelfTestError(
+                    "RLS self-test failed: cross-tenant person count "
+                    f"={cross_count} under non-privileged role"
+                )
+
+            logger.info(
+                "rls_self_test_passed",
+                bound_tenant=bound_tenant,
+                other_tenant=other_tenant,
+            )
+        finally:
+            # Always discard — this transaction is purely diagnostic.
+            await trans.rollback()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -73,6 +200,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "standalone_mode_active",
             note="JWT validation is bypassed. Use only in dev/test environments.",
         )
+
+    # Adaptive RLS self-test. Refuses boot ONLY when a non-privileged role
+    # leaks cross-tenant rows; otherwise warns (privileged) or passes/skips.
+    try:
+        await _rls_boot_self_test(settings)
+    except RLSSelfTestError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — diagnostic test must not crash boot
+        logger.warning("rls_self_test_errored", error=str(exc), exc_info=True)
 
     # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is
     # missing (e.g. dev without OTel installed).

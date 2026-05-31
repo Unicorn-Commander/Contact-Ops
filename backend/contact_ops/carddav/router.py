@@ -220,7 +220,7 @@ async def propfind_addressbook(
     user_href = reports.principal_href(base="/carddav", user_id=principal.user_id)
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         members = await ab.list_addressbook_members(session, tenant_id=principal.tenant_id)
 
     coll_etag = collection_etag(m.etag for m in members)
@@ -277,7 +277,7 @@ async def propfind_vcard(
     requested = reports.parse_propfind_body(body)
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         person = await _find_person_by_uid(session, vcard_uid=vcard_uid)
         if person is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="vcard not found")
@@ -324,7 +324,7 @@ async def get_vcard(
     vcard_uid = _strip_vcf(vcard_uid_with_ext)
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         person = await _find_person_by_uid(session, vcard_uid=vcard_uid)
         if person is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="vcard not found")
@@ -378,7 +378,7 @@ async def put_vcard(
     if_none_match = request.headers.get("if-none-match")
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         existing = await _find_person_by_uid(session, vcard_uid=vcard_uid)
         current_etag = existing.etag if existing else None
         enforce_preconditions(
@@ -447,7 +447,7 @@ async def delete_vcard(
     if_match = request.headers.get("if-match")
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         person = await _find_person_by_uid(session, vcard_uid=vcard_uid)
         current_etag = person.etag if person else None
         enforce_preconditions(if_match=if_match, if_none_match=None, current=current_etag)
@@ -513,7 +513,7 @@ async def _report_multiget(principal: CarddavPrincipal, body: bytes) -> Response
     uids = [u for u in uids if u]
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         for uid in uids:
             person = await _find_person_by_uid(session, vcard_uid=uid)
             href = reports.vcard_href(
@@ -558,7 +558,7 @@ async def _report_query(principal: CarddavPrincipal, body: bytes) -> Response:
     multistatus = reports.new_multistatus()
 
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         members = await ab.list_addressbook_members(session, tenant_id=principal.tenant_id)
 
         if query.text_match:
@@ -609,7 +609,7 @@ async def _report_sync_collection(
 
     multistatus = reports.new_multistatus()
     async with auth_session() as session:
-        await bind_tenant(session, principal.tenant_id)
+        await bind_tenant(session, principal.tenant_id, uc_uid=principal.user_id)
         members = await ab.list_addressbook_members(session, tenant_id=principal.tenant_id)
 
     coll_etag = collection_etag(m.etag for m in members)

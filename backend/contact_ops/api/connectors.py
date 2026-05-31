@@ -15,7 +15,7 @@ from contact_ops.connectors.gmail import exchange_gmail_code
 from contact_ops.connectors.m365 import exchange_m365_code
 from contact_ops.connectors.oauth_state import consume_state
 from contact_ops.core.config import get_settings
-from contact_ops.core.database import async_session_maker
+from contact_ops.core.database import async_session_maker, bind_session_context
 
 router = APIRouter(tags=["Connectors"])
 
@@ -68,11 +68,10 @@ async def connector_oauth_callback(
 
     tenant_id = uuid.UUID(stored.tenant_id)
     settings = get_settings()
+    # uc_uid source: the signed OAuth `state` we issued at oauth-start time
+    # carries the originating user's uc_uid (also stored as configured_by).
     async with async_session_maker() as db:
-        await db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(tenant_id)},
-        )
+        await bind_session_context(db, str(tenant_id), stored.uc_uid, settings)
         await db.execute(
             text(
                 """

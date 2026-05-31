@@ -87,6 +87,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 # JWT middleware should have rejected; defensive skip.
                 return
 
+            # uc_uid is normalized (falls back to `sub`) in
+            # JWTValidationMiddleware; bind it on the audit session too so the
+            # row is attributed and so the session matches the app session's
+            # context. tenant_id is the load-bearing one for the
+            # `ae_audit_insert` WITH CHECK once the audit role is RLS-subject.
+            uc_uid = claims.get("uc_uid") or claims.get("sub")
+
             actor_chain = getattr(request.state, "actor_chain", {"sub": claims.get("sub")})
             human_authority = getattr(request.state, "human_authority", claims.get("sub")) or ""
 
@@ -110,7 +117,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
             aggregate_id = uuid.uuid4()
             event_status = "applied" if 200 <= response.status_code < 400 else "rejected"
 
-            async with get_audit_db_context() as db:
+            async with get_audit_db_context(
+                tenant_id=str(tenant_id), uc_uid=uc_uid
+            ) as db:
                 await db.execute(
                     text(
                         """
