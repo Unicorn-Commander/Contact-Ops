@@ -18,7 +18,7 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useAuth } from "react-oidc-context";
 import { useHotkeys } from "react-hotkeys-hook";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import { KeyboardHint } from "@/design-system/KeyboardHint";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { cn, initials } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
+import { AppShellProvider } from "@/components/app-shell-context";
 
 // Lazy-load the palette so its cmdk + Radix-dialog code splits into the async
 // `cmdk` chunk (matching the Inbox) instead of weighing down the eager shell
@@ -232,6 +233,23 @@ export function AppShell() {
     setAnalystOpen(true);
   };
 
+  // Published to descendant routes (e.g. the Dashboard's "Ask the Analyst" CTA)
+  // so they open the *same* shell-owned overlays instead of duplicating them.
+  // State setters are stable, so the value only needs to be created once.
+  const shellActions = useMemo(
+    () => ({
+      openAnalyst: () => {
+        setAnalystMounted(true);
+        setAnalystOpen(true);
+      },
+      openPalette: () => {
+        setPaletteMounted(true);
+        setPaletteOpen(true);
+      }
+    }),
+    []
+  );
+
   return (
     <div className="min-h-screen bg-background">
       {/* Mobile drawer + backdrop */}
@@ -335,7 +353,9 @@ export function AppShell() {
         </header>
 
         <main className="mx-auto max-w-7xl p-4 lg:p-6">
-          <Outlet />
+          <AppShellProvider value={shellActions}>
+            <Outlet />
+          </AppShellProvider>
         </main>
       </div>
 

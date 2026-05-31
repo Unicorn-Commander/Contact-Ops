@@ -1,12 +1,13 @@
 import { lazy, Suspense, useEffect } from "react";
 import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "react-oidc-context";
-import { BookUser, Compass } from "lucide-react";
+import { Compass, Network, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/design-system/Spinner";
+import { AmbientGraph } from "@/design-system/v2/AmbientGraph";
 import { ActionEventRow } from "@/components/domain/Lists";
 import { DashboardRoute } from "@/routes/pages/Dashboard";
 import { PeopleRoute, PersonDetailRoute } from "@/routes/pages/People";
@@ -39,6 +40,15 @@ const DesignSystemRoute = import.meta.env.DEV
 // additive tokens-v2.css and the v2/* components and touches nothing in the app.
 const DesignSystemV2Route = import.meta.env.DEV
   ? lazy(() => import("@/design-system/ShowcaseV2").then((m) => ({ default: m.ShowcaseV2 })))
+  : null;
+
+// Dashboard command-center hero — auth-free preview of the REAL v2 hero
+// (CommandCenterHero/HeroStat from the live Dashboard) with sample counts, so
+// the hero can be reviewed without a Keycloak session or MCP backend. DEV only.
+const DashboardHeroPreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/DashboardHeroPreview").then((m) => ({ default: m.DashboardHeroPreview }))
+    )
   : null;
 
 // AI Analyst auth-free preview lives on a dedicated sub-route so the
@@ -167,6 +177,21 @@ function LazyDesignSystemV2Route() {
       }
     >
       <DesignSystemV2Route />
+    </Suspense>
+  );
+}
+
+function LazyDashboardHeroPreviewRoute() {
+  if (!DashboardHeroPreviewRoute) return null;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <DashboardHeroPreviewRoute />
     </Suspense>
   );
 }
@@ -333,31 +358,80 @@ function AuthGate() {
     );
   }
   if (!auth.isAuthenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="co-animate-fade-in w-full max-w-md">
-          <Card className="border-border">
-            <CardContent className="px-8 py-10 text-center">
-              <div className="bg-gradient-brand co-glow-brand mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
-                <BookUser className="h-7 w-7" strokeWidth={1.6} />
-              </div>
-              <h1 className="bg-gradient-brand-text text-3xl font-bold tracking-tight">Contact-Ops</h1>
-              <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
-                The canonical identity hub. Sign in with Magic Unicorn to manage people, organizations, and the
-                agents that keep them clean.
-              </p>
-              <Button className="mt-8 h-11 w-full" variant="gradient" onClick={() => void auth.signinRedirect()}>
-                Sign in
-              </Button>
-              <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
-            </CardContent>
-          </Card>
+    return <LoginHero onSignIn={() => void auth.signinRedirect()} />;
+  }
+  return <AppShell />;
+}
+
+/**
+ * Design Language v2 Login hero (promoted from the /design-system/v2 showcase).
+ * Cinematic brand surface: an ambient glowing relationship graph + radial bloom
+ * behind a bold gradient headline + gradient wordmark, with a layered-glass
+ * sign-in card.
+ *
+ * Auth is UNCHANGED — `onSignIn` is the real react-oidc-context
+ * `auth.signinRedirect()` passed from AuthGate; the CTA only restyles the
+ * existing trigger. Every animation (graph drift, bloom pulse, wordmark pan) is
+ * gated behind prefers-reduced-motion via tokens-v2.css; the AmbientGraph paints
+ * a single static frame in that mode. All text sits on the .co-v2-stage-content
+ * layer and carries its own AA contrast over the decorative graph.
+ */
+function LoginHero({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <div className="co-v2-ambient co-v2-vignette relative flex min-h-screen items-center overflow-hidden">
+      <AmbientGraph nodeCount={30} className="opacity-90" />
+      <div className="co-v2-stage-content mx-auto grid w-full max-w-[1400px] items-center gap-10 px-6 py-12 lg:grid-cols-2 lg:px-14 lg:py-16">
+        {/* Left — the brand promise */}
+        <div className="co-animate-fade-in max-w-xl">
+          <span className="inline-flex items-center gap-2 rounded-full border border-[oklch(var(--co-v2-glass-hairline-strong))] bg-[oklch(var(--co-v2-glass-fill))] px-3 py-1 text-xs font-medium text-foreground backdrop-blur">
+            <Network className="h-3.5 w-3.5 text-[oklch(var(--co-brand-300))]" strokeWidth={2} />
+            The canonical identity graph
+          </span>
+          <h1 className="mt-6 text-4xl font-bold leading-[1.08] tracking-tight text-foreground lg:text-5xl">
+            Every person.{" "}
+            <span className="co-v2-wordmark co-v2-wordmark-animate">Every connection.</span>{" "}
+            One source of truth.
+          </h1>
+          <p className="mt-5 max-w-md text-base leading-relaxed text-muted-foreground">
+            Contact-Ops keeps your people, organizations, and the agents that maintain them clean,
+            connected, and current — so the relationship graph is always one you can trust.
+          </p>
+        </div>
+
+        {/* Right — the sign-in glass card, lifted on its own bloom */}
+        <div className="co-animate-fade-in relative mx-auto w-full max-w-md">
+          <span
+            className="co-v2-bloom co-v2-bloom-pulse"
+            style={{ inset: "-12% -8% auto -8%", height: "60%" }}
+            aria-hidden="true"
+          />
+          <div className="co-v2-glass co-v2-glass-edge relative p-8 text-center">
+            <span
+              className="co-v2-glow-strong bg-gradient-brand mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl text-primary-foreground"
+              aria-hidden="true"
+            >
+              <Network className="h-8 w-8" strokeWidth={1.6} />
+            </span>
+            <h2 className="co-v2-wordmark text-3xl font-bold tracking-tight">Contact-Ops</h2>
+            <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
+              Sign in with Magic Unicorn to manage people, organizations, and the agents that keep
+              them clean.
+            </p>
+            <Button
+              className="co-v2-hover-bloom co-v2-glow-strong mt-8 h-12 w-full text-sm"
+              variant="gradient"
+              onClick={onSignIn}
+            >
+              <Sparkles className="h-4 w-4" strokeWidth={2} />
+              Sign in with Magic Unicorn
+            </Button>
+            <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
+          </div>
           <p className="mt-4 text-center text-xs text-muted-foreground">by Magic Unicorn</p>
         </div>
       </div>
-    );
-  }
-  return <AppShell />;
+    </div>
+  );
 }
 
 function NotFound() {
@@ -441,6 +515,13 @@ const designSystemV2Route = import.meta.env.DEV
       component: LazyDesignSystemV2Route
     })
   : null;
+const designSystemDashboardHeroRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/dashboard-hero",
+      component: LazyDashboardHeroPreviewRoute
+    })
+  : null;
 const designSystemAIAnalystRoute = import.meta.env.DEV
   ? createRoute({
       getParentRoute: () => rootRoute,
@@ -522,6 +603,7 @@ function CallbackRoute() {
 
 export const routeTree = rootRoute.addChildren([
   ...(designSystemV2Route ? [designSystemV2Route] : []),
+  ...(designSystemDashboardHeroRoute ? [designSystemDashboardHeroRoute] : []),
   ...(designSystemAIAnalystRoute ? [designSystemAIAnalystRoute] : []),
   ...(designSystemNotesRoute ? [designSystemNotesRoute] : []),
   ...(designSystemImportRoute ? [designSystemImportRoute] : []),

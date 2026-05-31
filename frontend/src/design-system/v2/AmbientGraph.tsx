@@ -55,6 +55,12 @@ function readOklch(el: HTMLElement, varName: string, fallback: string): string {
   return v || fallback;
 }
 
+/** Read a numeric CSS var (an alpha multiplier), with a fallback. */
+function readNum(el: HTMLElement, varName: string, fallback: number): number {
+  const v = parseFloat(getComputedStyle(el).getPropertyValue(varName));
+  return Number.isFinite(v) ? v : fallback;
+}
+
 export function AmbientGraph({
   nodeCount = 28,
   linkDistance = 0.22,
@@ -83,6 +89,13 @@ export function AmbientGraph({
     let nodeColor = readOklch(host, "--co-v2-node", "0.74 0.16 304");
     let nodeFuchsia = readOklch(host, "--co-v2-node-fuchsia", "0.74 0.2 330");
     let edgeColor = readOklch(host, "--co-v2-edge", "0.6 0.14 304");
+    // Per-theme canvas alpha multipliers (dark mode is brighter so the signature
+    // graph reads with equal presence in both themes). Defaults reproduce the
+    // original look if the tokens are ever absent.
+    let coreAlpha = readNum(host, "--co-v2-node-core-alpha", 0.85);
+    let haloAlpha = readNum(host, "--co-v2-node-halo-alpha", 0.35);
+    let edgeAlpha = readNum(host, "--co-v2-edge-alpha", 0.32);
+    let dustAlpha = readNum(host, "--co-v2-dust-alpha", 1);
 
     let width = 0;
     let height = 0;
@@ -114,6 +127,20 @@ export function AmbientGraph({
       }));
     }
 
+    // Pull the theme-dependent palette + canvas alphas off the v2 tokens. Called
+    // on mount, on resize, and whenever the document theme flips so the graph's
+    // dark-mode luminosity boost applies live (the dark theme sets brighter
+    // node/edge hues + higher alphas than light — see tokens-v2.css).
+    function readThemeColors() {
+      nodeColor = readOklch(host, "--co-v2-node", "0.74 0.16 304");
+      nodeFuchsia = readOklch(host, "--co-v2-node-fuchsia", "0.74 0.2 330");
+      edgeColor = readOklch(host, "--co-v2-edge", "0.6 0.14 304");
+      coreAlpha = readNum(host, "--co-v2-node-core-alpha", 0.85);
+      haloAlpha = readNum(host, "--co-v2-node-halo-alpha", 0.35);
+      edgeAlpha = readNum(host, "--co-v2-edge-alpha", 0.32);
+      dustAlpha = readNum(host, "--co-v2-dust-alpha", 1);
+    }
+
     function resize() {
       const rect = canvas.getBoundingClientRect();
       width = rect.width;
@@ -122,10 +149,7 @@ export function AmbientGraph({
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      // Re-read theme colors on resize (covers a theme flip that triggers relayout).
-      nodeColor = readOklch(host, "--co-v2-node", "0.74 0.16 304");
-      nodeFuchsia = readOklch(host, "--co-v2-node-fuchsia", "0.74 0.2 330");
-      edgeColor = readOklch(host, "--co-v2-edge", "0.6 0.14 304");
+      readThemeColors();
       seed();
     }
 
@@ -138,7 +162,7 @@ export function AmbientGraph({
       // Dim particle dust behind the graph for depth.
       for (const d of dustField) {
         ctx.beginPath();
-        ctx.fillStyle = `oklch(${nodeColor} / ${d.a})`;
+        ctx.fillStyle = `oklch(${nodeColor} / ${Math.min(1, d.a * dustAlpha).toFixed(3)})`;
         ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
         ctx.fill();
       }
@@ -158,7 +182,7 @@ export function AmbientGraph({
           if (distSq > maxDistSq) continue;
           const t = 1 - distSq / maxDistSq;
           ctx.beginPath();
-          ctx.strokeStyle = `oklch(${edgeColor} / ${(t * 0.32).toFixed(3)})`;
+          ctx.strokeStyle = `oklch(${edgeColor} / ${Math.min(1, t * edgeAlpha).toFixed(3)})`;
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(b.x, b.y);
           ctx.stroke();
@@ -180,7 +204,7 @@ export function AmbientGraph({
         const pulse = reduce ? 0.7 : 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(n.pulse));
         const haloR = n.r * 6;
         const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, haloR);
-        grad.addColorStop(0, `oklch(${color} / ${(0.35 * pulse).toFixed(3)})`);
+        grad.addColorStop(0, `oklch(${color} / ${Math.min(1, haloAlpha * pulse).toFixed(3)})`);
         grad.addColorStop(1, `oklch(${color} / 0)`);
         ctx.beginPath();
         ctx.fillStyle = grad;
@@ -188,7 +212,7 @@ export function AmbientGraph({
         ctx.fill();
 
         ctx.beginPath();
-        ctx.fillStyle = `oklch(${color} / ${(0.85 * pulse).toFixed(3)})`;
+        ctx.fillStyle = `oklch(${color} / ${Math.min(1, coreAlpha * pulse).toFixed(3)})`;
         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
         ctx.fill();
       }
@@ -235,10 +259,24 @@ export function AmbientGraph({
     };
     document.addEventListener("visibilitychange", onVis);
 
+    // Re-read the palette when the document theme flips (data-theme / class on
+    // <html>), so the dark-mode luminosity boost takes effect immediately on a
+    // live toggle. Repaint once in case the loop is paused (reduced-motion /
+    // offscreen) so the static frame also updates.
+    const themeObserver = new MutationObserver(() => {
+      readThemeColors();
+      if (!running) draw(performance.now());
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "class"]
+    });
+
     return () => {
       stop();
       ro.disconnect();
       io.disconnect();
+      themeObserver.disconnect();
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [nodeCount, linkDistance, speed, dust]);

@@ -1,1 +1,9 @@
 @import "../design-system/tokens.css";
+
+/* Design Language v2 — ADDITIVE near-future visual layer (ambient relationship
+   graph, bloom, layered glass, gradient wordmark, calm-data utilities). Every
+   var/class is namespaced --co-v2-* / .co-v2-* so it cannot collide with or
+   override the canonical token system in tokens.css above. Promoted app-wide so
+   real routes (Login hero, Dashboard command-center) can use the v2 language;
+   tokens.css is left untouched. */
+@import "../design-system/tokens-v2.css";
