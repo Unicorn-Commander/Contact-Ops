@@ -9,7 +9,6 @@ from typing import cast
 
 import sqlalchemy as sa
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import text
 
 from contact_ops.importers.base import ProvenanceContext, SourceKind
 from contact_ops.importers.google_csv import GoogleCSVImporter
@@ -144,18 +143,19 @@ async def _run_import_job(
     claims: dict[str, object],
 ) -> None:
     from contact_ops.core.config import get_settings
-    from contact_ops.core.database import async_session_maker, audit_session_maker
+    from contact_ops.core.database import (
+        async_session_maker,
+        audit_session_maker,
+        bind_session_context,
+    )
 
     settings = get_settings()
+    # uc_uid source: claims["uc_uid"] (normalized at JWT validation), with the
+    # background-job's user_id as the fallback for the import worker.
+    uc_uid = str(claims.get("uc_uid") or user_id)
     async with async_session_maker() as db, audit_session_maker() as audit_db:
-        await db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(req.tenant_id)},
-        )
-        await audit_db.execute(
-            text("SELECT set_config(:k, :v, true)"),
-            {"k": settings.TENANT_GUC_NAME, "v": str(req.tenant_id)},
-        )
+        await bind_session_context(db, str(req.tenant_id), uc_uid, settings)
+        await bind_session_context(audit_db, str(req.tenant_id), uc_uid, settings)
         await db.execute(
             import_jobs_table.update()
             .where(import_jobs_table.c.id == job_id)

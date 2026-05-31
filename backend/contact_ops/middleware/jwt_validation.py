@@ -203,6 +203,18 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             )
             return None
 
+        # 5. Normalize uc_uid to a single guaranteed-present claim. Keycloak
+        # tokens may carry an explicit `uc_uid`; otherwise fall back to the
+        # standard `sub`. Reject (same fail-closed pattern as tenant_id) if
+        # neither is present, so downstream code can always rely on
+        # claims["uc_uid"] when binding the app.uc_uid GUC.
+        claims["uc_uid"] = claims.get("uc_uid") or claims.get("sub")
+        if not claims["uc_uid"]:
+            logger.warning(
+                "jwt_missing_uc_uid", tenant_id=claims.get("tenant_id"), iss=claims.get("iss")
+            )
+            return None
+
         return claims
 
     async def _validate_brigade(self, token: str) -> dict[str, Any] | None:

@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from contact_ops.core.config import Settings, get_settings
+from contact_ops.core.database import bind_session_context
 from contact_ops.models import Tenant
 from contact_ops.models.carddav_app_password import CarddavAppPassword
 
@@ -106,13 +107,19 @@ async def open_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-async def bind_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> None:
-    """Set ``app.tenant_id`` so RLS policies resolve on this session."""
+async def bind_tenant(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    uc_uid: str | None = None,
+) -> None:
+    """Set ``app.tenant_id`` (and ``app.uc_uid``) so RLS policies resolve.
 
-    await session.execute(
-        text("SELECT set_config(:k, :v, true)"),
-        {"k": get_settings().TENANT_GUC_NAME, "v": str(tenant_id)},
-    )
+    Routes through the central :func:`bind_session_context` helper so the
+    tenant and uc_uid GUCs are always set together. CardDAV callers pass the
+    principal's ``user_id`` (which IS the uc_uid) as ``uc_uid``.
+    """
+
+    await bind_session_context(session, str(tenant_id), uc_uid, get_settings())
 
 
 # Tests inject a custom opener that yields an in-memory rolled-back session.
@@ -342,7 +349,7 @@ async def _stamp_last_used(
     Binds the tenant GUC first so the RLS modify policy permits the update.
     """
 
-    await bind_tenant(session, tenant_id)
+    await bind_tenant(session, tenant_id, uc_uid=row.user_id)
     await session.execute(
         update(CarddavAppPassword)
         .where(CarddavAppPassword.id == row.id)
