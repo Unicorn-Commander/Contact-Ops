@@ -12,7 +12,8 @@ import {
   Sparkles,
   Upload,
   UserPlus,
-  Users
+  Users,
+  Wand2
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMemo } from "react";
@@ -25,15 +26,16 @@ import { useApproveMutation, useInboxList, useRejectMutation, type InboxFilters 
 import { useConnectors } from "@/hooks/useConnectors";
 import { AuditList } from "@/routes";
 import { cn } from "@/lib/utils";
+import { AmbientGraph } from "@/design-system/v2/AmbientGraph";
+import { CountUp } from "@/design-system/v2/CountUp";
+import { useAppShell } from "@/components/app-shell-context";
 import {
   AtAGlance,
   DataHealth,
   LiveStatusLine,
   OnboardingState,
   ProposalRow,
-  StatTile,
-  type GlanceHighlight,
-  type StatTone
+  type GlanceHighlight
 } from "@/components/dashboard";
 
 type ValidRoute = "/people" | "/orgs" | "/review" | "/settings";
@@ -41,43 +43,111 @@ type ValidRoute = "/people" | "/orgs" | "/review" | "/settings";
 const PROPOSAL_FILTERS: InboxFilters = { status: "proposed" };
 
 /**
- * Drill-into-able stat tile. Wraps the presentational StatTile in a typed Link
- * (route types differ from the preview, so the Link lives here, not in the
- * component). The `group` parent drives the StatTile's hover lift.
+ * A single count-up stat tile for the v2 command-center hero. Layered glass over
+ * the ambient graph backdrop; the number animates from 0 → value once on
+ * scroll-into-view (CountUp respects prefers-reduced-motion → final value, no
+ * animation). Drills into `to` when provided.
  *
- * NOTE on trends: the dashboard MCP endpoint returns current counts only — no
- * weekly history — so live tiles deliberately do NOT fabricate a "+N this week"
- * delta or sparkline. They render the `hint` instead and gracefully omit the
- * sparkline. The full living-tile treatment (delta + sparkline) is exercised in
- * the design-system preview with representative data. Wire `trend` here once the
- * backend exposes a time series.
+ * Exported so the dev-only dashboard-hero preview can mount the EXACT production
+ * tile (not a twin) without auth or a backend.
  */
-function StatLink({
-  label,
+export function HeroStat({
+  icon: Icon,
   value,
-  icon,
-  tone,
-  to,
-  hint
+  decimals,
+  suffix,
+  label,
+  sub,
+  to
 }: {
-  label: string;
-  value: string | number;
   icon: LucideIcon;
-  tone: StatTone;
+  value: number;
+  decimals?: number;
+  suffix?: string;
+  label: string;
+  sub?: string;
   to?: ValidRoute;
-  hint?: string;
 }) {
-  const tile = <StatTile label={label} value={value} icon={icon} tone={tone} hint={hint} interactive={Boolean(to)} />;
-  if (!to) return tile;
+  const body = (
+    <div className="co-v2-glass co-v2-glass-edge relative h-full overflow-hidden p-5 transition-shadow group-hover:shadow-[var(--co-v2-shadow-cinematic)]">
+      <div className="flex items-center justify-between">
+        <span className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] border border-[oklch(var(--co-brand-300)/0.3)] bg-[oklch(var(--co-brand-500)/0.12)] text-[oklch(var(--co-brand-300))]">
+          <Icon className="h-[18px] w-[18px]" strokeWidth={1.8} />
+        </span>
+        <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">{label}</span>
+      </div>
+      <div className="mt-4 text-3xl font-bold tracking-tight text-foreground">
+        <CountUp value={value} decimals={decimals} suffix={suffix} />
+      </div>
+      {sub ? <p className="mt-1 text-xs text-muted-foreground">{sub}</p> : null}
+    </div>
+  );
+  if (!to) return body;
   return (
-    <Link to={to} aria-label={`Open ${label}`} className="focus-ring group relative block rounded-xl">
-      {tile}
-      <ChevronRight
-        className="absolute bottom-5 right-5 h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-        strokeWidth={1.8}
-        aria-hidden
-      />
+    <Link to={to} aria-label={`Open ${label}`} className="focus-ring group block rounded-[var(--radius-lg)]">
+      {body}
     </Link>
+  );
+}
+
+/**
+ * v2 command-center hero — the cinematic dashboard brand surface. Greeting +
+ * "Your relationship graph at a glance" + real count-up stat tiles over an
+ * ambient relationship-graph backdrop, with the "Ask the Analyst" and "Review
+ * queue" actions. Tiles are passed in already filtered to metrics that actually
+ * exist (the caller omits any it can't back with real data — no fabricated
+ * numbers). The graph + bloom are decorative (aria-hidden) and reduced-motion
+ * gated; all text sits on .co-v2-stage-content with its own AA contrast.
+ *
+ * Exported so the dev-only dashboard-hero preview can mount the EXACT production
+ * hero (not a twin) without auth or a backend.
+ */
+export function CommandCenterHero({
+  greeting,
+  name,
+  tiles,
+  onAskAnalyst
+}: {
+  greeting: string;
+  name: string;
+  tiles: React.ReactNode;
+  onAskAnalyst: () => void;
+}) {
+  return (
+    <div className="co-v2-ambient relative overflow-hidden rounded-[var(--radius-lg)] border border-[oklch(var(--co-v2-glass-hairline))] shadow-[var(--shadow-3)]">
+      <AmbientGraph nodeCount={24} linkDistance={0.26} className="opacity-60" />
+      <div className="co-v2-stage-content p-6 lg:p-8">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">
+              {greeting}, <span className="font-medium text-foreground">{name}</span>
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground lg:text-3xl">
+              Your relationship graph at a glance
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="gradient" size="sm" className="co-v2-hover-bloom" onClick={onAskAnalyst}>
+              <Wand2 className="h-3.5 w-3.5" strokeWidth={2} />
+              Ask the Analyst
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="border-[oklch(var(--co-v2-glass-hairline-strong))] bg-[oklch(var(--co-v2-glass-fill))] backdrop-blur"
+            >
+              <Link to="/review">
+                <ListChecks className="h-3.5 w-3.5" strokeWidth={2} />
+                Review queue
+              </Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{tiles}</div>
+      </div>
+    </div>
   );
 }
 
@@ -147,6 +217,9 @@ export function DashboardRoute() {
   const proposals = useInboxList(PROPOSAL_FILTERS);
   const approve = useApproveMutation(PROPOSAL_FILTERS);
   const reject = useRejectMutation(PROPOSAL_FILTERS);
+  // "Ask the Analyst" opens the SAME shell-owned panel as the top-bar Sparkles
+  // button / ⌘J — never a duplicate instance.
+  const { openAnalyst } = useAppShell();
 
   const getTimeOfDayGreeting = () => {
     const hour = new Date().getHours();
@@ -257,25 +330,53 @@ export function DashboardRoute() {
         : " The review queue is clear — agents are keeping records clean.")
     : undefined;
 
+  // v2 command-center hero stat tiles — built ONLY from metrics the registry
+  // actually exposes. People/Organizations are core counts (always real).
+  // Pending reviews is shown only once the inbox query has resolved (a real 0 =
+  // "queue clear"; undefined = not-yet-loaded → omit, never faked). Agent
+  // activity is the count of distinct agents in the loaded proposals. There is
+  // deliberately NO "graph health" tile — the dashboard endpoint exposes no such
+  // metric, so we omit it rather than invent a percentage.
+  const heroTiles = (
+    <>
+      <HeroStat icon={Users} value={peopleCount} label="People" to="/people" />
+      <HeroStat icon={Building2} value={orgCount} label="Organizations" to="/orgs" />
+      {pendingCount !== undefined ? (
+        <HeroStat
+          icon={ListChecks}
+          value={pendingCount}
+          label="Pending review"
+          sub="awaiting your decision"
+          to="/review"
+        />
+      ) : null}
+      <HeroStat icon={Sparkles} value={agentCount} label="Agents active" sub="proposing changes" />
+    </>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Hero header — gradient wordmark accent + date/live-status line */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {getTimeOfDayGreeting()}, <span className="bg-gradient-brand-text">{displayName}</span>
-          </h1>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <LiveStatusLine live={toolCount > 0} statusLabel={toolCount > 0 ? "Live" : "Offline"} />
-            <span className="text-border" aria-hidden>
-              ·
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {toolCount ? `${toolCount} MCP tools available` : "Connecting to your registry"}
-            </span>
-          </div>
+      {/* v2 command-center hero — greeting + real count-up tiles over the
+          ambient relationship graph, with Ask-the-Analyst + Review-queue. */}
+      <CommandCenterHero
+        greeting={getTimeOfDayGreeting()}
+        name={displayName}
+        tiles={heroTiles}
+        onAskAnalyst={openAnalyst}
+      />
+
+      {/* Calm status + primary-add line beneath the cinematic hero. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LiveStatusLine live={toolCount > 0} statusLabel={toolCount > 0 ? "Live" : "Offline"} />
+          <span className="text-border" aria-hidden>
+            ·
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {toolCount ? `${toolCount} MCP tools available` : "Connecting to your registry"}
+          </span>
         </div>
-        <Button asChild variant="gradient" className="h-9">
+        <Button asChild variant="outline" size="sm" className="h-9">
           <Link to="/people">
             <Plus className="h-4 w-4" strokeWidth={1.8} />
             Add person
@@ -319,27 +420,6 @@ export function DashboardRoute() {
             context={hasGlanceSignal ? "Synthesized from your registry" : undefined}
             highlights={glanceHighlights}
           />
-
-          {/* Stat tiles */}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatLink label="People" value={peopleCount.toLocaleString()} icon={Users} tone="fuchsia" to="/people" />
-            <StatLink label="Organizations" value={orgCount.toLocaleString()} icon={Building2} tone="emerald" to="/orgs" />
-            <StatLink
-              label="Pending reviews"
-              value={pendingCount ?? "—"}
-              icon={ListChecks}
-              tone="amber"
-              to="/review"
-              hint="Awaiting your decision"
-            />
-            <StatLink
-              label="Agent activity"
-              value={agentCount}
-              icon={Sparkles}
-              tone="sky"
-              hint={agentCount === 1 ? "agent proposing changes" : "agents proposing changes"}
-            />
-          </div>
 
           {/* Main + right rail */}
           <div className="grid gap-6 lg:grid-cols-3">

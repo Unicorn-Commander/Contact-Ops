@@ -4,6 +4,7 @@ import {
   BookUser,
   Building2,
   Cable,
+  Command,
   Home,
   ListChecks,
   LogOut,
@@ -18,14 +19,16 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useAuth } from "react-oidc-context";
 import { useHotkeys } from "react-hotkeys-hook";
 import { Button } from "@/components/ui/button";
 import { KeyboardHint } from "@/design-system/KeyboardHint";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
+import { AskAnalystDock } from "@/components/AskAnalystDock";
 import { cn, initials } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
+import { AppShellProvider } from "@/components/app-shell-context";
 
 // Lazy-load the palette so its cmdk + Radix-dialog code splits into the async
 // `cmdk` chunk (matching the Inbox) instead of weighing down the eager shell
@@ -232,6 +235,23 @@ export function AppShell() {
     setAnalystOpen(true);
   };
 
+  // Published to descendant routes (e.g. the Dashboard's "Ask the Analyst" CTA)
+  // so they open the *same* shell-owned overlays instead of duplicating them.
+  // State setters are stable, so the value only needs to be created once.
+  const shellActions = useMemo(
+    () => ({
+      openAnalyst: () => {
+        setAnalystMounted(true);
+        setAnalystOpen(true);
+      },
+      openPalette: () => {
+        setPaletteMounted(true);
+        setPaletteOpen(true);
+      }
+    }),
+    []
+  );
+
   return (
     <div className="min-h-screen bg-background">
       {/* Mobile drawer + backdrop */}
@@ -294,25 +314,28 @@ export function AppShell() {
             >
               <Search className="h-4 w-4" strokeWidth={1.8} />
             </Button>
-            {/* AI Contacts Analyst trigger — gradient-tinted Sparkles button.
-                The button itself stays variant="ghost" so it doesn't overpower
-                the bar; only the icon carries the brand gradient. */}
-            <Button
-              variant="ghost"
-              size="icon"
+            {/* AI Contacts Analyst trigger — first-class, labeled "Ask AI ⌘J"
+                pill (v2). Carries the brand gradient + a soft glow so the single
+                most powerful surface is obviously discoverable; sized h-9 to sit
+                in the bar without overpowering it. Same handler / hotkey wiring
+                as before — only the trigger's appearance changed.
+                On narrow screens it collapses to the gradient glyph alone (the
+                ⌘J label needs room), and the global ⌘J hotkey still applies. */}
+            <button
+              type="button"
               onClick={openAnalyst}
-              title="AI Contacts Analyst"
-              aria-label="Open AI Contacts Analyst"
+              title="Ask AI — open the AI Contacts Analyst (⌘J)"
+              aria-label="Ask AI. Open the AI Contacts Analyst."
               aria-keyshortcuts="Meta+J Control+J"
               aria-expanded={analystOpen}
+              className="co-v2-hover-bloom co-v2-glow-strong focus-ring bg-gradient-brand inline-flex h-9 items-center gap-2 rounded-full px-2.5 text-sm font-semibold text-primary-foreground sm:px-3.5"
             >
-              <span
-                className="bg-gradient-brand flex h-5 w-5 items-center justify-center rounded-md text-primary-foreground shadow-[var(--shadow-1)]"
-                aria-hidden="true"
-              >
-                <Sparkles className="h-3 w-3" strokeWidth={2} />
-              </span>
-            </Button>
+              <Sparkles className="h-4 w-4 shrink-0" strokeWidth={2} />
+              <span className="hidden sm:inline">Ask AI</span>
+              <kbd className="ml-0.5 hidden items-center gap-0.5 rounded bg-black/20 px-1.5 py-0.5 font-mono text-[11px] font-medium text-primary-foreground/90 sm:inline-flex">
+                <Command className="h-3 w-3" strokeWidth={2} />J
+              </kbd>
+            </button>
             <Button variant="ghost" size="icon" title="Notifications" aria-label="Notifications">
               <Bell className="h-4 w-4" strokeWidth={1.8} />
             </Button>
@@ -335,9 +358,16 @@ export function AppShell() {
         </header>
 
         <main className="mx-auto max-w-7xl p-4 lg:p-6">
-          <Outlet />
+          <AppShellProvider value={shellActions}>
+            <Outlet />
+          </AppShellProvider>
         </main>
       </div>
+
+      {/* Docked floating launcher — a second, more discoverable entry into the
+          SAME shell-owned Analyst panel (openAnalyst). Hidden while the panel is
+          open so it never sits under the rail; dismissible + reduced-motion safe. */}
+      <AskAnalystDock onOpen={openAnalyst} hidden={analystOpen} />
 
       {paletteMounted ? (
         <Suspense fallback={null}>

@@ -1,0 +1,299 @@
+/*
+ * tokens-v2.css — Design Language v2 (showcase-only, ADDITIVE)
+ * ============================================================
+ * A bolder, "near-future" visual layer for the Contact-Ops design language.
+ * This file is imported ONLY by the v2 showcase (ShowcaseV2.tsx) — it does
+ * NOT touch tokens.css and is NOT loaded by the live app. Every var/class is
+ * additive (prefixed --co-v2-* / .co-v2-*) so nothing here can collide with or
+ * override the canonical token system.
+ *
+ * Direction (replicates the *moves* of homegrow.magicunicorn.dev, NOT its green):
+ *   - deep ambient dark background + soft brand-colored gradient wash + vignette
+ *   - radial bloom behind brand / hero elements
+ *   - layered-depth glass cards (real shadows + hairline border + backdrop blur)
+ *   - tasteful motion, all gated behind prefers-reduced-motion
+ *
+ * Palette stays on Contact-Ops's existing hues: brand purple (304),
+ * fuchsia accent (330), cool neutral (280). No green.
+ *
+ * Dual-intensity: cinematic utilities (.co-v2-bloom-*, .co-v2-ambient-*) are for
+ * brand/command surfaces; calm utilities (.co-v2-glass-calm, .co-v2-row-*) keep
+ * dense data legible and never reduce scannability.
+ */
+
+:root,
+[data-theme="dark"] {
+  /* Ambient stage — a deeper, richer near-black than the app background so the
+     bloom + particles read with cinematic depth on hero surfaces. Still hue 280. */
+  --co-v2-stage: 0.115 0.014 282;
+  --co-v2-stage-deep: 0.085 0.012 284;
+
+  /* Bloom hues — brand purple core, fuchsia secondary. Reused by radial glows. */
+  --co-v2-bloom-brand: 0.62 0.205 304;
+  --co-v2-bloom-fuchsia: 0.66 0.24 330;
+
+  /* Particle / node field tint (drawn on canvas; exposed for parity).
+     Dark-mode luminosity bump: on the deep cinematic stage the graph was reading
+     too faint, so the dark theme uses brighter, slightly more chromatic node/edge
+     hues AND higher canvas alphas (--co-v2-*-alpha below) than light mode. The
+     graph canvas reads these vars, so this is a single token change applied
+     everywhere AmbientGraph is mounted. Foreground text never relies on these
+     (it carries its own AA contrast on the .co-v2-stage-content layer), so
+     brightening the decorative graph cannot lower text contrast. */
+  --co-v2-node: 0.86 0.19 304;
+  --co-v2-node-fuchsia: 0.84 0.23 330;
+  --co-v2-edge: 0.78 0.17 304;
+  /* Canvas alpha multipliers (consumed by AmbientGraph). Dark mode is punchier. */
+  --co-v2-node-core-alpha: 1;
+  --co-v2-node-halo-alpha: 0.6;
+  --co-v2-edge-alpha: 0.6;
+  --co-v2-dust-alpha: 1.25;
+
+  /* Layered-glass surface — translucent card with hairline highlight. */
+  --co-v2-glass-fill: 0.205 0.014 281 / 0.55;
+  --co-v2-glass-hairline: 0.92 0.02 304 / 0.1;
+  --co-v2-glass-hairline-strong: 0.92 0.02 304 / 0.16;
+
+  /* Cinematic layered shadow + brand bloom ring for hero glass. */
+  --co-v2-shadow-cinematic:
+    0 1px 0 0 oklch(0.98 0.02 304 / 0.06) inset,
+    0 2px 8px oklch(0.06 0.01 280 / 0.5),
+    0 16px 40px oklch(0.06 0.01 280 / 0.45),
+    0 36px 90px oklch(0.05 0.06 304 / 0.4);
+}
+
+[data-theme="light"] {
+  /* Light mode keeps the moves but at far lower intensity — a luminous,
+     airy field rather than a dark cinematic stage. AA is the priority here. */
+  --co-v2-stage: 0.975 0.006 304;
+  --co-v2-stage-deep: 0.955 0.012 304;
+
+  --co-v2-bloom-brand: 0.7 0.16 304;
+  --co-v2-bloom-fuchsia: 0.72 0.18 330;
+
+  --co-v2-node: 0.55 0.18 304;
+  --co-v2-node-fuchsia: 0.58 0.2 330;
+  --co-v2-edge: 0.55 0.14 304;
+  /* Light mode keeps the original (calmer) canvas alphas — it already read well;
+     the dark theme above is the one that needed the luminosity bump. */
+  --co-v2-node-core-alpha: 0.85;
+  --co-v2-node-halo-alpha: 0.35;
+  --co-v2-edge-alpha: 0.32;
+  --co-v2-dust-alpha: 1;
+
+  --co-v2-glass-fill: 0.999 0.001 280 / 0.66;
+  --co-v2-glass-hairline: 0.45 0.05 304 / 0.12;
+  --co-v2-glass-hairline-strong: 0.45 0.05 304 / 0.2;
+
+  --co-v2-shadow-cinematic:
+    0 1px 0 0 oklch(1 0 0 / 0.7) inset,
+    0 2px 8px oklch(0.4 0.05 304 / 0.08),
+    0 16px 40px oklch(0.4 0.05 304 / 0.1),
+    0 36px 90px oklch(0.4 0.05 304 / 0.12);
+}
+
+/* ---- Ambient stage: dark wash + dual radial bloom + vignette --------------- */
+/* Used as the backdrop layer behind hero/login/dashboard sections. The graph
+   canvas + particles sit on top of this; text content sits on top of those. */
+.co-v2-ambient {
+  position: relative;
+  isolation: isolate;
+  background-color: oklch(var(--co-v2-stage));
+  background-image:
+    radial-gradient(120% 80% at 18% 0%, oklch(var(--co-v2-bloom-brand) / 0.22), transparent 60%),
+    radial-gradient(90% 70% at 92% 12%, oklch(var(--co-v2-bloom-fuchsia) / 0.16), transparent 55%),
+    radial-gradient(140% 120% at 50% 120%, oklch(var(--co-v2-stage-deep) / 0.9), transparent 70%);
+}
+
+/* Vignette — darken the edges so the bloom + content focus to center. Pure
+   overlay, pointer-events:none so it never intercepts clicks. */
+.co-v2-vignette::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 40%, transparent 55%, oklch(0.04 0.01 280 / 0.55) 100%);
+}
+
+[data-theme="light"] .co-v2-vignette::after {
+  background: radial-gradient(120% 100% at 50% 40%, transparent 60%, oklch(0.5 0.04 304 / 0.1) 100%);
+}
+
+/* Keep hero text/content above the ambient + vignette + canvas layers. */
+.co-v2-stage-content {
+  position: relative;
+  z-index: 2;
+}
+
+/* ---- Radial bloom: a soft glow placed behind a brand element --------------- */
+.co-v2-bloom {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(circle, oklch(var(--co-v2-bloom-brand) / 0.55), transparent 68%);
+  filter: blur(46px);
+}
+
+.co-v2-bloom-fuchsia {
+  background: radial-gradient(circle, oklch(var(--co-v2-bloom-fuchsia) / 0.45), transparent 68%);
+}
+
+/* Soft pulsing bloom — for the logo mark / primary hero glyph. */
+.co-v2-bloom-pulse {
+  animation: co-v2-bloom-pulse 6s ease-in-out infinite;
+}
+
+@keyframes co-v2-bloom-pulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+/* ---- Layered-depth glass --------------------------------------------------- */
+/* Cinematic glass — hero/login card. Real layered shadow + hairline + blur. */
+.co-v2-glass {
+  position: relative;
+  background-color: oklch(var(--co-v2-glass-fill));
+  border: 1px solid oklch(var(--co-v2-glass-hairline-strong));
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: var(--co-v2-shadow-cinematic);
+}
+
+/* A brighter hairline highlight across the glass top edge (the "light from
+   above" read that sells depth). */
+.co-v2-glass-edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(180deg, oklch(var(--co-v2-glass-hairline-strong)), transparent 40%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* Calm glass — for dense data surfaces (rows, person cards). Lower blur, single
+   restrained shadow, no bloom. Readability/scannability first. */
+.co-v2-glass-calm {
+  background-color: oklch(var(--co-v2-glass-fill));
+  border: 1px solid oklch(var(--co-v2-glass-hairline));
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- Brand bloom button (a louder cousin of .co-glow-brand) ---------------- */
+.co-v2-glow-strong {
+  box-shadow:
+    0 6px 22px oklch(var(--co-brand-500) / 0.4),
+    0 2px 8px oklch(var(--co-fuchsia-500) / 0.28);
+}
+
+/* Hover-bloom: the glow blooms outward on hover (transform/box-shadow only, no
+   layout thrash). Gated by reduced-motion below. */
+.co-v2-hover-bloom {
+  transition: box-shadow var(--motion-base) var(--motion-ease-out),
+    transform var(--motion-base) var(--motion-ease-out);
+}
+
+.co-v2-hover-bloom:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 34px oklch(var(--co-brand-500) / 0.5),
+    0 3px 12px oklch(var(--co-fuchsia-500) / 0.34);
+}
+
+/* ---- Dense-data row (calm) ------------------------------------------------- */
+/* A scannable review-queue row. Flat by default, gentle brand tint on hover /
+   focus. NO bloom, NO blur on the resting state — speed + legibility. */
+.co-v2-row {
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.co-v2-row:hover,
+.co-v2-row:focus-within {
+  border-color: oklch(var(--co-brand-300) / 0.32);
+  background-color: oklch(var(--co-brand-500) / 0.06);
+}
+
+/* A thin status accent rail at the row's leading edge (agent attribution). */
+.co-v2-row-rail {
+  box-shadow: inset 3px 0 0 0 var(--co-v2-rail-color, oklch(var(--co-agent-color)));
+}
+
+/* ---- Gradient wordmark, louder than the canon bg-gradient-brand-text ------- */
+/* Adds a soft text-bloom behind the gradient fill for the hero wordmark. */
+.co-v2-wordmark {
+  background: linear-gradient(
+    100deg,
+    oklch(0.82 0.14 304),
+    oklch(0.78 0.2 330) 55%,
+    oklch(0.86 0.12 304)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+[data-theme="light"] .co-v2-wordmark {
+  background: linear-gradient(
+    100deg,
+    oklch(0.47 0.17 304),
+    oklch(0.5 0.22 330) 55%,
+    oklch(0.45 0.16 304)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* ---- Animated gradient shimmer for a single accent word -------------------- */
+.co-v2-wordmark-animate {
+  background-size: 220% 100%;
+  animation: co-v2-text-pan 9s ease-in-out infinite;
+}
+
+@keyframes co-v2-text-pan {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* ---- Section scaffolding for the showcase ---------------------------------- */
+.co-v2-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(var(--co-brand-300) / 0.3) 50%,
+    transparent
+  );
+}
+
+/* ---- Reduced motion: kill every v2 animation; render final state ----------- */
+@media (prefers-reduced-motion: reduce) {
+  .co-v2-bloom-pulse,
+  .co-v2-wordmark-animate {
+    animation: none !important;
+  }
+  .co-v2-bloom-pulse {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .co-v2-hover-bloom {
+    transition: none !important;
+  }
+  .co-v2-hover-bloom:hover {
+    transform: none !important;
+  }
+}
