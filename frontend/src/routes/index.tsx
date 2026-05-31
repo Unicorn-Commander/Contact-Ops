@@ -129,6 +129,18 @@ const PATPreviewRoute = import.meta.env.DEV
     )
   : null;
 
+// Review Queue v2 preview — auth-free preview of the REAL Review-Queue
+// components (ClusterCard / ProposalRow / ConflictBanner / bulk surfaces) over
+// a representative sample so the redesign can be screenshot-gated without a
+// Keycloak session or the MCP backend. DEV only.
+const ReviewQueuePreviewRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import("@/design-system/ReviewQueuePreview").then((m) => ({
+        default: m.ReviewQueuePreview
+      }))
+    )
+  : null;
+
 function LazyInboxRoute() {
   return (
     <Suspense
@@ -344,6 +356,23 @@ function LazyPATPreviewRoute() {
           <PATPreviewRoute />
         </div>
       </div>
+    </Suspense>
+  );
+}
+
+function LazyReviewQueuePreviewRoute() {
+  if (!ReviewQueuePreviewRoute) return null;
+  // The preview renders its own full-screen <main> (header + padding), so this
+  // wrapper is a bare Suspense boundary — same shape as LazyDesignSystemV2Route.
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Skeleton className="h-32 w-72" />
+        </div>
+      }
+    >
+      <ReviewQueuePreviewRoute />
     </Suspense>
   );
 }
@@ -578,6 +607,13 @@ const designSystemPATsRoute = import.meta.env.DEV
       component: LazyPATPreviewRoute
     })
   : null;
+const designSystemReviewQueueRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/design-system/review-queue",
+      component: LazyReviewQueuePreviewRoute
+    })
+  : null;
 const callbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/auth/callback",
@@ -612,6 +648,7 @@ export const routeTree = rootRoute.addChildren([
   ...(designSystemIcloudModalRoute ? [designSystemIcloudModalRoute] : []),
   ...(designSystemBulkApproveRoute ? [designSystemBulkApproveRoute] : []),
   ...(designSystemPATsRoute ? [designSystemPATsRoute] : []),
+  ...(designSystemReviewQueueRoute ? [designSystemReviewQueueRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
   appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
   callbackRoute

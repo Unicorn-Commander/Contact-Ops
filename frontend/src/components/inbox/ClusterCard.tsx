@@ -23,7 +23,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ProposalRow } from "@/components/inbox/ProposalRow";
 import { SwipeableProposalRow } from "@/components/inbox/SwipeableProposalRow";
-import { AgentBadge, ConfidenceIndicator, KeyboardHint, MonoNumeric } from "@/design-system";
+import { AgentBadge, KeyboardHint, MonoNumeric } from "@/design-system";
+import { ConfidenceMeterV2 } from "@/design-system/v2/ConfidenceMeterV2";
 
 const MAX_INLINE = 12;
 
@@ -75,7 +76,7 @@ export function ClusterCard({
   const eligibleCount = proposals.filter((p) => p.confidence >= 0.85).length;
 
   return (
-    <Card className="overflow-hidden rounded-md border-border bg-card/95 shadow-[var(--shadow-1)]">
+    <Card className="co-v2-glass-calm overflow-hidden border-transparent">
       <header
         role="button"
         tabIndex={0}
@@ -89,7 +90,7 @@ export function ClusterCard({
         className={cn(
           "flex items-center gap-co-8 px-co-12 py-co-8",
           "cursor-pointer select-none",
-          "transition-colors duration-150 ease-snappy hover:bg-muted/60",
+          "transition-colors duration-150 ease-snappy hover:bg-[oklch(var(--co-brand-500)/0.06)]",
           "focus-ring",
         )}
         aria-expanded={expanded}
@@ -131,12 +132,7 @@ export function ClusterCard({
         <Badge variant="outline" className="h-5 rounded-[var(--radius-sm)] px-co-6 font-mono text-11" aria-label={`${proposals.length} proposals`}>
           <MonoNumeric tone="muted">{proposals.length}</MonoNumeric>
         </Badge>
-        <ConfidenceIndicator
-          value={cluster.cumulative_confidence_avg}
-          mode="binary"
-          showLabel={false}
-          size="sm"
-        />
+        <ConfidenceMeterV2 value={cluster.cumulative_confidence_avg} showLabel={false} />
         <div className="hidden items-center gap-0.5 sm:flex">
           {cluster.agent_slugs.slice(0, 4).map((slug) => (
             <AgentBadge key={slug} slug={slug} size="xs" showLabel={false} />
@@ -158,7 +154,7 @@ export function ClusterCard({
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: prefersReduced ? 0 : 0.18, ease: "easeInOut" }}
-            className="overflow-hidden border-t border-border bg-background/35"
+            className="overflow-hidden border-t border-[oklch(var(--co-v2-glass-hairline))] bg-background/30"
           >
             <div className="space-y-co-4 p-co-6">
               {visible.map((p) =>
@@ -192,11 +188,11 @@ export function ClusterCard({
                 </p>
               )}
             </div>
-            <footer className="flex flex-wrap items-center justify-end gap-co-6 border-t border-border bg-muted/35 px-co-8 py-co-6">
+            <footer className="flex flex-wrap items-center justify-end gap-co-6 border-t border-[oklch(var(--co-v2-glass-hairline))] bg-muted/30 px-co-8 py-co-6">
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 gap-co-4 text-12 text-success hover:bg-success/10"
+                className="h-7 gap-co-4 border-success/40 bg-success/10 text-12 text-success hover:bg-success/20"
                 disabled={eligibleCount === 0}
                 onClick={(e) => {
                   e.stopPropagation();

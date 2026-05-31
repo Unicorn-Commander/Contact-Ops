@@ -562,6 +562,7 @@ function InboxCockpit() {
         focusMode={focusMode.enabled}
         onToggleFocusMode={focusMode.toggle}
         totals={totals}
+        clusterCount={hydrated.length}
         conflictsOnly={conflictsOnly}
         onToggleConflicts={() => setConflictsOnly((v) => !v)}
       />
@@ -803,12 +804,18 @@ type HeaderProps = {
   focusMode: boolean;
   onToggleFocusMode: () => void;
   totals: { today: number; approved: number; rejected: number; snoozed: number };
+  clusterCount: number;
   conflictsOnly: boolean;
   onToggleConflicts: () => void;
 };
 
-function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals, conflictsOnly, onToggleConflicts }: HeaderProps) {
-  void view;
+const VIEW_LABEL: Record<View, string> = {
+  "needs-review": "awaiting your review",
+  snoozed: "snoozed",
+  resolved: "recently resolved",
+};
+
+function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals, clusterCount, conflictsOnly, onToggleConflicts }: HeaderProps) {
   void onViewChange;
   const handleSendToDesktop = useCallback(() => {
     const url = import.meta.env.VITE_DESKTOP_HANDOFF_URL;
@@ -820,24 +827,27 @@ function InboxHeader({ view, onViewChange, focusMode, onToggleFocusMode, totals,
   return (
     <header className="flex flex-wrap items-center gap-co-12 border-b border-border bg-background/95 px-co-16 py-co-8 shadow-[var(--shadow-1)]">
       <span className="inline-flex items-center gap-co-8">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[oklch(var(--co-rose-500)/0.14)] text-[oklch(var(--co-rose-500))]">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[oklch(var(--co-brand-300)/0.3)] bg-[oklch(var(--co-brand-500)/0.12)] text-[oklch(var(--co-brand-300))]">
           <ListChecks className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
         </span>
-        <h1 className="text-14 font-semibold tracking-tight text-foreground">Review Queue</h1>
+        <span className="leading-tight">
+          <h1 className="text-14 font-semibold tracking-tight text-foreground">Review Queue</h1>
+          <p className="text-11 text-muted-foreground">Agent-proposed changes to your graph</p>
+        </span>
       </span>
-      <span aria-hidden className="hidden h-5 w-px bg-border sm:block" />
-      <span className="inline-flex flex-wrap items-center gap-co-6 text-13 text-muted-foreground">
-        <MonoNumeric tone="muted">{totals.today}</MonoNumeric>
-        <span>today</span>
-        <span>/</span>
-        <MonoNumeric tone="muted">{totals.approved}</MonoNumeric>
-        <span>approved</span>
-        <span>/</span>
-        <MonoNumeric tone="muted">{totals.rejected}</MonoNumeric>
-        <span>rejected</span>
-        <span>/</span>
-        <MonoNumeric tone="muted">{totals.snoozed}</MonoNumeric>
-        <span>snoozed</span>
+      <span aria-hidden className="hidden h-7 w-px bg-border sm:block" />
+      {/* Live count — the real signal (pending proposals + how many groups they
+          fall into). We deliberately do NOT show approved/rejected/snoozed
+          tallies here: those aren't computed server-side yet and would read as
+          a misleading "0". */}
+      <span className="inline-flex flex-wrap items-baseline gap-co-6 text-13 text-muted-foreground" aria-live="polite">
+        <MonoNumeric tone="strong">{totals.today}</MonoNumeric>
+        <span>{totals.today === 1 ? "proposal" : "proposals"} {VIEW_LABEL[view]}</span>
+        {view === "needs-review" && clusterCount > 0 ? (
+          <span className="text-muted-foreground">
+            · <MonoNumeric tone="muted">{clusterCount}</MonoNumeric> {clusterCount === 1 ? "group" : "groups"}
+          </span>
+        ) : null}
       </span>
       <div className="hidden items-center gap-co-4 text-muted-foreground xl:flex">
         <KeyboardHint keys="J" label="Next proposal" />
@@ -883,13 +893,18 @@ type NavSidebarProps = {
 };
 
 function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
-  const items: { id: View; label: string; count: number }[] = [
+  // Only "needs-review" has a server-computed count today; we show it on that
+  // item and leave the others count-less rather than render a misleading "0".
+  const items: { id: View; label: string; count: number | null }[] = [
     { id: "needs-review", label: "Needs Review", count: totals.today },
-    { id: "snoozed", label: "Snoozed", count: 0 },
-    { id: "resolved", label: "Recently Resolved", count: 0 },
+    { id: "snoozed", label: "Snoozed", count: null },
+    { id: "resolved", label: "Recently Resolved", count: null },
   ];
   return (
     <nav className="co-scrollbar h-full overflow-y-auto border-r border-border bg-card/85 p-co-8" aria-label="Review Queue sections">
+      <p className="px-co-10 pb-co-6 pt-co-4 font-mono text-11 font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        Sections
+      </p>
       <ul className="space-y-co-4">
         {items.map((it) => (
           <li key={it.id}>
@@ -898,21 +913,23 @@ function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
               onClick={() => onViewChange(it.id)}
               className={cn(
                 "focus-ring flex w-full items-center justify-between rounded-md px-co-10 py-co-8 text-13",
-                "transition-colors duration-150 ease-snappy hover:bg-muted",
-                view === it.id && "bg-primary/10 font-medium text-link",
+                "transition-colors duration-150 ease-snappy hover:bg-[oklch(var(--co-brand-500)/0.06)]",
+                view === it.id && "border border-[oklch(var(--co-brand-300)/0.32)] bg-[oklch(var(--co-brand-500)/0.1)] font-medium text-foreground",
               )}
               aria-current={view === it.id ? "page" : undefined}
             >
               <span>{it.label}</span>
-              <Badge variant="outline" className={cn("rounded-[var(--radius-sm)] px-co-6 font-mono text-11", view === it.id && "border-primary/30")}>
-                <MonoNumeric tone="muted">{it.count}</MonoNumeric>
-              </Badge>
+              {it.count != null ? (
+                <Badge variant="outline" className={cn("rounded-[var(--radius-sm)] px-co-6 font-mono text-11", view === it.id && "border-[oklch(var(--co-brand-300)/0.4)]")}>
+                  <MonoNumeric tone="muted">{it.count}</MonoNumeric>
+                </Badge>
+              ) : null}
             </button>
           </li>
         ))}
       </ul>
       <div className="mt-co-24 space-y-co-4">
-        <p className="px-co-10 font-mono text-11 font-semibold uppercase text-muted-foreground">
+        <p className="px-co-10 font-mono text-11 font-semibold uppercase tracking-[0.1em] text-muted-foreground">
           Saved views
         </p>
         <p className="px-co-10 text-12 text-muted-foreground italic">
