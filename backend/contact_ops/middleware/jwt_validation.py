@@ -203,6 +203,26 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             )
             return None
 
+        # 4b. azp/client_id allow-list (design §5): only sanctioned Keycloak
+        # clients may present a tenant_id claim, so a rogue uchub client cannot
+        # forge a workspace binding. Brigade/PAT use separate validation paths.
+        # Warn-only until TENANT_CLAIM_AZP_ENFORCE is set, so real azp values can
+        # be observed in logs before any hard rejection.
+        allowed_azp = self.settings.TENANT_CLAIM_ALLOWED_AZP
+        if allowed_azp:
+            azp = claims.get("azp") or claims.get("client_id")
+            if azp not in allowed_azp:
+                if self.settings.TENANT_CLAIM_AZP_ENFORCE:
+                    logger.warning(
+                        "jwt_azp_rejected", azp=azp, tenant_id=claims.get("tenant_id")
+                    )
+                    return None
+                logger.warning(
+                    "jwt_azp_not_allowlisted_warn_only",
+                    azp=azp,
+                    tenant_id=claims.get("tenant_id"),
+                )
+
         # 5. Normalize uc_uid to a single guaranteed-present claim. Keycloak
         # tokens may carry an explicit `uc_uid`; otherwise fall back to the
         # standard `sub`. Reject (same fail-closed pattern as tenant_id) if
