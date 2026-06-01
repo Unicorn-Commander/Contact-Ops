@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 
 from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.errors import (
@@ -481,6 +481,101 @@ async def set_tenant_membership(
     )
 
 
+# ---------------------------------------------------------------------------
+# grant_workspace_access (user_tenant_membership — the workspace ACCESS primitive)
+# ---------------------------------------------------------------------------
+
+
+WORKSPACE_ROLES = ("viewer", "member", "manager", "admin")
+
+
+class GrantWorkspaceAccessInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_uc_uid: str = Field(min_length=1, max_length=255)
+    role: Literal[WORKSPACE_ROLES] = "member"  # type: ignore[valid-type]
+    is_default: bool = False
+    consent_basis: Literal[CONSENT_BASES] | None = None  # type: ignore[valid-type]
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class GrantWorkspaceAccessOutput(ToolOutput):
+    user_uc_uid: str
+    tenant_id: uuid.UUID
+    role: str
+    status: str
+    event_id: uuid.UUID | None = None
+
+
+async def grant_workspace_access(
+    ctx: MCPContext, req: GrantWorkspaceAccessInput
+) -> GrantWorkspaceAccessOutput:
+    """Grant a user an active membership in the CALLER'S workspace (ctx.tenant_id).
+
+    The user->tenant ACCESS primitive behind the workspace switcher (distinct from
+    set_tenant_membership, which is a contact-visibility lens). RLS WITH CHECK on
+    user_tenant_membership enforces tenant_id = current_tenant_id(), so an admin can
+    only grant into the workspace their session is bound to. HIPAA workspaces require
+    a consent_basis (mirrors set_tenant_membership / design §3.6).
+    """
+    require_role(ctx, "ADMIN")
+    require_scopes(ctx, ["tenant:write", "membership:write"])
+
+    tenant = await _load_tenant(ctx, ctx.tenant_id)
+    if tenant.hipaa_mode and req.consent_basis is None:
+        raise ToolError(
+            HIPAA_TENANT_REQUIRES_CONSENT_BASIS,
+            "consent_basis is required when the workspace has hipaa_mode",
+        )
+
+    await ctx.db.execute(
+        text(
+            """
+            INSERT INTO user_tenant_membership
+                (user_uc_uid, tenant_id, role, status, is_default, consent_basis, added_by)
+            VALUES (:u, :t, :r, 'active', :d, CAST(:cb AS consent_basis), :by)
+            ON CONFLICT (user_uc_uid, tenant_id) DO UPDATE
+              SET role = EXCLUDED.role,
+                  status = 'active',
+                  is_default = EXCLUDED.is_default,
+                  consent_basis = EXCLUDED.consent_basis,
+                  updated_at = now()
+            """
+        ),
+        {
+            "u": req.user_uc_uid,
+            "t": str(ctx.tenant_id),
+            "r": req.role,
+            "d": req.is_default,
+            "cb": req.consent_basis,
+            "by": str(ctx.user_id),
+        },
+    )
+    await ctx.db.flush()
+
+    event_id = await emit_action_event(
+        ctx,
+        event_type="workspace_access.grant",
+        aggregate_type="tenant",
+        aggregate_id=ctx.tenant_id,
+        payload_before=None,
+        payload_after={
+            "user_uc_uid": req.user_uc_uid,
+            "tenant_id": str(ctx.tenant_id),
+            "role": req.role,
+            "is_default": req.is_default,
+        },
+        confidence=req.confidence,
+    )
+    return GrantWorkspaceAccessOutput(
+        user_uc_uid=req.user_uc_uid,
+        tenant_id=ctx.tenant_id,
+        role=req.role,
+        status="applied",
+        event_id=event_id,
+    )
+
+
 def _membership_summary(membership: PersonTenantMembership) -> dict[str, Any]:
     return {
         "person_id": str(membership.person_id),
@@ -739,6 +834,26 @@ def register_tenancy_tools() -> None:
         output_model=SetTenantMembershipOutput,
         handler=set_tenant_membership,
         required_role="STAFF",
+        required_scopes=("tenant:write", "membership:write"),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="natural-key",
+    )
+    register(
+        name="grant_workspace_access",
+        description=(
+            "Grant a user (by uc_uid) an active membership in the caller's "
+            "workspace, the access primitive behind the workspace switcher. "
+            "Requires ADMIN and tenant:write + membership:write."
+        ),
+        input_model=GrantWorkspaceAccessInput,
+        output_model=GrantWorkspaceAccessOutput,
+        handler=grant_workspace_access,
+        required_role="ADMIN",
         required_scopes=("tenant:write", "membership:write"),
         annotations={
             "readOnlyHint": False,
