@@ -103,6 +103,24 @@ async def bind_session_context(
         )
 
 
+async def _user_is_active_member(
+    session: AsyncSession, uc_uid: str, tenant_id: str
+) -> bool:
+    """Membership-gate predicate (design §4.4).
+
+    Calls the ``user_is_active_member`` SECURITY DEFINER function (migration 0037)
+    so the check is correct regardless of the session's RLS/GUC state. Fail-closed:
+    an empty uc_uid resolves to False.
+    """
+    if not uc_uid:
+        return False
+    result = await session.execute(
+        text("SELECT user_is_active_member(:u, CAST(:t AS uuid))"),
+        {"u": uc_uid, "t": tenant_id},
+    )
+    return bool(result.scalar())
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that yields an app-role session without tenant binding.
 
@@ -153,6 +171,21 @@ async def get_tenant_db(
         # tenant and uc_uid GUCs are set via the shared bind helper so they
         # never drift apart.
         await bind_session_context(session, tenant_id, uc_uid, settings)
+        # Membership gate (design §4.4): a human Keycloak session must hold an
+        # active user_tenant_membership for its tenant. Flag-gated (off until
+        # memberships are seeded, else it locks everyone out) and scoped to the
+        # Keycloak issuer — PAT, Brigade, and standalone use their own validation
+        # paths. Fail-closed.
+        if (
+            settings.MEMBERSHIP_GATE_ENFORCED
+            and claims.get("iss") == settings.KEYCLOAK_ISSUER
+            and not await _user_is_active_member(session, uc_uid, tenant_id)
+        ):
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="not a member of this workspace",
+            )
         try:
             yield session
             await session.commit()

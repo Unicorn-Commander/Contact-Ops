@@ -80,6 +80,23 @@ class Settings(BaseSettings):
     # it; no policy references it yet.
     UC_UID_GUC_NAME: str = "app.uc_uid"
 
+    # --- Phase 4.3 workspace-access controls ---
+    # azp/client_id allow-list (design §5): only these Keycloak clients may
+    # present a tenant_id claim, so a rogue uchub client cannot forge a
+    # workspace binding. Warn-only until TENANT_CLAIM_AZP_ENFORCE is flipped on
+    # (so real azp values are observed in logs before any hard rejection).
+    TENANT_CLAIM_ALLOWED_AZP: list[str] = [
+        "contact-ops-app",
+        "contact-ops-switch",
+        "contact-ops-mcp",
+    ]
+    TENANT_CLAIM_AZP_ENFORCE: bool = False
+    # Membership gate (design §4.4): when True, a human Keycloak session must
+    # have an active user_tenant_membership for its tenant or the request is
+    # refused. MUST stay False until memberships are seeded, else it locks
+    # everyone out; flipped on at activation alongside the seed.
+    MEMBERSHIP_GATE_ENFORCED: bool = False
+
     # Keycloak — uchub realm
     KEYCLOAK_ISSUER: str = Field(
         default="",
