@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     # refused. MUST stay False until memberships are seeded, else it locks
     # everyone out; flipped on at activation alongside the seed.
     MEMBERSHIP_GATE_ENFORCED: bool = False
+    # Boot RLS self-test probe tenants. Under the runtime role the self-test
+    # cannot enumerate tenants (RLS hides them with no GUC bound), so it skips.
+    # Provide >=2 known tenant ids here so it can actively assert cross-tenant
+    # isolation at boot. Empty -> falls back to enumerating tenants (works under
+    # a privileged/dev role). Safe if stale: a wrong id yields a trivially-
+    # passing test, never a false refuse-to-boot.
+    RLS_SELFTEST_TENANT_IDS: list[str] = []
 
     # Keycloak — uchub realm
     KEYCLOAK_ISSUER: str = Field(
