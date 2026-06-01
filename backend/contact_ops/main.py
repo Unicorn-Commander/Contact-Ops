@@ -106,14 +106,23 @@ async def _rls_boot_self_test(settings: Any) -> None:
             is_bypassrls = bool(role_row[1]) if role_row else False
             privileged = is_super or is_bypassrls
 
-            tenant_ids = [
-                str(r[0])
-                for r in (
-                    await conn.execute(
-                        text("SELECT id FROM tenants ORDER BY id LIMIT 2")
-                    )
-                ).all()
+            configured = [
+                str(t) for t in (settings.RLS_SELFTEST_TENANT_IDS or []) if t
             ]
+            if len(configured) >= 2:
+                # Under the runtime role, enumerating tenants returns nothing
+                # (RLS hides them without a bound GUC), so use configured probe
+                # ids to actively assert isolation instead of skipping.
+                tenant_ids = configured[:2]
+            else:
+                tenant_ids = [
+                    str(r[0])
+                    for r in (
+                        await conn.execute(
+                            text("SELECT id FROM tenants ORDER BY id LIMIT 2")
+                        )
+                    ).all()
+                ]
 
             if len(tenant_ids) < 2:
                 # Can't assert cross-tenant isolation with fewer than two

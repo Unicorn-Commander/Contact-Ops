@@ -112,6 +112,23 @@ def _tenant_summary(tenant: Tenant) -> dict[str, Any]:
     }
 
 
+def _tenant_label_only(tenant: Tenant, role: str | None) -> dict[str, Any]:
+    """Label-only projection for a non-home/non-child membership workspace.
+
+    Per design §2.4, never expose infra namespaces (graph_name, qdrant_namespace,
+    garage_bucket_prefix, owner_user_id, retention_policy) for a workspace the
+    caller only reaches via user_tenant_membership.
+    """
+    return {
+        "tenant_id": str(tenant.id),
+        "slug": tenant.slug,
+        "display_name": tenant.display_name,
+        "kind": tenant.kind.value,
+        "role": role,
+        "is_membership": True,
+    }
+
+
 # ---------------------------------------------------------------------------
 # list_tenants
 # ---------------------------------------------------------------------------
@@ -144,11 +161,45 @@ async def list_tenants(ctx: MCPContext, req: ListTenantsInput) -> ListTenantsOut
         .scalars()
         .all()
     )
-    items = rows[: req.limit]
+    home = rows[: req.limit]
+    home_ids = {t.id for t in home}
+    items = [_tenant_summary(tenant) for tenant in home]
+    next_cursor = home[-1].slug if len(rows) > req.limit and home else None
+
+    # Phase 4.3: append the caller's OTHER active-membership workspaces (label-only,
+    # §2.4) so the switcher can list them. First page only (no cursor); a user
+    # belongs to few workspaces. tenants_select RLS (0035) already permits these
+    # rows; the explicit user_uc_uid filter scopes to the caller regardless of RLS.
+    if not req.cursor:
+        uc_uid = str(getattr(ctx, "user_id", "") or "")
+        if uc_uid:
+            mem_rows = (
+                await ctx.db.execute(
+                    text(
+                        "SELECT tenant_id, role FROM user_tenant_membership "
+                        "WHERE user_uc_uid = :u AND status = 'active'"
+                    ),
+                    {"u": uc_uid},
+                )
+            ).all()
+            mem_roles = {row[0]: row[1] for row in mem_rows}
+            extra_ids = [tid for tid in mem_roles if tid not in home_ids]
+            if extra_ids:
+                extra = (
+                    await ctx.db.execute(
+                        select(Tenant).where(Tenant.id.in_(extra_ids))
+                    )
+                ).scalars().all()
+                for tenant in extra:
+                    if req.include_archived or tenant.deprecated_at is None:
+                        items.append(
+                            _tenant_label_only(tenant, mem_roles.get(tenant.id))
+                        )
+
     return ListTenantsOutput(
-        items=[_tenant_summary(tenant) for tenant in items],
+        items=items,
         count=len(items),
-        next_cursor=items[-1].slug if len(rows) > req.limit and items else None,
+        next_cursor=next_cursor,
     )
 
 
