@@ -155,6 +155,26 @@ class MCPServerInstance:
         async with async_session_maker() as db, audit_session_maker() as audit_db:
             await bind_session_context(db, str(self.tenant_id), uc_uid, settings)
             await bind_session_context(audit_db, str(self.tenant_id), uc_uid, settings)
+            # Membership gate (design §4.4): a human Keycloak session must hold an
+            # active user_tenant_membership for its tenant. Flag-gated (off until
+            # memberships are seeded), Keycloak-issuer-scoped (PAT/Brigade/standalone
+            # use their own validation paths). Fail-closed.
+            if (
+                settings.MEMBERSHIP_GATE_ENFORCED
+                and self.claims.get("iss") == settings.KEYCLOAK_ISSUER
+            ):
+                from contact_ops.core.database import _user_is_active_member
+
+                if not await _user_is_active_member(db, uc_uid, str(self.tenant_id)):
+                    await db.rollback()
+                    await audit_db.rollback()
+                    return error_result(
+                        ToolError(
+                            "NOT_A_MEMBER",
+                            "not a member of this workspace",
+                            retryable=False,
+                        )
+                    )
             ctx = MCPContext(
                 tenant_id=self.tenant_id,
                 user_id=self.user_id,
