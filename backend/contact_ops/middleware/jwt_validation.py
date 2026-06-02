@@ -223,12 +223,35 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
                     tenant_id=claims.get("tenant_id"),
                 )
 
-        # 5. Normalize uc_uid to a single guaranteed-present claim. Keycloak
-        # tokens may carry an explicit `uc_uid`; otherwise fall back to the
-        # standard `sub`. Reject (same fail-closed pattern as tenant_id) if
-        # neither is present, so downstream code can always rely on
-        # claims["uc_uid"] when binding the app.uc_uid GUC.
-        claims["uc_uid"] = claims.get("uc_uid") or claims.get("sub")
+        # 5. Resolve the actor identity. Contact-Ops keys identity on the
+        # Keycloak subject (the keycloakId) for KC-issued tokens. This is the
+        # canonical key per the federation identity model (apps resolve by
+        # keycloakId/email) and is exactly what `user_tenant_membership.user_uc_uid`
+        # is seeded with. We deliberately do NOT prefer a `uc_uid` claim here:
+        # contact-ops-app emits none today, and pinning to `sub` makes the
+        # membership key immune to a future stray `uc_uid` mapper silently
+        # re-keying every user (which would 403 them under the membership gate).
+        # If such a mapper is ever added, the divergence is logged LOUDLY so the
+        # change is made deliberately (with memberships re-keyed in lockstep),
+        # never silently. Fail-closed if `sub` is absent (same pattern as
+        # tenant_id) so downstream can always rely on claims["uc_uid"].
+        sub = claims.get("sub")
+        claimed_uc_uid = claims.get("uc_uid")
+        if claimed_uc_uid and claimed_uc_uid != sub:
+            logger.error(
+                "jwt_uc_uid_diverges_from_sub",
+                note=(
+                    "A Keycloak token carried a uc_uid claim that differs from "
+                    "sub. Contact-Ops keys membership on sub, so this claim is "
+                    "being IGNORED. If uc_uid is now the intended identity, "
+                    "re-key user_tenant_membership.user_uc_uid in lockstep "
+                    "before honoring it."
+                ),
+                uc_uid=claimed_uc_uid,
+                sub=sub,
+                tenant_id=claims.get("tenant_id"),
+            )
+        claims["uc_uid"] = sub
         if not claims["uc_uid"]:
             logger.warning(
                 "jwt_missing_uc_uid", tenant_id=claims.get("tenant_id"), iss=claims.get("iss")

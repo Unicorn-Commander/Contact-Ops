@@ -337,3 +337,63 @@ def test_no_token_returns_401_not_anonymous():
     # Settings already configured by _reset_settings autouse fixture
     resp = _mcp_post(token=None)
     assert resp.status_code == 401
+
+
+async def test_kc_uc_uid_pinned_to_sub_ignores_divergent_claim(rsa_keypair):
+    """A KC token whose uc_uid claim differs from sub resolves uc_uid to sub.
+
+    Contact-Ops keys membership (user_tenant_membership.user_uc_uid) on the
+    Keycloak subject. A stray uc_uid mapper must NOT silently re-key the
+    identity, which would 403 every user under the membership gate. The
+    divergent claim is ignored (and logged loudly) rather than honored.
+    """
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
+
+    now = int(time.time())
+    claims = {
+        "sub": "kc-subject-abc",
+        "uc_uid": "some-other-id-that-must-be-ignored",
+        "iss": VALID_ISSUER,
+        "aud": VALID_AUD,
+        "tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
+        "iat": now - 60,
+        "exp": now + 300,
+        "nbf": now - 60,
+    }
+    token = _make_token(claims, rsa_keypair["private_pem"])
+
+    mw = JWTValidationMiddleware(app, get_settings())
+    # Pre-seed the JWKS cache so _validate verifies offline (no network/respx).
+    mw._jwks = _jwks_response(rsa_keypair["jwk"])
+    mw._jwks_expires = time.time() + 3600
+    result = await mw._validate(token)
+
+    assert result is not None
+    # Pinned to sub — the divergent uc_uid claim is deliberately discarded.
+    assert result["uc_uid"] == "kc-subject-abc"
+
+
+async def test_kc_uc_uid_falls_back_to_sub_when_absent(rsa_keypair):
+    """A KC token with no uc_uid claim resolves uc_uid to sub (unchanged behavior)."""
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
+
+    now = int(time.time())
+    claims = {
+        "sub": "kc-subject-xyz",
+        "iss": VALID_ISSUER,
+        "aud": VALID_AUD,
+        "tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
+        "iat": now - 60,
+        "exp": now + 300,
+        "nbf": now - 60,
+    }
+    token = _make_token(claims, rsa_keypair["private_pem"])
+
+    mw = JWTValidationMiddleware(app, get_settings())
+    # Pre-seed the JWKS cache so _validate verifies offline (no network/respx).
+    mw._jwks = _jwks_response(rsa_keypair["jwk"])
+    mw._jwks_expires = time.time() + 3600
+    result = await mw._validate(token)
+
+    assert result is not None
+    assert result["uc_uid"] == "kc-subject-xyz"
