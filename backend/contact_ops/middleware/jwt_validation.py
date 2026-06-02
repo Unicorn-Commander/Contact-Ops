@@ -25,7 +25,7 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from contact_ops.core.config import Settings
-from contact_ops.core.database import async_session_maker
+from contact_ops.core.database import _user_is_active_member, async_session_maker
 from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
@@ -266,6 +266,18 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
                     {"tenant_id": tenant_id},
                 )
                 tenant = row.mappings().first()
+                # Membership gate (design §4.4): a revoked membership must
+                # immediately disable Brigade access for this tenant. Reuse the
+                # already-open session; check only when the flag is on (no
+                # behavior change otherwise). uc_uid here is the federated
+                # service-principal sub from the verified Brigade JWT. Fail-closed.
+                member_ok = (
+                    not self.settings.MEMBERSHIP_GATE_ENFORCED
+                    or (
+                        tenant is not None
+                        and await _user_is_active_member(db, uc_uid, str(tenant["id"]))
+                    )
+                )
         except Exception as exc:
             logger.warning(
                 "brigade_identity_lookup_failed",
@@ -276,6 +288,14 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
 
         if tenant is None:
             logger.warning("brigade_identity_lookup_failed", reason="tenant-not-found")
+            return None
+
+        if not member_ok:
+            logger.warning(
+                "brigade_membership_denied",
+                uc_uid=uc_uid,
+                tenant_id=str(tenant["id"]),
+            )
             return None
 
         scopes = brigade_claims.get("scopes", [])
@@ -324,6 +344,19 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
                     expiry = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
                     if expiry <= datetime.now(UTC):
                         return None, "personal access token expired", None
+                # Membership gate (design §4.4): revoking a user's membership
+                # must immediately disable their PATs for this tenant. Reuse the
+                # already-open session; check only when the flag is on (no
+                # behavior change otherwise). Fail-closed.
+                if self.settings.MEMBERSHIP_GATE_ENFORCED and not await _user_is_active_member(
+                    db, str(data["user_uc_uid"]), str(data["tenant_id"])
+                ):
+                    logger.warning(
+                        "pat_membership_denied",
+                        uc_uid=str(data["user_uc_uid"]),
+                        tenant_id=str(data["tenant_id"]),
+                    )
+                    return None, "personal access token membership revoked", None
         except Exception as exc:
             logger.warning("pat_lookup_failed", error=str(exc))
             return None, "personal access token lookup failed", None

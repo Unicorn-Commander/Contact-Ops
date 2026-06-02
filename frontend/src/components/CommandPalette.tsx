@@ -35,7 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/design-system/Spinner";
-import { useAccessToken } from "@/hooks/useMcp";
+import { useAccessToken, useQueryKeys } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { cn } from "@/lib/utils";
 
@@ -204,6 +204,7 @@ export type CommandPaletteProps = {
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const navigate = useNavigate();
   const token = useAccessToken();
+  const qk = useQueryKeys();
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, DEBOUNCE_MS);
   const trimmed = debouncedQuery.trim();
@@ -229,18 +230,18 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   // Server-side search. `enabled` gates these so opening the palette (empty
   // query) never fires idle list requests; the debounce throttles keystrokes.
   const peopleQuery = useQuery({
-    queryKey: ["cmdk", "people", trimmed],
+    queryKey: qk.cmdkPeople(trimmed),
     enabled: searchEnabled,
     queryFn: () => tools.searchPeople({ query: trimmed, limit: SEARCH_LIMIT, include_archived: false }, token)
   });
   const orgsQuery = useQuery({
-    queryKey: ["cmdk", "orgs", trimmed],
+    queryKey: qk.cmdkOrgs(trimmed),
     enabled: searchEnabled,
     queryFn: () => tools.searchOrganizations({ query: trimmed, limit: SEARCH_LIMIT }, token)
   });
   // Tags are a small, fully-loaded set; fetch once while the palette is open.
   const tagsQuery = useQuery({
-    queryKey: ["cmdk", "tags"],
+    queryKey: qk.cmdkTags,
     enabled: open && Boolean(token),
     queryFn: () => tools.listTags(token),
     staleTime: 5 * 60_000

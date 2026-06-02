@@ -83,12 +83,24 @@ export type Tag = {
   usage_count?: number;
 };
 
+export type IsolationMode = "strict" | "standard" | "open";
+
 export type Tenant = {
   tenant_id: UUID;
   slug: string;
   display_name: string;
   kind?: string;
-  role?: string;
+  /** Per-workspace membership role: viewer < member < manager < admin. */
+  role?: "viewer" | "member" | "manager" | "admin" | string;
+  /**
+   * Isolation dial (Phase 4 §1). `strict` (and any `hipaa_mode` tenant) hides the
+   * owner's rows cross-workspace and requires step-up to switch into. Surfaced
+   * for the lock badge in the switcher. Label-only projection: present for the
+   * caller's own/active/membership workspaces.
+   */
+  isolation_mode?: IsolationMode;
+  /** True when this row came from the caller's `user_tenant_membership` set (vs home/children). */
+  is_membership?: boolean;
   hipaa_mode?: boolean;
   gdpr_mode?: boolean;
   retention_class?: string;

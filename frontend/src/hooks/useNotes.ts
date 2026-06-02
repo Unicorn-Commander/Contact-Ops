@@ -22,6 +22,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
+import { useQueryKeys } from "@/hooks/useMcp";
 import { UnauthorizedError, tools } from "@/lib/mcp";
 import type { Note, NoteTargetType, UUID } from "@/lib/types";
 
@@ -47,14 +48,6 @@ export interface UseNotesListReturn {
 const DEFAULT_PAGE_SIZE = 20;
 
 /**
- * Build the React Query key for a given notes scope. Centralized so the
- * mutation hooks below invalidate exactly the same keys the list query reads.
- */
-function notesQueryKey(targetType: NoteTargetType, targetId: UUID | null | undefined, pageSize: number) {
-  return ["notes", targetType, targetId ?? null, pageSize] as const;
-}
-
-/**
  * Paginated, newest-first list of notes for a given target.
  *
  * The hook owns the cumulative page state so the consumer just calls
@@ -68,11 +61,12 @@ export function useNotesList({
   const auth = useAuth();
   const token = auth.user?.access_token;
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
 
   const [visibleCount, setVisibleCount] = useState(pageSize);
   const queryKey = useMemo(
-    () => [...notesQueryKey(targetType, targetId, pageSize), { visibleCount }] as const,
-    [targetType, targetId, pageSize, visibleCount]
+    () => [...qk.notes(targetType, targetId, pageSize), { visibleCount }] as const,
+    [qk, targetType, targetId, pageSize, visibleCount]
   );
 
   const query = useQuery({
@@ -108,9 +102,9 @@ export function useNotesList({
   const refetch = useCallback(async () => {
     setVisibleCount(pageSize);
     return queryClient.invalidateQueries({
-      queryKey: notesQueryKey(targetType, targetId, pageSize)
+      queryKey: qk.notes(targetType, targetId, pageSize)
     });
-  }, [pageSize, queryClient, targetType, targetId]);
+  }, [qk, pageSize, queryClient, targetType, targetId]);
 
   return {
     notes: items,
@@ -121,7 +115,7 @@ export function useNotesList({
     loadingMore: query.isFetching && visibleCount > pageSize,
     loadMore,
     refetch,
-    queryKey: notesQueryKey(targetType, targetId, pageSize)
+    queryKey: qk.notes(targetType, targetId, pageSize)
   };
 }
 
@@ -143,6 +137,7 @@ export function useAppendNote({ targetType = "user", targetId = null }: UseAppen
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
 
   return useMutation({
     mutationFn: async ({ text, source }: AppendNotePayload) => {
@@ -163,7 +158,7 @@ export function useAppendNote({ targetType = "user", targetId = null }: UseAppen
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["notes", targetType, targetId ?? null]
+        queryKey: qk.notesScope(targetType, targetId)
       });
     }
   });
@@ -183,6 +178,7 @@ export function useDeleteNote({ targetType = "user", targetId = null }: UseDelet
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
 
   return useMutation({
     mutationFn: async ({ noteId }: { noteId: UUID }) => {
@@ -195,7 +191,7 @@ export function useDeleteNote({ targetType = "user", targetId = null }: UseDelet
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["notes", targetType, targetId ?? null]
+        queryKey: qk.notesScope(targetType, targetId)
       });
     }
   });
