@@ -16,6 +16,7 @@ import { useAuth } from "react-oidc-context";
 import { formatDistanceToNowStrict } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useQueryKeys } from "@/hooks/useMcp";
 import { tools, UnauthorizedError } from "@/lib/mcp";
 import type { ProposalEvidence, UUID } from "@/lib/types";
 import { MonoNumeric, Spinner } from "@/design-system";
@@ -29,10 +30,11 @@ export type EvidencePanelProps = {
 export function EvidencePanel({ proposalId, defaultExpanded = false }: EvidencePanelProps) {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
+  const qk = useQueryKeys();
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   const query = useQuery<ProposalEvidence>({
-    queryKey: ["proposal-evidence", proposalId],
+    queryKey: qk.proposalEvidence(proposalId),
     enabled: Boolean(token) && expanded,
     queryFn: async () => {
       try {

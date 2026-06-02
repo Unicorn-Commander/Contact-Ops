@@ -4,8 +4,10 @@
  * Mirrors the same patterns as `useMcp` / `useVcardImport`:
  *   - Bearer token comes from `react-oidc-context` via `useAccessToken()`.
  *   - 401 redirects to sign-in via `signinRedirect()`.
- *   - Query keys are scoped under ["connectors", ...] so any mutation can
- *     `invalidate({ queryKey: ["connectors"] })` to refetch the whole surface.
+ *   - Query keys come from the tenant-prefixed factory (`useQueryKeys()`); the
+ *     `connectors*` keys are scoped under `["t", <tenant>, "connectors", ...]` so
+ *     any mutation can `invalidate({ queryKey: qk.connectorsRoot })` to refetch
+ *     the whole surface (and a workspace switch never leaks across tenants).
  *
  * The page composes these hooks; nothing here knows about JSX. Polling for
  * in-flight runs is centralised in `useConnectorRuns` via the `enabledPoll`
@@ -24,7 +26,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
-import { useAccessToken } from "@/hooks/useMcp";
+import { useAccessToken, useQueryKeys } from "@/hooks/useMcp";
 import { UnauthorizedError, tools } from "@/lib/mcp";
 import type {
   Connector,
@@ -47,8 +49,9 @@ export const RUNS_POLL_INTERVAL_MS = 3000;
 export function useConnectors() {
   const auth = useAuth();
   const token = auth.user?.access_token;
+  const qk = useQueryKeys();
   return useQuery<ListResult<Connector>>({
-    queryKey: ["connectors", "list"],
+    queryKey: qk.connectorsList,
     enabled: Boolean(token),
     queryFn: async () => {
       try {
@@ -72,8 +75,9 @@ export function useConnectorRuns(
 ) {
   const auth = useAuth();
   const token = auth.user?.access_token;
+  const qk = useQueryKeys();
   return useQuery<ListResult<ConnectorRun>>({
-    queryKey: ["connectors", "runs", args],
+    queryKey: qk.connectorRuns(args),
     enabled: Boolean(token),
     queryFn: async () => {
       try {
@@ -103,6 +107,7 @@ export function useConfigureIcloud() {
   const auth = useAuth();
   const token = useAccessToken();
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation<
     { id: UUID; provider: "icloud"; status: "configured" },
     Error,
@@ -119,7 +124,7 @@ export function useConfigureIcloud() {
       }
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["connectors"] });
+      await queryClient.invalidateQueries({ queryKey: qk.connectorsRoot });
     }
   });
 }
@@ -158,6 +163,7 @@ export function usePullConnectorNow() {
   const auth = useAuth();
   const token = useAccessToken();
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation<ConnectorRun, Error, { connector_id: UUID; dry_run?: boolean }>({
     mutationFn: async (args) => {
       try {
@@ -170,7 +176,7 @@ export function usePullConnectorNow() {
     onSuccess: async () => {
       // Refetch both the connector list (last_pull_at + counts) and the runs
       // table so the just-spawned row appears immediately.
-      await queryClient.invalidateQueries({ queryKey: ["connectors"] });
+      await queryClient.invalidateQueries({ queryKey: qk.connectorsRoot });
     }
   });
 }
@@ -184,6 +190,7 @@ export function useDisconnectConnector() {
   const auth = useAuth();
   const token = useAccessToken();
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation<{ ok: true }, Error, { connector_id: UUID; reason?: string }>({
     mutationFn: async (args) => {
       try {
@@ -194,7 +201,7 @@ export function useDisconnectConnector() {
       }
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["connectors"] });
+      await queryClient.invalidateQueries({ queryKey: qk.connectorsRoot });
     }
   });
 }

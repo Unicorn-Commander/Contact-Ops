@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
+import { useQueryKeys } from "@/hooks/useMcp";
 import { callTool } from "@/lib/mcp";
 import { colorForEdge, colorForNode } from "@/lib/graph/colorScheme";
 
@@ -31,8 +32,9 @@ export type EgoGraph = {
 
 export function useEgoGraph(personId?: string, hopLimit = 1, confidenceFloor = 0) {
   const auth = useAuth();
+  const qk = useQueryKeys();
   return useQuery({
-    queryKey: ["ego-graph", personId, hopLimit, confidenceFloor],
+    queryKey: qk.egoGraph(personId, hopLimit, confidenceFloor),
     enabled: Boolean(personId && auth.user?.access_token),
     queryFn: async () => {
       const graph = await callTool<EgoGraph>(

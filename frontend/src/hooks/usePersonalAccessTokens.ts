@@ -13,9 +13,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
 import { toast } from "sonner";
 import { tools, MCPError, UnauthorizedError } from "@/lib/mcp";
+import { userKey } from "@/lib/queryKeys";
 import type { PersonalAccessTokenIssued, UUID } from "@/lib/types";
 
-const PAT_QUERY_KEY = ["personal-access-tokens"] as const;
+// PATs are scoped to the calling user (uc_uid), NOT the active workspace —
+// they span workspaces — so this key is deliberately tenant-INDEPENDENT
+// (`userKey`, the "g" sentinel) and survives a workspace-switch cache clear.
+const PAT_QUERY_KEY = userKey.personalAccessTokens;
 
 export function usePersonalAccessTokens() {
   const auth = useAuth();

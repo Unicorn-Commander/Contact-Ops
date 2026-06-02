@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
 import { toast } from "sonner";
+import { useQueryKeys } from "@/hooks/useMcp";
 import { tools, UnauthorizedError, MCPError } from "@/lib/mcp";
 import type {
   BulkActionResult,
@@ -60,8 +61,9 @@ function toBackendArgs(f: InboxFilters, cursor?: string): Record<string, unknown
 export function useInboxList(filters: InboxFilters) {
   const auth = useAuth();
   const token = auth.user?.access_token;
+  const qk = useQueryKeys();
   return useInfiniteQuery<ListPendingProposalsResult>({
-    queryKey: ["inbox", filters],
+    queryKey: qk.inbox(filters),
     enabled: Boolean(token),
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
@@ -112,7 +114,8 @@ export function useApproveMutation(filters: InboxFilters) {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
-  const key = ["inbox", filters];
+  const qk = useQueryKeys();
+  const key = qk.inbox(filters);
 
   return useMutation({
     mutationFn: async ({ proposalId, tier, typedPhrase, fieldChoices, timeToDecideSec, keyboardPath }: ApproveArgs) => {
@@ -157,7 +160,7 @@ export function useApproveMutation(filters: InboxFilters) {
               )
               .then(() => {
                 toast.message("Undone");
-                queryClient.invalidateQueries({ queryKey: ["inbox"] });
+                queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
               })
               .catch((e: unknown) => {
                 const m = e instanceof Error ? e.message : "unknown error";
@@ -169,7 +172,7 @@ export function useApproveMutation(filters: InboxFilters) {
       });
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
@@ -188,7 +191,8 @@ export function useRejectMutation(filters: InboxFilters) {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
-  const key = ["inbox", filters];
+  const qk = useQueryKeys();
+  const key = qk.inbox(filters);
 
   return useMutation({
     mutationFn: async (args: RejectArgs) =>
@@ -223,7 +227,7 @@ export function useRejectMutation(filters: InboxFilters) {
       });
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
@@ -239,7 +243,8 @@ export function useSnoozeMutation(filters: InboxFilters) {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
-  const key = ["inbox", filters];
+  const qk = useQueryKeys();
+  const key = qk.inbox(filters);
 
   return useMutation({
     mutationFn: async (args: SnoozeArgs) =>
@@ -269,7 +274,7 @@ export function useSnoozeMutation(filters: InboxFilters) {
       toast.success("Snoozed");
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
@@ -278,6 +283,7 @@ export function useBulkApproveMutation() {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation({
     mutationFn: async (args: { proposalIds: UUID[]; typedPhrase?: string | null; tier?: Tier }) =>
       tools.bulkApprove(
@@ -300,7 +306,7 @@ export function useBulkApproveMutation() {
       toast.error(`Bulk approve failed: ${msg}`);
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
@@ -309,6 +315,7 @@ export function useBulkRejectMutation() {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation({
     mutationFn: async (args: { proposalIds: UUID[]; reason?: string | null; tier?: Tier }) =>
       tools.bulkReject(
@@ -330,7 +337,7 @@ export function useBulkRejectMutation() {
       toast.error(`Bulk reject failed: ${msg}`);
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
@@ -339,6 +346,7 @@ export function useResolveConflictKeepBothMutation() {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation({
     mutationFn: async (args: {
       primaryProposalId: UUID;
@@ -362,7 +370,7 @@ export function useResolveConflictKeepBothMutation() {
       toast.error(`Conflict resolve failed: ${msg}`);
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
@@ -371,6 +379,7 @@ export function useRevertAutoAppliedMutation() {
   const auth = useAuth();
   const token = auth.user?.access_token ?? "";
   const queryClient = useQueryClient();
+  const qk = useQueryKeys();
   return useMutation({
     mutationFn: async (args: { proposalId: UUID; reason?: string | null }) =>
       tools.revertAutoApplied(
@@ -385,7 +394,7 @@ export function useRevertAutoAppliedMutation() {
       toast.error(`Revert failed: ${msg}`);
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: qk.inboxRoot });
     },
   });
 }
