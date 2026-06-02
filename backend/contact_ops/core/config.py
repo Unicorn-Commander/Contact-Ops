@@ -122,6 +122,19 @@ class Settings(BaseSettings):
     JWKS_CACHE_TTL_SECONDS: int = 300
     JWT_ALLOWED_ALGORITHMS: list[str] = ["RS256"]
 
+    # --- Phase 4.3 workspace-switch (silent re-auth) confidential client ---
+    # The backend uses this confidential client's client-credentials grant to set
+    # a user's tenant_id/tenant_slug attributes via the Keycloak Admin REST API
+    # on a workspace switch; the SPA then does a prompt=none signinSilent so the
+    # existing contact-ops-app User Attribute mappers stamp the new claims. The
+    # token URL and Admin REST base are derived from KEYCLOAK_ISSUER at call time
+    # (see api/auth.py: _kc_token_url / _kc_admin_user_url) — no separate base URL
+    # setting is needed. Created by scripts/keycloak/setup_contact_ops_switch.sh.
+    # When KEYCLOAK_SWITCH_CLIENT_SECRET is empty the switch endpoint is INERT
+    # (returns 503), so deploying this code before the KC client exists is safe.
+    KEYCLOAK_SWITCH_CLIENT_ID: str = "contact-ops-switch"
+    KEYCLOAK_SWITCH_CLIENT_SECRET: str = ""
+
     # OBO trust — which upstream client IDs are allowed to act on behalf of
     # users via RFC 8693 token exchange. Empty by default; ops sets this.
     TRUSTED_MCP_CLIENTS: list[str] = []

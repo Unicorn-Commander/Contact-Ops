@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 from contact_ops.agents.observability.metrics import metrics_endpoint
 from contact_ops.agents.observability.otel import init_otel
+from contact_ops.api.auth import router as auth_router
 from contact_ops.api.chat import router as chat_router
 from contact_ops.api.connectors import router as connectors_router
 from contact_ops.api.import_vcard import router as import_vcard_router
@@ -271,6 +272,7 @@ def create_application() -> FastAPI:
 
     # Routes
     app.include_router(health_router)
+    app.include_router(auth_router)
     app.include_router(chat_router)
     app.include_router(connectors_router)
     app.include_router(import_vcard_router)
