@@ -183,6 +183,34 @@ class Settings(BaseSettings):
     BRIGADE_JWKS_URL: str = "https://brigade.unicorncommander.ai/.well-known/jwks.json"
     BRIGADE_EXPECTED_AUDIENCE: str = "contact-ops"
 
+    # --- Ops-Center billing brain (Stripe + Lago) ---
+    # Contact-Ops does NOT run its own Stripe. The /api/v1/billing router is a
+    # thin proxy that defers to the central Ops-Center billing API using a
+    # service key. All three settings default to empty so the proxy is INERT
+    # until configured: with OPS_CENTER_URL or OPS_CENTER_SERVICE_KEY unset,
+    # /status returns {tier:"free", configured:false} (no network call) and
+    # /checkout returns 503. Set OPS_CENTER_URL to the in-cluster base URL
+    # (e.g. http://ops-center-direct:8084) and OPS_CENTER_SERVICE_KEY to the
+    # Ops-Center service key minted for Contact-Ops. The key is sent as a
+    # Bearer token to Ops-Center and is NEVER logged or echoed.
+    OPS_CENTER_URL: str = ""
+    OPS_CENTER_SERVICE_KEY: str = ""
+    OPS_CENTER_TIMEOUT: float = 15.0
+
+    # --- Paid-tier gate (Phase: billing-ops-center) ---
+    # Master switch for tier enforcement on paid server features (currently the
+    # "Ask the Analyst" server chat endpoint POST /chat). DEFAULT FALSE -> the
+    # gate (contact_ops.api.deps.require_pro) is a strict NO-OP: every
+    # authenticated user passes and /chat behaves exactly as today. Flip to True
+    # ONLY after billing tiers are live in Ops-Center; once True, callers below
+    # Pro receive HTTP 402 (use the on-device path) while Pro+ users pass. The
+    # user's tier is read via contact_ops.services.tier (Ops-Center /status,
+    # cached ~60s, fails to last-known/free). Inert-when-unconfigured still
+    # holds: with Ops-Center unset, every user reads as "free", so enabling this
+    # flag without configuring Ops-Center would 402 everyone — keep it False
+    # until both this flag AND OPS_CENTER_* are intentionally set.
+    BILLING_TIER_ENFORCED: bool = False
+
     # Seed data
     SEED_OWNER_USER_ID: str = "00000000-0000-0000-0000-000000000001"
 

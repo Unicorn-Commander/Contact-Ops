@@ -7,10 +7,11 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from contact_ops.api.deps import require_pro
 from contact_ops.services.chat_orchestrator import ChatMessage, ChatOrchestrator
 from contact_ops.services.chat_tools import ChatRequestContext
 
@@ -22,8 +23,11 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
 
 
-@router.post("/chat")
+@router.post("/chat", dependencies=[Depends(require_pro)])
 async def chat_endpoint(request: Request, body: ChatRequest) -> StreamingResponse:
+    # `require_pro` runs first (flag-gated): a strict NO-OP while
+    # BILLING_TIER_ENFORCED is False (today's behavior), and a 402 for
+    # sub-Pro callers once enforcement is on. Pro+ users always reach here.
     claims = getattr(request.state, "jwt_claims", None)
     if not isinstance(claims, dict) or not claims.get("tenant_id"):
         raise HTTPException(
