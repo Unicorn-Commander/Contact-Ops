@@ -29,6 +29,7 @@ import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { AskAnalystDock } from "@/components/AskAnalystDock";
 import { cn, initials } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
+import { TierBadge } from "@/components/billing/TierBadge";
 import { AppShellProvider } from "@/components/app-shell-context";
 
 // Lazy-load the palette so its cmdk + Radix-dialog code splits into the async
@@ -391,6 +392,10 @@ export function AppShell() {
             >
               {dark ? <Sun className="h-4 w-4" strokeWidth={1.8} /> : <Moon className="h-4 w-4" strokeWidth={1.8} />}
             </Button>
+            {/* Plan/tier pill — Free/Pro, read from /api/v1/billing/status; links
+                to the Billing & Plan card in Settings. Hidden on the narrowest
+                screens to keep the action cluster from wrapping. */}
+            <TierBadge className="ml-1 hidden sm:inline-flex" />
             <UserMenu />
           </div>
         </header>

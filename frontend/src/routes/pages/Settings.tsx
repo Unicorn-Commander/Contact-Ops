@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotesSection } from "@/components/profile/NotesSection";
 import { PersonalAccessTokensSection } from "@/components/profile/PersonalAccessTokensSection";
+import { BillingSection } from "@/components/billing/BillingSection";
 import { useCardDavPasswords, useMcpMutation } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { compactDate, initials } from "@/lib/utils";
@@ -101,6 +102,10 @@ export function SettingsRoute() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Billing & Plan — tier summary + upgrade/manage. Self-hides its CTA when
+          billing is unconfigured (Ops-Center proxy reports configured:false). */}
+      <BillingSection />
 
       {/* Notes & Log — Phase 1 user-target surface; same component drops into person/org pages later. */}
       <NotesSection targetType="user" />

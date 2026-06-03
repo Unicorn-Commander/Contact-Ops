@@ -95,7 +95,11 @@ export function tenantKey(tenantId: TenantId) {
  */
 export const userKey = {
   tenants: globalKey("tenants"),
-  personalAccessTokens: globalKey("personal-access-tokens")
+  personalAccessTokens: globalKey("personal-access-tokens"),
+  // Subscription/billing is per-USER (uc_uid), not per-workspace, so it's
+  // tenant-INDEPENDENT and survives a `queryClient.clear()`-driven switch —
+  // same rationale as `personalAccessTokens` above.
+  billingStatus: globalKey("billing-status")
 } as const;
 
 export type TenantKeyFactory = ReturnType<typeof tenantKey>;
