@@ -30,6 +30,15 @@ from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
 
+# The ONE tenant-less-reachable route (Phase 4.4 self-serve onboarding). A valid
+# Keycloak token that has passed full signature/issuer/audience verification but
+# carries NO tenant_id yet (a brand-new user before provision_personal_workspace
+# has run) must be able to reach EXACTLY this route — and only with POST — so it
+# can mint its first workspace. Every other path still fails closed on a missing
+# tenant_id. Kept as a module constant so the route and the allowance can never
+# drift; the endpoint in api/auth.py is mounted at this exact path.
+ONBOARD_PATH = "/api/auth/onboard"
+
 
 class JWTValidationMiddleware(BaseHTTPMiddleware):
     """Validate a bearer JWT on every request and stash claims on request.state.
@@ -111,6 +120,20 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if not token:
             return _unauthorized("missing bearer token")
 
+        # Narrow tenant-less allowance (Phase 4.4 onboarding). Decided HERE, at
+        # the single layer that knows the request's path+method, and passed
+        # explicitly into the Keycloak validator. It relaxes ONLY the
+        # tenant_id-presence check, and ONLY for `POST /api/auth/onboard`; full
+        # signature/issuer/audience/exp verification is unchanged, and every
+        # other path still fails closed on a missing tenant_id. The flag is
+        # never consulted by the PAT or Brigade paths below, so those token
+        # types are entirely unaffected. Exact-match on path (no prefix) +
+        # method so a sibling like `/api/auth/onboard-something` or a GET cannot
+        # ride the allowance.
+        allow_missing_tenant = (
+            request.url.path == ONBOARD_PATH and request.method == "POST"
+        )
+
         pat_error: str | None = None
         if token.startswith("co_pat_"):
             claims, pat_error, pat_id = await self._validate_pat(token)
@@ -119,7 +142,9 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             if pat_id is not None:
                 asyncio.create_task(self._mark_pat_used(pat_id))
         else:
-            claims = await self._validate(token)
+            claims = await self._validate(
+                token, allow_missing_tenant=allow_missing_tenant  # gitleaks:allow
+            )
             if claims is None:
                 claims = await self._validate_brigade(token)
         if claims is None:
@@ -140,7 +165,23 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         token = auth[7:].strip()
         return token or None
 
-    async def _validate(self, token: str) -> dict[str, Any] | None:
+    async def _validate(
+        self, token: str, *, allow_missing_tenant: bool = False
+    ) -> dict[str, Any] | None:
+        """Validate a Keycloak RS256 token; return its claims or None.
+
+        Security note on ``allow_missing_tenant`` (Phase 4.4 onboarding): this
+        flag defaults to False so EVERY existing call site is fail-closed and
+        unchanged. When True (set ONLY by dispatch() for `POST
+        /api/auth/onboard`) the SINGLE relaxation is that step 4's tenant_id
+        presence check is skipped — a brand-new user has no workspace yet, so
+        requiring tenant_id here would make first-login impossible. NOTHING else
+        is relaxed: the signature, issuer, audience, exp/nbf/iat, alg-confusion
+        guard (step 1), JWKS kid resolution (step 2), azp allow-list (step 4b),
+        and the uc_uid=sub pin (step 5) all run identically. The onboard handler
+        re-checks `iss == KEYCLOAK_ISSUER` itself, so even on this path a
+        non-Keycloak token can never provision a workspace.
+        """
         try:
             from jose import jwt
             from jose.exceptions import ExpiredSignatureError, JWTError
@@ -196,8 +237,15 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("jwt_invalid", error=str(exc))
             return None
 
-        # 4. Required custom claim: tenant_id
-        if not claims.get("tenant_id"):
+        # 4. Required custom claim: tenant_id.
+        # FAIL-CLOSED by default. The ONLY exception is the onboarding route
+        # (allow_missing_tenant=True, set narrowly by dispatch() for
+        # `POST /api/auth/onboard`): a not-yet-provisioned user legitimately has
+        # no tenant_id, and the onboard handler's whole job is to create one. For
+        # every other path a missing tenant_id is still rejected here. uc_uid
+        # (step 5 below) still resolves in the tenant-less case, so the handler
+        # has a verified identity to provision against.
+        if not claims.get("tenant_id") and not allow_missing_tenant:
             logger.warning(
                 "jwt_missing_tenant_id", sub=claims.get("sub"), iss=claims.get("iss")
             )

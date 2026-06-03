@@ -397,3 +397,128 @@ async def test_kc_uc_uid_falls_back_to_sub_when_absent(rsa_keypair):
 
     assert result is not None
     assert result["uc_uid"] == "kc-subject-xyz"
+
+
+# ── Phase 4.4 onboarding allowance ─────────────────────────────────────────
+# A valid KC token that LACKS tenant_id must be accepted by _validate ONLY when
+# allow_missing_tenant=True (set by dispatch() for POST /api/auth/onboard), and
+# even then ONLY the tenant_id-presence check is relaxed — signature, issuer,
+# audience, exp are still fully enforced. Default (False) stays fail-closed.
+
+
+def _no_tenant_claims():
+    now = int(time.time())
+    return {
+        "sub": "kc-new-user",
+        "iss": VALID_ISSUER,
+        "aud": VALID_AUD,
+        # deliberately NO tenant_id (brand-new user before provisioning)
+        "preferred_username": "newuser",
+        "email": "REMOVED",
+        "iat": now - 60,
+        "exp": now + 300,
+        "nbf": now - 60,
+    }
+
+
+def _mw_offline(rsa_keypair):
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
+
+    mw = JWTValidationMiddleware(app, get_settings())
+    mw._jwks = _jwks_response(rsa_keypair["jwk"])
+    mw._jwks_expires = time.time() + 3600
+    return mw
+
+
+async def test_tenantless_kc_token_rejected_by_default(rsa_keypair):
+    """Fail-closed: a tenant-less KC token is rejected when the flag is unset."""
+    token = _make_token(_no_tenant_claims(), rsa_keypair["private_pem"])
+    mw = _mw_offline(rsa_keypair)
+    # Default call (every non-onboard path) must still reject missing tenant_id.
+    assert await mw._validate(token) is None
+
+
+async def test_tenantless_kc_token_accepted_with_onboard_allowance(rsa_keypair):
+    """A tenant-less KC token is accepted ONLY with allow_missing_tenant=True,
+    and uc_uid is still pinned to sub so the handler has a verified identity."""
+    token = _make_token(_no_tenant_claims(), rsa_keypair["private_pem"])
+    mw = _mw_offline(rsa_keypair)
+    result = await mw._validate(token, allow_missing_tenant=True)
+    assert result is not None
+    assert result.get("tenant_id") in (None, "")  # still no tenant on the claim
+    assert result["uc_uid"] == "kc-new-user"  # uc_uid pinned to sub
+
+
+async def test_onboard_allowance_does_not_relax_signature(rsa_keypair):
+    """The allowance relaxes ONLY tenant_id presence: a tampered signature is
+    still rejected even with allow_missing_tenant=True."""
+    token = _make_token(_no_tenant_claims(), rsa_keypair["private_pem"])
+    parts = token.split(".")
+    sig = list(parts[2])
+    sig[-1] = "A" if sig[-1] != "A" else "B"
+    parts[2] = "".join(sig)
+    tampered = ".".join(parts)
+    mw = _mw_offline(rsa_keypair)
+    assert await mw._validate(tampered, allow_missing_tenant=True) is None
+
+
+async def test_onboard_allowance_does_not_relax_issuer(rsa_keypair):
+    """Even with the allowance on, a wrong-issuer token is still rejected."""
+    claims = _no_tenant_claims()
+    claims["iss"] = "https://evil.example/realms/uchub"
+    token = _make_token(claims, rsa_keypair["private_pem"])
+    mw = _mw_offline(rsa_keypair)
+    assert await mw._validate(token, allow_missing_tenant=True) is None
+
+
+async def test_onboard_allowance_does_not_relax_audience(rsa_keypair):
+    """Even with the allowance on, a wrong-audience token is still rejected."""
+    claims = _no_tenant_claims()
+    claims["aud"] = "wrong-client"
+    token = _make_token(claims, rsa_keypair["private_pem"])
+    mw = _mw_offline(rsa_keypair)
+    assert await mw._validate(token, allow_missing_tenant=True) is None
+
+
+async def test_dispatch_allowance_only_for_post_onboard(rsa_keypair, monkeypatch):
+    """dispatch() sets allow_missing_tenant ONLY for POST /api/auth/onboard.
+
+    Verifies the narrowness of the allowance at the dispatch layer without a
+    DB: we stub _validate to capture the flag and assert call-by-call.
+    """
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware, ONBOARD_PATH
+
+    captured: list[tuple[str, str, bool]] = []
+
+    async def _fake_validate(self, token, *, allow_missing_tenant=False):
+        # Record (path-independent) what the dispatcher decided, then short-
+        # circuit by returning None so call_next is never reached (no DB).
+        captured.append((token, "validated", allow_missing_tenant))
+        return None
+
+    monkeypatch.setattr(JWTValidationMiddleware, "_validate", _fake_validate)
+    # Brigade fallback would run after _validate returns None; stub it to None too.
+    monkeypatch.setattr(
+        JWTValidationMiddleware, "_validate_brigade",
+        lambda self, token: _async_none(),
+    )
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # POST /api/auth/onboard -> allowance TRUE
+    client.post(ONBOARD_PATH, headers={"Authorization": "Bearer dummy.kc.token"})
+    # GET /api/auth/onboard -> allowance FALSE (wrong method)
+    client.get(ONBOARD_PATH, headers={"Authorization": "Bearer dummy.kc.token"})
+    # POST a different path -> allowance FALSE
+    client.post("/mcp", headers={"Authorization": "Bearer dummy.kc.token"},
+                data=_mcp_payload())
+
+    flags_by_call = [c[2] for c in captured]
+    # The POST /onboard call is the only one that should have allowance True.
+    assert flags_by_call.count(True) == 1
+    assert flags_by_call[0] is True  # first call = POST /onboard
+    assert all(f is False for f in flags_by_call[1:])
+
+
+async def _async_none():
+    return None
