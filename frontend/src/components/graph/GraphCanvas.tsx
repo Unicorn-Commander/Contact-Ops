@@ -348,7 +348,7 @@ export function GraphCanvas({
   }, [labels, svgNodes]);
 
   const graphBody = loading ? (
-    <div className="flex h-full min-h-[520px] w-full items-center justify-center">
+    <div className="flex h-full min-h-[520px] w-full items-center justify-center md:pl-[33rem]">
       <div className="space-y-3 rounded-lg border border-border bg-card/85 px-6 py-5 shadow-[var(--shadow-2)] backdrop-blur-xl">
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
           <Spinner size="sm" label="Loading graph" />
@@ -358,7 +358,7 @@ export function GraphCanvas({
       </div>
     </div>
   ) : !graph || data.nodes.length === 0 ? (
-    <div className="flex h-full min-h-[520px] w-full items-center justify-center px-4">
+    <div className="flex h-full min-h-[520px] w-full items-center justify-center px-4 md:pl-[33rem]">
       <div className="max-w-md space-y-4 rounded-lg border border-border bg-card/80 p-6 text-left shadow-[var(--shadow-2)] backdrop-blur-xl">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
