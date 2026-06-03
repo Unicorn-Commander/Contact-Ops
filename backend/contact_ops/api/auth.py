@@ -99,6 +99,16 @@ class SwitchWorkspaceResponse(BaseModel):
     ok: bool
     tenant_id: uuid.UUID
     tenant_slug: str
+    # Suite-identity re-scope (SUITE-IDENTITY Spec 1 §"Contact-Ops"): the switch
+    # endpoint now PRIMARILY records the caller's DEFAULT workspace (the
+    # is_default flip on user_tenant_membership) + a UX hint. `default_workspace_id`
+    # echoes the workspace that is now the caller's default. `reauth_required`
+    # tells the SPA whether it must signinSilent() to pick up a new claim: true
+    # when per-request addressing is OFF (the KC-attribute path was used, so a
+    # fresh token is needed), false when WORKSPACE_PER_REQUEST_ENABLED is on (the
+    # SPA can just send X-Workspace-Id and needs no KC round-trip).
+    default_workspace_id: uuid.UUID
+    reauth_required: bool
 
 
 class OnboardResponse(BaseModel):
@@ -112,7 +122,7 @@ class OnboardResponse(BaseModel):
 @router.post(
     "/switch-workspace",
     response_model=SwitchWorkspaceResponse,
-    summary="Set the caller's active workspace (silent re-auth mechanism)",
+    summary="Set the caller's DEFAULT workspace (is_default) + UX hint",
 )
 async def switch_workspace(
     request: Request, body: SwitchWorkspaceRequest
@@ -211,9 +221,36 @@ async def switch_workspace(
             detail={"step_up_required": True},
         )
 
-    # (5) Inert-until-configured guard. Deploying this code before the Keycloak
-    # `contact-ops-switch` client exists is safe: with no secret we cannot (and
-    # must not) attempt an admin write.
+    # (5) PRIMARY effect (SUITE-IDENTITY Spec 1 §"Contact-Ops" re-scope): record
+    # the caller's DEFAULT workspace. This is now the endpoint's contract — the
+    # always-performed effect — and it is done BEFORE the (secondary, best-effort)
+    # Keycloak attribute write. We flip user_tenant_membership.is_default to the
+    # target (and clear the prior default) atomically via the set_default_workspace
+    # SECURITY DEFINER function (migration 0039), which re-checks membership
+    # itself. We bind the caller's uc_uid (the from-tenant context is fine — the
+    # DEFINER function is correct regardless of the bound GUC). A false return
+    # means the membership vanished mid-flight; treat as a clean not-found rather
+    # than a 500.
+    default_set = await _set_default_workspace(uc_uid, target_tenant_id)
+    if not default_set:
+        logger.info(
+            "workspace_switch_default_not_set",
+            uc_uid=uc_uid,
+            target_tenant_id=target_tenant_id,
+            reason="membership_absent_at_flip",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=TENANT_NOT_FOUND,
+        )
+
+    # (6) SECONDARY effect: the Keycloak attribute write so a FRESH login lands on
+    # the new default (and, while per-request addressing is off, so signinSilent
+    # mints a token carrying the new tenant_id). This is the UX-hint half, not the
+    # contract. Inert-until-configured: with no contact-ops-switch secret we must
+    # NOT attempt an admin write — but the is_default flip ALREADY succeeded, so
+    # the default is recorded; we surface 503 only to tell the SPA a re-auth path
+    # is unavailable until the client is configured.
     if not settings.KEYCLOAK_SWITCH_CLIENT_SECRET:
         logger.warning("workspace_switch_not_configured")
         raise HTTPException(
@@ -221,7 +258,7 @@ async def switch_workspace(
             detail="switch not configured",
         )
 
-    # (6) Set the user's tenant_id / tenant_slug attributes via the confidential
+    # Set the user's tenant_id / tenant_slug attributes via the confidential
     # contact-ops-switch service account. On ANY Keycloak failure -> 502 with a
     # safe message (the secret / KC internals never leak).
     try:
@@ -264,12 +301,15 @@ async def switch_workspace(
         from_tenant_id=from_tenant_id,
         to_tenant_id=target_tenant_id,
     )
-    # The SPA reads {ok, tenant_id, tenant_slug} then does signinSilent() to pick
-    # up a fresh token whose claims reflect the new attributes.
+    # The SPA reads {ok, tenant_id, tenant_slug, default_workspace_id,
+    # reauth_required}. reauth_required mirrors the addressing mode: a KC-attribute
+    # round-trip (signinSilent) is needed only while per-request addressing is off.
     return SwitchWorkspaceResponse(
         ok=True,
         tenant_id=body.target_tenant_id,
         tenant_slug=tenant_slug,
+        default_workspace_id=body.target_tenant_id,
+        reauth_required=not settings.WORKSPACE_PER_REQUEST_ENABLED,
     )
 
 
@@ -549,6 +589,27 @@ async def _tenant_slug(session: Any, tenant_id: uuid.UUID | str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+async def _set_default_workspace(uc_uid: str, workspace_id: str) -> bool:
+    """Flip the caller's default workspace via the set_default_workspace DEFINER.
+
+    The re-scoped switch-endpoint primitive (SUITE-IDENTITY Spec 1 §"Contact-Ops"):
+    set user_tenant_membership.is_default to ``workspace_id`` (and clear the prior
+    default) for ``uc_uid``, atomically. The migration-0039 function re-checks the
+    membership itself and returns false if it is absent/inactive, so this can
+    never make a non-member's row default. Bind uc_uid for attribution; the GUC
+    tenant we bind is immaterial (the function is DEFINER + filters on uc_uid).
+    """
+    async with async_session_maker() as session:
+        await bind_session_context(session, workspace_id, uc_uid)
+        result = await session.execute(
+            text("SELECT set_default_workspace(:u, CAST(:w AS uuid))"),
+            {"u": uc_uid, "w": workspace_id},
+        )
+        ok = bool(result.scalar())
+        await session.commit()
+        return ok
+
+
 async def _load_target_tenant(
     session: Any, uc_uid: str, tenant_id: str
 ) -> dict[str, Any] | None:
@@ -779,7 +840,11 @@ async def _emit_switch_audit_event(
             "from_tenant_id": from_tenant_id,
             "to_tenant_id": to_tenant_id,
             "to_tenant_slug": to_tenant_slug,
-            "mechanism": "silent-reauth",
+            # Re-scoped semantics (SUITE-IDENTITY): the endpoint's primary effect
+            # is setting the caller's default workspace (is_default flip); the KC
+            # attribute write is the secondary best-effort effect. The mechanism
+            # reflects that this is a set-default + best-effort silent-reauth.
+            "mechanism": "set-default+silent-reauth",
         }
         payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         content_hash = hashlib.sha256(payload_json.encode("utf-8")).digest()

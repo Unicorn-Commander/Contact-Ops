@@ -33,6 +33,7 @@ from contact_ops.mcp.errors import (
 )
 from contact_ops.mcp.idempotency import check_or_register, store_result
 from contact_ops.mcp.rbac import require_role, require_scopes
+from contact_ops.mcp.roles import canonical_role
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, register, stable_hash
 from contact_ops.models import (
@@ -50,7 +51,26 @@ MEMBERSHIP_NOT_FOUND = "MEMBERSHIP_NOT_FOUND"
 HIPAA_TENANT_REQUIRES_CONSENT_BASIS = "HIPAA_TENANT_REQUIRES_CONSENT_BASIS"
 HIPAA_MODE_CANNOT_DISABLE = "HIPAA_MODE_CANNOT_DISABLE"
 SLUG_TAKEN = "SLUG_TAKEN"
+WORKSPACE_ID_TAKEN = "WORKSPACE_ID_TAKEN"
 ORG_NOT_FOUND = "ORG_NOT_FOUND"
+
+# The signed-thin-projection allow-list (SUITE-IDENTITY §4): the ONLY tenant
+# fields the suite-shared mirror surfaces expose. NEVER infra columns
+# (graph_mode, graph_name, qdrant_namespace, garage_bucket_prefix, tenant_keys,
+# owner_user_id, retention_policy, branding). Kept as a module constant so the
+# GET /api/v1/workspaces/{id} endpoint and `workspace_thin_projection` cannot
+# drift, mirroring the discipline of `_tenant_label_only`.
+WORKSPACE_THIN_FIELDS = (
+    "workspace_id",
+    "slug",
+    "display_name",
+    "isolation_mode",
+    "isolation_tier",
+    "hipaa_mode",
+    "gdpr_mode",
+    "data_residency",
+    "status",
+)
 
 GRAPH_MODES = ("shared", "per_org_graph", "per_org_instance")
 TENANT_KINDS = tuple(kind.value for kind in TenantKind)
@@ -125,8 +145,44 @@ def _tenant_label_only(tenant: Tenant, role: str | None) -> dict[str, Any]:
         "display_name": tenant.display_name,
         "kind": tenant.kind.value,
         "role": role,
+        # SUITE-IDENTITY §7: when CO reports a membership role over MCP/
+        # federation it ALSO projects the canonical suite role. Additive — the
+        # app-local `role` stays for back-compat; `canonical_role` is the
+        # cross-app field. owner has no CO source, so this is one of
+        # viewer|member|manager|admin (unknown -> viewer).
+        "canonical_role": canonical_role(role),
         "is_membership": True,
     }
+
+
+def workspace_thin_projection(tenant: Tenant) -> dict[str, Any]:
+    """The suite-shared THIN workspace projection (SUITE-IDENTITY §4).
+
+    The mirror-sync read surface for sibling apps: EXACTLY the
+    ``WORKSPACE_THIN_FIELDS`` allow-list and never an infra column
+    (graph_mode/graph_name/qdrant_namespace/garage_bucket_prefix/tenant_keys/
+    owner_user_id/retention_policy/branding). Same "never expose infra" discipline
+    as ``_tenant_label_only`` but for the cross-app registry-mirror read.
+
+    ``isolation_tier``/``status`` are sourced from the 0039 mirror columns
+    (defaulting to ``shared``/``active``). The dict is built field-by-field from
+    the allow-list constant so a future column added to ``Tenant`` can never leak
+    here by accident — only the named fields are ever emitted.
+    """
+    values: dict[str, Any] = {
+        "workspace_id": str(tenant.id),
+        "slug": tenant.slug,
+        "display_name": tenant.display_name,
+        "isolation_mode": tenant.isolation_mode,
+        "isolation_tier": tenant.isolation_tier,
+        "hipaa_mode": tenant.hipaa_mode,
+        "gdpr_mode": tenant.gdpr_mode,
+        "data_residency": tenant.data_residency,
+        "status": tenant.status,
+    }
+    # Defensive: emit ONLY the allow-listed keys, in the canonical order, so the
+    # projection can never widen even if `values` is edited above.
+    return {k: values[k] for k in WORKSPACE_THIN_FIELDS}
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +271,15 @@ class CreateTenantInput(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     kind: Literal[TENANT_KINDS] = "brand"  # type: ignore[valid-type]
     owner_user_id: uuid.UUID
+    # Suite-identity (SUITE-IDENTITY §4 / Spec 4 §12.1): for a suite-linked
+    # workspace the workspace_id is minted UPSTREAM by uc-registry and CO MUST
+    # persist that exact UUID (CO is a MIRROR, not the system-of-record). When
+    # supplied, this becomes tenants.id verbatim; when omitted (standalone CO),
+    # the tenants.id DEFAULT uuidv7_generate() path is preserved unchanged. The
+    # DB column already accepts any UUID, so this is an app-layer mint-SOURCE
+    # change with no DDL. Idempotency on a supplied id is the registry's job; CO
+    # rejects a duplicate rather than silently overwrite (see create_tenant).
+    workspace_id: uuid.UUID | None = None
     parent_tenant_id: uuid.UUID | None = None
     hipaa_mode: bool = False
     gdpr_mode: bool = False
@@ -265,11 +330,32 @@ async def create_tenant(ctx: MCPContext, req: CreateTenantInput) -> CreateTenant
     if existing is not None:
         raise ToolError(SLUG_TAKEN, f"tenant slug already exists: {req.slug}")
 
+    # Suite-identity mirror mint (SUITE-IDENTITY §4): when uc-registry supplies
+    # the workspace_id, persist that exact UUID instead of letting the
+    # uuidv7_generate() DEFAULT mint a CO-local one — else the cross-app
+    # identity-equality test (§9.2) fails. Reject a supplied id that already
+    # exists with a clean error: idempotency on a supplied UUID is the
+    # registry's responsibility (its POST /workspaces), and CO must NOT silently
+    # overwrite an existing workspace's row.
+    if req.workspace_id is not None:
+        id_clash = await ctx.db.scalar(
+            select(Tenant).where(Tenant.id == req.workspace_id)
+        )
+        if id_clash is not None:
+            raise ToolError(
+                WORKSPACE_ID_TAKEN,
+                f"workspace_id already exists: {req.workspace_id}",
+                hint="the registry is the mint authority; this id is already mirrored",
+            )
+
     graph_name = f"contact_ops__{req.slug}"
     qdrant_namespace = f"contact_ops__{req.slug}"
     garage_bucket_prefix = f"contact-ops-{req.slug}"
 
     tenant = Tenant(
+        # Only set id when registry-supplied; otherwise leave it unset so the
+        # tenants.id DEFAULT uuidv7_generate() (0002) mints the standalone id.
+        **({"id": req.workspace_id} if req.workspace_id is not None else {}),
         slug=req.slug,
         kind=TenantKind(req.kind),
         display_name=req.display_name,

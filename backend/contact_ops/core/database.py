@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import text
@@ -138,6 +139,65 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+def _resolve_effective_workspace(
+    request: Request, claims: dict[str, Any], settings: Settings
+) -> tuple[str, bool]:
+    """Resolve the effective workspace id for this request + whether it was
+    addressed per-request (i.e. came from a path/header rather than the claim).
+
+    Precedence (SUITE-IDENTITY §8 D4 / Spec 3 §4), applied ONLY when
+    ``WORKSPACE_PER_REQUEST_ENABLED`` is on:
+
+        path ``…/workspaces/{workspace_id}/…``  ->  ``X-Workspace-Id`` header
+        ->  ``workspace_id`` claim  ->  ``tenant_id`` claim
+
+    When the flag is OFF this returns the claim verbatim (``tenant_id``, with the
+    ``workspace_id`` synonym the middleware already folded in), so behavior is
+    byte-identical to before: the path/header are NOT consulted at all.
+
+    The returned id is DATA, never the authz boundary — the caller MUST pass it
+    through the membership gate before binding it to ``app.tenant_id``.
+    """
+    claim_ws = str(claims.get("tenant_id") or claims.get("workspace_id") or "")
+    if not settings.WORKSPACE_PER_REQUEST_ENABLED:
+        return claim_ws, False
+
+    # (1) path segment …/workspaces/{id}/…  (most explicit)
+    path_ws = _workspace_id_from_path(request.url.path)
+    if path_ws:
+        return path_ws, (path_ws != claim_ws)
+
+    # (2) X-Workspace-Id header
+    header_ws = (request.headers.get("x-workspace-id") or "").strip()
+    if header_ws:
+        return header_ws, (header_ws != claim_ws)
+
+    # (3)/(4) workspace_id claim -> tenant_id claim (already folded together)
+    return claim_ws, False
+
+
+def _workspace_id_from_path(path: str) -> str:
+    """Extract ``{workspace_id}`` from a ``…/workspaces/{workspace_id}/…`` path.
+
+    Returns the segment immediately after a ``workspaces`` segment, or ``""`` if
+    the path is not workspace-addressed. Validates it parses as a UUID so a
+    non-UUID path segment can never reach the GUC bind (it falls through to the
+    claim instead).
+    """
+    import uuid as _uuid
+
+    parts = [p for p in path.split("/") if p]
+    for i, seg in enumerate(parts[:-1]):
+        if seg == "workspaces":
+            candidate = parts[i + 1]
+            try:
+                _uuid.UUID(candidate)
+            except ValueError:
+                return ""
+            return candidate
+    return ""
+
+
 async def get_tenant_db(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -147,7 +207,19 @@ async def get_tenant_db(
     Reads `tenant_id` from `request.state.jwt_claims` (set by
     JWTValidationMiddleware). Issues `SET LOCAL app.tenant_id = ?` before
     yielding, so RLS policies on `persons`, `organizations`, etc. resolve
-    the caller's tenant context.
+    the caller's tenant context. The GUC name is ALWAYS `app.tenant_id`
+    (SUITE-IDENTITY §6): only the *wire claim* is `workspace_id`.
+
+    Per-request addressing (SUITE-IDENTITY §8 D4), behind
+    ``WORKSPACE_PER_REQUEST_ENABLED`` (default OFF = the KC-attribute/claim
+    behavior, byte-identical to before): when ON, the effective workspace is
+    resolved via the precedence path/header/claim and the membership gate is
+    RE-RUN against the RESOLVED workspace before binding — the path/header is
+    data, never the authz boundary. A path/header targeting a workspace the
+    caller is not an active member of yields 403 BEFORE any GUC bind, even if
+    MEMBERSHIP_GATE_ENFORCED is off for the claim path (per-request addressing
+    that is not membership-checked would be a horizontal-access hole, so the
+    re-gate on a per-request override is unconditional for KC sessions).
 
     Raises 401 if no JWT claims are present on the request — the JWT
     middleware should have already rejected unauthenticated requests, so
@@ -155,15 +227,23 @@ async def get_tenant_db(
     closed regardless.
     """
     claims = getattr(request.state, "jwt_claims", None)
-    if not claims or not claims.get("tenant_id"):
+    if not claims or not (claims.get("tenant_id") or claims.get("workspace_id")):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="tenant context unresolved",
         )
-    tenant_id = str(claims["tenant_id"])
+    tenant_id, per_request_override = _resolve_effective_workspace(
+        request, claims, settings
+    )
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="tenant context unresolved",
+        )
     # uc_uid is normalized to a non-empty value in JWTValidationMiddleware
     # (falls back to `sub`); read it from the same claims source as tenant_id.
     uc_uid = claims.get("uc_uid") or claims.get("sub")
+    is_kc_session = claims.get("iss") == settings.KEYCLOAK_ISSUER
 
     async with async_session_maker() as session:
         # set_config(name, value, is_local=true) is the parameter-safe way
@@ -176,10 +256,18 @@ async def get_tenant_db(
         # memberships are seeded, else it locks everyone out) and scoped to the
         # Keycloak issuer — PAT, Brigade, and standalone use their own validation
         # paths. Fail-closed.
-        if (
-            settings.MEMBERSHIP_GATE_ENFORCED
-            and claims.get("iss") == settings.KEYCLOAK_ISSUER
-            and not await _user_is_active_member(session, uc_uid, tenant_id)
+        #
+        # When the workspace was addressed PER-REQUEST (path/header differs from
+        # the token's own workspace), the re-gate is UNCONDITIONAL for a KC
+        # session regardless of MEMBERSHIP_GATE_ENFORCED: an override the user is
+        # not a member of must never bind, or X-Workspace-Id/path would be a
+        # cross-workspace access hole. The token's own claim path keeps the
+        # existing flag-gated behavior.
+        must_gate = is_kc_session and (
+            settings.MEMBERSHIP_GATE_ENFORCED or per_request_override
+        )
+        if must_gate and not await _user_is_active_member(
+            session, uc_uid, tenant_id
         ):
             await session.rollback()
             raise HTTPException(

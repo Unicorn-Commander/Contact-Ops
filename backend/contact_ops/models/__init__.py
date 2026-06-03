@@ -59,6 +59,21 @@ class Tenant(Base):
     updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     deprecated_at: Mapped[datetime | None] = mapped_column()
     etag: Mapped[str] = mapped_column(Text, default="")
+    # Isolation dial (migration 0034) + suite-identity mirror columns (0039).
+    # isolation_mode is the security fence (0034); isolation_tier is the
+    # physical-placement axis and status is the registry lifecycle field
+    # (both 0039, SUITE-IDENTITY §5). Mapped here so the thin workspace
+    # projection + create_tenant can read them through the ORM. server_default
+    # is authoritative (DDL owns the defaults); the Python defaults mirror them.
+    isolation_mode: Mapped[str] = mapped_column(
+        Text, server_default=sa.text("'standard'"), default="standard"
+    )
+    isolation_tier: Mapped[str] = mapped_column(
+        Text, server_default=sa.text("'shared'"), default="shared"
+    )
+    status: Mapped[str] = mapped_column(
+        Text, server_default=sa.text("'active'"), default="active"
+    )
 
 
 class Person(Base):

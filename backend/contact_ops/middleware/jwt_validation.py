@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from contact_ops.core.config import Settings
 from contact_ops.core.database import _user_is_active_member, async_session_maker
+from contact_ops.mcp.roles import realm_role_from_canonical
 from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
@@ -81,11 +82,20 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     # ``state`` parameter that was issued at oauth-start time and stored
     # in ``oauth_pending`` (or short-TTL Redis); see
     # :mod:`contact_ops.connectors.oauth_state`.
+    #
+    # The signed workspace-mirror read (`/api/v1/workspaces/{id}`,
+    # SUITE-IDENTITY §4) is a server-to-server surface that carries its own
+    # inline HMAC signature auth (X-Workspace-Signature) and is INERT-503 until
+    # WORKSPACE_MIRROR_READ_SECRET is set; it must NOT pass through JWT
+    # validation (a sibling app holds no CO user token). This is the ONLY route
+    # mounted under /api/v1/workspaces — same "carry your own inline auth"
+    # discipline as CardDAV / the oauth callbacks above.
     SKIP_PREFIXES: tuple[str, ...] = (
         "/carddav",
         "/.well-known/carddav",
         "/api/connectors/m365/oauth/callback",
         "/api/connectors/gmail/oauth/callback",
+        "/api/v1/workspaces",
     )
 
     def __init__(self, app: Any, settings: Settings) -> None:
@@ -237,15 +247,22 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("jwt_invalid", error=str(exc))
             return None
 
-        # 4. Required custom claim: tenant_id.
-        # FAIL-CLOSED by default. The ONLY exception is the onboarding route
-        # (allow_missing_tenant=True, set narrowly by dispatch() for
-        # `POST /api/auth/onboard`): a not-yet-provisioned user legitimately has
-        # no tenant_id, and the onboard handler's whole job is to create one. For
-        # every other path a missing tenant_id is still rejected here. uc_uid
-        # (step 5 below) still resolves in the tenant-less case, so the handler
-        # has a verified identity to provision against.
-        if not claims.get("tenant_id") and not allow_missing_tenant:
+        # 4. Required workspace claim: tenant_id OR its suite synonym workspace_id.
+        # FAIL-CLOSED by default. CO accepts EITHER the legacy `tenant_id` claim
+        # or the suite-canonical `workspace_id` claim (SUITE-IDENTITY §6 wire
+        # convergence; the two are folded together in step 6 below). The ONLY
+        # exception is the onboarding route (allow_missing_tenant=True, set
+        # narrowly by dispatch() for `POST /api/auth/onboard`): a
+        # not-yet-provisioned user legitimately has neither, and the onboard
+        # handler's whole job is to create one. For every other path a token
+        # carrying NEITHER is still rejected here. uc_uid (step 5 below) still
+        # resolves in the workspace-less case, so the handler has a verified
+        # identity to provision against.
+        if (
+            not claims.get("tenant_id")
+            and not claims.get("workspace_id")
+            and not allow_missing_tenant
+        ):
             logger.warning(
                 "jwt_missing_tenant_id", sub=claims.get("sub"), iss=claims.get("iss")
             )
@@ -305,6 +322,24 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
                 "jwt_missing_uc_uid", tenant_id=claims.get("tenant_id"), iss=claims.get("iss")
             )
             return None
+
+        # 6. Wire-claim convergence (SUITE-IDENTITY §6): CO speaks `workspace_id`
+        # on the wire but `tenant_id` internally. Normalize both keys onto the
+        # claims so downstream is uniform regardless of which the token carried:
+        #   * if the token carried a `workspace_id` claim (the suite-canonical
+        #     name) and no tenant_id, adopt it as tenant_id;
+        #   * always also expose `workspace_id` mirroring the resolved tenant_id.
+        # This is SAFE with WORKSPACE_PER_REQUEST_ENABLED off (it only fills the
+        # synonym; the effective workspace is still the claim — identical to
+        # today). The GUC set-point remains app.tenant_id (database.py). The
+        # tenant_id-presence check (step 4) accepted either a tenant_id or the
+        # onboarding allowance; a token with ONLY workspace_id is folded here so
+        # it satisfies the same downstream contract.
+        ws_claim = claims.get("workspace_id")
+        if ws_claim and not claims.get("tenant_id"):
+            claims["tenant_id"] = ws_claim
+        if claims.get("tenant_id"):
+            claims["workspace_id"] = claims["tenant_id"]
 
         return claims
 
@@ -373,7 +408,20 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if not isinstance(scopes, list):
             logger.warning("brigade_identity_lookup_failed", reason="scopes-not-list")
             return None
-        role = str(brigade_claims.get("role") or _role_from_scopes(scopes)).upper()
+        # Role resolution speaks CANONICAL (SUITE-IDENTITY §7): Brigade emits a
+        # canonical suite role, which CO translates to its uppercase
+        # realm_access ladder before deciding internal authority. A canonical
+        # `role` claim (viewer|member|manager|admin|owner) maps via
+        # realm_role_from_canonical; owner collapses to ADMIN. If the claim is
+        # absent OR not a recognized canonical value (e.g. a legacy uppercase
+        # role), fall back to the prior behavior: the raw claim uppercased, else
+        # the scope-derived role. This is additive — pre-existing tokens that
+        # carried an uppercase role still resolve identically.
+        raw_role_claim = brigade_claims.get("role")
+        role = (
+            realm_role_from_canonical(raw_role_claim)
+            or str(raw_role_claim or _role_from_scopes(scopes)).upper()
+        )
         return {
             "sub": uc_uid,
             "uc_uid": uc_uid,

@@ -30,6 +30,7 @@ from contact_ops.api.connectors import router as connectors_router
 from contact_ops.api.import_vcard import router as import_vcard_router
 from contact_ops.api.test_brigade_jwt import router as test_brigade_jwt_router
 from contact_ops.api.well_known import router as well_known_router
+from contact_ops.api.workspaces import router as workspaces_router
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
@@ -277,6 +278,10 @@ def create_application() -> FastAPI:
     app.include_router(connectors_router)
     app.include_router(import_vcard_router)
     app.include_router(well_known_router)
+    # Signed server-to-server workspace mirror read (SUITE-IDENTITY §4). Carries
+    # its own inline HMAC signature auth and is in JWTValidationMiddleware
+    # .SKIP_PREFIXES (it is NOT a JWT-bearing user surface).
+    app.include_router(workspaces_router)
     if settings.ENV != "prod":
         app.include_router(test_brigade_jwt_router)
     app.include_router(mcp_router)

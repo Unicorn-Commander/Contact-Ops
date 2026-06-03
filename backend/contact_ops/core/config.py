@@ -96,6 +96,35 @@ class Settings(BaseSettings):
     # refused. MUST stay False until memberships are seeded, else it locks
     # everyone out; flipped on at activation alongside the seed.
     MEMBERSHIP_GATE_ENFORCED: bool = False
+
+    # --- Suite-identity convergence (additive; default = current behavior) ---
+    # Per-request workspace addressing (SUITE-IDENTITY §8 D4 / Spec 3 §4). When
+    # True, the effective workspace is resolved per request via the precedence
+    # path `…/workspaces/{workspace_id}/…` -> `X-Workspace-Id` header ->
+    # `workspace_id` claim -> `tenant_id` claim, with the membership gate
+    # RE-RUN against the resolved workspace before it is bound to app.tenant_id
+    # (the path/header is data, never the authz boundary). When False (default),
+    # behavior is byte-identical to today: the tenant_id claim alone, no header,
+    # no path. This is a GA-sequencing flag, NOT a default-on change; flip it on
+    # only once siblings/SPA send X-Workspace-Id/path and the re-gate is
+    # validated (and not before memberships are seeded, or X-Workspace-Id is a
+    # no-op authz-wise — coordinate with MEMBERSHIP_GATE_ENFORCED).
+    WORKSPACE_PER_REQUEST_ENABLED: bool = False
+    # Signed read secret for GET /api/v1/workspaces/{id} (SUITE-IDENTITY §4: the
+    # "lazy-mirror via a signed GET {registry}/workspaces/{id}"). This is the
+    # server-to-server mirror-read surface for sibling apps, NOT a user surface.
+    # The caller signs HMAC-SHA256 over "{workspace_id}.{unix_ts}" with this
+    # shared secret and presents it as `X-Workspace-Signature: <ts>.<hex>`. When
+    # EMPTY (default) the endpoint is INERT (503) so deploying this code before
+    # the secret is provisioned is safe (mirrors the switch-client inert guard).
+    # The endpoint is NEVER reachable with an ordinary tenant user token (it
+    # would otherwise be a workspace-existence oracle): it carries its own inline
+    # signature auth and is bypassed from the JWT middleware accordingly.
+    WORKSPACE_MIRROR_READ_SECRET: str = ""
+    # Max age (seconds) of a mirror-read signature timestamp; rejects replays of
+    # an old signed request outside this window. 300s mirrors the JWKS TTL house
+    # value and is generous for clock skew without being a wide replay window.
+    WORKSPACE_MIRROR_READ_MAX_AGE_SECONDS: int = 300
     # Boot RLS self-test probe tenants. Under the runtime role the self-test
     # cannot enumerate tenants (RLS hides them with no GUC bound), so it skips.
     # Provide >=2 known tenant ids here so it can actively assert cross-tenant
