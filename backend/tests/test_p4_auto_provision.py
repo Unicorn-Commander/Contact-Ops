@@ -331,21 +331,23 @@ def _offline_jwks(jwk: dict, monkeypatch) -> None:
     """Make the LIVE middleware resolve the test key OFFLINE (no network, no
     respx) regardless of which built instance Starlette uses for the request.
 
-    Starlette 1.x wraps BaseHTTPMiddleware so reaching the built instance to
-    seed ``_jwks`` directly is fragile (the instance is not exposed on
-    ``app.user_middleware``, which holds Middleware *wrappers*). Instead we
-    class-level-patch ``_refresh_jwks`` so that whichever instance handles the
-    request loads the test JWK into its own cache on first ``_resolve_key`` —
-    the same offline-verification posture as test_jwt_validation.py's
-    ``_mw_offline`` cache-preseed, but instance-agnostic. Signature/issuer/
-    audience/exp verification is otherwise completely unchanged."""
+    Starlette 1.x wraps BaseHTTPMiddleware so reaching the built singleton to
+    seed ``_jwks`` directly is fragile (the instance is NOT exposed on
+    ``app.user_middleware``, which holds Middleware *wrappers*). We therefore
+    class-level-patch ``_resolve_key`` to return the test JWK for its kid and
+    None otherwise. Crucially this does NOT write to ``self._jwks``: the shared
+    app-singleton's cache is never mutated, so nothing leaks into sibling tests
+    (e.g. test_jwt_validation.py's respx tests) once monkeypatch restores the
+    method. Signature/issuer/audience/exp verification all run unchanged on the
+    resolved key."""
     from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
 
-    async def _fake_refresh(self):  # type: ignore[no-untyped-def]
-        self._jwks = _jwks(jwk)
-        self._jwks_expires = time.time() + 3600
+    kid = jwk.get("kid")
 
-    monkeypatch.setattr(JWTValidationMiddleware, "_refresh_jwks", _fake_refresh)
+    async def _fake_resolve_key(self, requested_kid):  # type: ignore[no-untyped-def]
+        return jwk if requested_kid == kid else None
+
+    monkeypatch.setattr(JWTValidationMiddleware, "_resolve_key", _fake_resolve_key)
 
 
 def _mcp_body() -> str:

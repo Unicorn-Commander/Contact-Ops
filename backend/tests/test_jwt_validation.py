@@ -74,6 +74,23 @@ def _make_token(claims: dict, key_pem: str, headers: dict | None = None) -> str:
     return jose_jwt.encode(claims, key_pem, algorithm="RS256", headers=headers)
 
 
+def _tamper_signature(token: str) -> str:
+    """Return ``token`` with a genuinely altered RS256 signature.
+
+    NOTE: flipping the *last* base64url char of the signature is unreliable —
+    for a 256-byte RSA signature the final char carries only 2 significant bits
+    (the other 4 are zero-padding), so ~30% of single-char flips decode back to
+    identical bytes and the signature stays valid. We instead decode the
+    signature, flip a bit in the FIRST byte (always fully significant), and
+    re-encode, so the tamper is deterministic on every run.
+    """
+    header, payload, signature = token.split(".")
+    raw = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+    mutated = bytes([raw[0] ^ 0x01]) + raw[1:]
+    new_sig = base64.urlsafe_b64encode(mutated).rstrip(b"=").decode()
+    return ".".join([header, payload, new_sig])
+
+
 VALID_ISSUER = "https://test-keycloak.invalid/realms/uchub"
 VALID_JWKS_URL = "https://test-keycloak.invalid/protocol/openid-connect/certs"
 VALID_AUD = "contact-ops-mcp"
@@ -88,6 +105,23 @@ def _reset_settings():
     s.KEYCLOAK_JWKS_URL = VALID_JWKS_URL
     s.KEYCLOAK_AUDIENCE = VALID_AUD
     s.JWT_ALLOWED_ALGORITHMS = ["RS256"]
+    # These tests exercise the Keycloak validation path; they mock ONLY the
+    # Keycloak JWKS endpoint. When a token legitimately fails KC validation
+    # (expired / wrong aud / wrong iss / tampered / unknown kid / no tenant_id),
+    # dispatch() falls through to the Brigade verifier, which would otherwise
+    # httpx.GET the real BRIGADE_JWKS_URL (https://brigade.unicorncommander.ai/...)
+    # — an unmocked request respx rejects with AllMockedAssertionError. Blank the
+    # Brigade JWKS URL so that fallback fail-closes OFFLINE (the verifier logs
+    # "jwks-url-unconfigured" and returns None, no network), which is exactly the
+    # 401 these tests assert. This neither weakens validation nor changes Brigade
+    # path behavior — production keeps the real URL; only this test env clears it.
+    s.BRIGADE_JWKS_URL = ""
+    # Reset the verifier's module-level JWKS cache singleton so no primed keys
+    # from another test in the session can satisfy a kid lookup here (keeps the
+    # Brigade fallback deterministic and offline regardless of test order).
+    import contact_ops.services.brigade_jwt_verifier as _bv
+
+    _bv._default_cache = None
     # Clear cached JWKS on the middleware instance
     from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
     for mw in app.user_middleware:
@@ -225,13 +259,7 @@ def test_tampered_signature_rejected(rsa_keypair):
         "nbf": now - 60,
     }
     token = _make_token(claims, rsa_keypair["private_pem"])
-
-    # Replace the entire last character of the signature
-    parts = token.split(".")
-    sig = list(parts[2])
-    sig[-1] = "A" if sig[-1] != "A" else "B"
-    parts[2] = "".join(sig)
-    tampered = ".".join(parts)
+    tampered = _tamper_signature(token)
 
     with respx.mock(assert_all_called=False) as mock:
         mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
@@ -453,11 +481,7 @@ async def test_onboard_allowance_does_not_relax_signature(rsa_keypair):
     """The allowance relaxes ONLY tenant_id presence: a tampered signature is
     still rejected even with allow_missing_tenant=True."""
     token = _make_token(_no_tenant_claims(), rsa_keypair["private_pem"])
-    parts = token.split(".")
-    sig = list(parts[2])
-    sig[-1] = "A" if sig[-1] != "A" else "B"
-    parts[2] = "".join(sig)
-    tampered = ".".join(parts)
+    tampered = _tamper_signature(token)
     mw = _mw_offline(rsa_keypair)
     assert await mw._validate(tampered, allow_missing_tenant=True) is None
 
