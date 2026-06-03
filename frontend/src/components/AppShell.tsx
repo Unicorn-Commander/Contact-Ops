@@ -5,6 +5,7 @@ import {
   Building2,
   Cable,
   Command,
+  Cpu,
   Home,
   ListChecks,
   LogOut,
@@ -42,6 +43,17 @@ const CommandPalette = lazy(() =>
 // and ⌘J hotkey both trigger it.
 const AIAnalystPanel = lazy(() =>
   import("@/components/chat/AIAnalystPanel").then((m) => ({ default: m.AIAnalystPanel }))
+);
+
+// FREE-tier on-device analyst — a SEPARATE, additive right-rail that runs
+// entirely in-browser (WebGPU) and makes ZERO network calls. Gated behind
+// isLocalAiEnabled() so the heavy transformers.js chunk only exists in builds
+// that opt in via VITE_ENABLE_LOCAL_AI. It does NOT replace the server
+// AIAnalystPanel above — both can be opened independently.
+import { isLocalAiEnabled } from "@/lib/ondevice/flag";
+const localAiEnabled = isLocalAiEnabled();
+const OndeviceAnalyst = lazy(() =>
+  import("@/components/ondevice/OndeviceAnalyst").then((m) => ({ default: m.OndeviceAnalyst }))
 );
 import {
   applyThemePreference,
@@ -180,6 +192,15 @@ export function AppShell() {
   // its SSE / chat machinery stays out of the eager shell bundle.
   const [analystOpen, setAnalystOpen] = useState(false);
   const [analystMounted, setAnalystMounted] = useState(false);
+
+  // On-device analyst (flag-gated) — kept fully separate from the server
+  // analyst state above so neither path can affect the other.
+  const [ondeviceOpen, setOndeviceOpen] = useState(false);
+  const [ondeviceMounted, setOndeviceMounted] = useState(false);
+  const openOndevice = () => {
+    setOndeviceMounted(true);
+    setOndeviceOpen(true);
+  };
 
   useEffect(() => {
     applyThemePreference(theme);
@@ -336,6 +357,23 @@ export function AppShell() {
                 <Command className="h-3 w-3" strokeWidth={2} />J
               </kbd>
             </button>
+            {/* On-device analyst toggle (FREE tier, flag-gated). A SEPARATE,
+                additive entry that opens the in-browser OndeviceAnalyst — it
+                never touches the server "Ask AI" path above. Hidden entirely
+                unless VITE_ENABLE_LOCAL_AI is on. */}
+            {localAiEnabled ? (
+              <button
+                type="button"
+                onClick={openOndevice}
+                title="Ask the on-device Analyst — runs locally in your browser, no network calls"
+                aria-label="Open the on-device Contacts Analyst. Runs locally in your browser."
+                aria-expanded={ondeviceOpen}
+                className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-full border border-[oklch(var(--co-emerald-500)/0.4)] bg-[oklch(var(--co-emerald-500)/0.08)] px-2.5 text-xs font-semibold text-[oklch(var(--co-emerald-500))] transition-colors hover:bg-[oklch(var(--co-emerald-500)/0.14)] sm:px-3"
+              >
+                <Cpu className="h-4 w-4 shrink-0" strokeWidth={2} />
+                <span className="hidden sm:inline">On-device</span>
+              </button>
+            ) : null}
             <Button variant="ghost" size="icon" title="Notifications" aria-label="Notifications">
               <Bell className="h-4 w-4" strokeWidth={1.8} />
             </Button>
@@ -377,6 +415,11 @@ export function AppShell() {
       {analystMounted ? (
         <Suspense fallback={null}>
           <AIAnalystPanel open={analystOpen} onOpenChange={setAnalystOpen} />
+        </Suspense>
+      ) : null}
+      {localAiEnabled && ondeviceMounted ? (
+        <Suspense fallback={null}>
+          <OndeviceAnalyst open={ondeviceOpen} onOpenChange={setOndeviceOpen} />
         </Suspense>
       ) : null}
     </div>
