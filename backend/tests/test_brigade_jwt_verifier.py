@@ -5,10 +5,11 @@ import time
 from typing import Any
 
 import httpx
-import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+from jose import jwt
 
 from contact_ops.core.config import Settings
 from contact_ops.services.brigade_jwt_verifier import (
@@ -175,25 +176,34 @@ def _install_jwks_stub(monkeypatch: pytest.MonkeyPatch, responses: list[dict[str
 
 
 def _keypair(kid: str) -> dict[str, Any]:
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key()
-    public_bytes = public_key.public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
+    # Brigade signs with RS256 in production (ALLOWED_BRIGADE_ALGORITHMS lists
+    # EdDSA too, but python-jose — the verifier's crypto backend — has no EdDSA
+    # support, so the live path is RS256). Generate an RSA keypair + the RSA
+    # JWK the verifier resolves from the JWKS.
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    public_numbers = private_key.public_key().public_numbers()
     return {
         "private_key": private_key,
+        "private_pem": private_pem,
         "jwk": {
-            "kty": "OKP",
-            "crv": "Ed25519",
+            "kty": "RSA",
             "kid": kid,
             "use": "sig",
-            "alg": "EdDSA",
-            "x": _b64url(public_bytes),
+            "alg": "RS256",
+            "n": _int_to_b64url(public_numbers.n),
+            "e": _int_to_b64url(public_numbers.e),
         },
     }
 
 
 def _token(
     settings: Settings,
-    private_key: Ed25519PrivateKey,
+    private_key: RSAPrivateKey,
     kid: str | None,
     **overrides: Any,
 ) -> str:
@@ -209,10 +219,20 @@ def _token(
         "exp": now + 300,
     }
     claims.update(overrides)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
     headers = {"kid": kid} if kid is not None else None
-    token = jwt.encode(claims, private_key, algorithm="EdDSA", headers=headers)
+    token = jwt.encode(claims, private_pem, algorithm="RS256", headers=headers)
     return str(token)
 
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _int_to_b64url(num: int) -> str:
+    length = (num.bit_length() + 7) // 8
+    return base64.urlsafe_b64encode(num.to_bytes(length, "big")).rstrip(b"=").decode("ascii")
