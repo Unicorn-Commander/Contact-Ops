@@ -72,6 +72,13 @@ export function tenantKey(tenantId: TenantId) {
       hopLimit: number,
       confidenceFloor: number
     ) => [...base, "ego-graph", personId, hopLimit, confidenceFloor] as const,
+    // Lightweight bootstrap probe for the Graph page: "does this tenant have any
+    // people, and what's a sensible default root to draw immediately?" Reuses
+    // `list_people` (no new backend endpoint). See useGraphBootstrap.ts.
+    graphBootstrap: [...base, "graph", "bootstrap"] as const,
+    // Search-to-root typeahead on the Graph page (GraphRootPicker). Kept
+    // distinct from the ⌘K palette key so the two caches never collide.
+    graphRootSearch: (q: string) => [...base, "graph", "root-search", q] as const,
 
     // --- command palette (CommandPalette.tsx) ---
     cmdkPeople: (q: string) => [...base, "cmdk", "people", q] as const,

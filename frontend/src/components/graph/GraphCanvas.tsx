@@ -365,12 +365,12 @@ export function GraphCanvas({
             <Network className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-foreground">Select a person UUID</h2>
-            <p className="text-sm text-muted-foreground">Open a person route or paste a UUID above to draw the ego network.</p>
+            <h2 className="text-base font-semibold text-foreground">No connections to show yet</h2>
+            <p className="text-sm text-muted-foreground">This person has no relationships at the current reach and strength. Try extending the reach or lowering the strength floor.</p>
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          The canvas stays calm until the graph has a root person. Once a person is loaded, labels only appear on selection and hover.
+          The canvas stays calm until there’s something to draw. Once links load, labels only appear on selection and hover.
         </p>
       </div>
     </div>
