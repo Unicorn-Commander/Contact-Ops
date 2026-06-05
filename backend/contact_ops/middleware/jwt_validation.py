@@ -564,7 +564,9 @@ def _role_from_scopes(scopes: list[Any]) -> str:
     normalized = {str(scope) for scope in scopes}
     if "admin:debug" in normalized or "admin:*" in normalized:
         return "ADMIN"
-    if any(scope.startswith("write:") for scope in normalized):
+    # Suite scopes are resource:action (e.g. contacts:write); the legacy
+    # convention was write:resource. Accept both for the member+ -> STAFF map.
+    if any(scope.startswith("write:") or scope.endswith(":write") for scope in normalized):
         return "STAFF"
     return "CLIENT"
 
