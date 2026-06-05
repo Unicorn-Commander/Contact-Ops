@@ -345,6 +345,14 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("brigade_identity_lookup_failed", reason="scopes-not-list")
             return None
         role = str(brigade_claims.get("role") or _role_from_scopes(scopes)).upper()
+        # The suite contract authorizes ingestion with contacts:read /
+        # contacts:write; CO's MCP tools gate on the internal person:read /
+        # person:write. Map so a federated contacts:* token satisfies them.
+        effective_scopes = {str(s) for s in scopes}
+        if "contacts:read" in effective_scopes or "contacts:write" in effective_scopes:
+            effective_scopes.add("person:read")
+        if "contacts:write" in effective_scopes:
+            effective_scopes.add("person:write")
         return {
             "sub": uc_uid,
             "uc_uid": uc_uid,
@@ -354,7 +362,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             "iss": self.settings.BRIGADE_TRUSTED_ISSUER,
             "aud": self.settings.BRIGADE_EXPECTED_AUDIENCE,
             "preferred_username": uc_uid,
-            "scope": " ".join(str(scope) for scope in scopes),
+            "scope": " ".join(sorted(effective_scopes)),
             "realm_access": {"roles": [role]},
             "brigade_claims": brigade_claims,
         }
