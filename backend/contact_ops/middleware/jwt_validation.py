@@ -265,7 +265,12 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if brigade_claims is None:
             return None
 
-        tenant_id = str(brigade_claims.get("org_id") or "")
+        # Canonical tenancy claim is workspace_id (SUITE-IDENTITY 0.1; Brigade
+        # retired org_id). Read workspace_id first, fall back to org_id for any
+        # legacy token still in flight.
+        tenant_id = str(
+            brigade_claims.get("workspace_id") or brigade_claims.get("org_id") or ""
+        )
         uc_uid = str(brigade_claims.get("sub") or "")
         if not tenant_id or not uc_uid:
             logger.warning(
@@ -277,6 +282,20 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
 
         try:
             async with async_session_maker() as db:
+                # Bind the verified Brigade token's asserted tenant as the RLS
+                # context (transaction-local via set_config is_local=true; it
+                # never leaks to the pooled connection) so this resolution read
+                # satisfies the tenants_select policy (id = current_tenant_id()).
+                # The token is already signature/issuer/audience-verified, so
+                # trusting its asserted workspace for the existence+metadata read
+                # is safe; the same set_config pattern CO uses for normal requests.
+                await db.execute(
+                    text(
+                        "SELECT set_config('app.tenant_id', :tid, true), "
+                        "set_config('app.uc_uid', :uid, true)"
+                    ),
+                    {"tid": tenant_id, "uid": uc_uid},
+                )
                 row = await db.execute(
                     text(
                         """
@@ -326,6 +345,14 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("brigade_identity_lookup_failed", reason="scopes-not-list")
             return None
         role = str(brigade_claims.get("role") or _role_from_scopes(scopes)).upper()
+        # The suite contract authorizes ingestion with contacts:read /
+        # contacts:write; CO's MCP tools gate on the internal person:read /
+        # person:write. Map so a federated contacts:* token satisfies them.
+        effective_scopes = {str(s) for s in scopes}
+        if "contacts:read" in effective_scopes or "contacts:write" in effective_scopes:
+            effective_scopes.add("person:read")
+        if "contacts:write" in effective_scopes:
+            effective_scopes.add("person:write")
         return {
             "sub": uc_uid,
             "uc_uid": uc_uid,
@@ -335,7 +362,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             "iss": self.settings.BRIGADE_TRUSTED_ISSUER,
             "aud": self.settings.BRIGADE_EXPECTED_AUDIENCE,
             "preferred_username": uc_uid,
-            "scope": " ".join(str(scope) for scope in scopes),
+            "scope": " ".join(sorted(effective_scopes)),
             "realm_access": {"roles": [role]},
             "brigade_claims": brigade_claims,
         }
@@ -545,7 +572,9 @@ def _role_from_scopes(scopes: list[Any]) -> str:
     normalized = {str(scope) for scope in scopes}
     if "admin:debug" in normalized or "admin:*" in normalized:
         return "ADMIN"
-    if any(scope.startswith("write:") for scope in normalized):
+    # Suite scopes are resource:action (e.g. contacts:write); the legacy
+    # convention was write:resource. Accept both for the member+ -> STAFF map.
+    if any(scope.startswith("write:") or scope.endswith(":write") for scope in normalized):
         return "STAFF"
     return "CLIENT"
 
