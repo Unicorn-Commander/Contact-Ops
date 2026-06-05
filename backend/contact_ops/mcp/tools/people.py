@@ -36,6 +36,7 @@ from contact_ops.mcp.tools.common import (
 )
 from contact_ops.models import ActionEvent, Email, Person, PersonTenantMembership, Phone
 from contact_ops.models.enums import (
+    ConsentBasis,
     EmailType,
     MergeStatus,
     PersonKind,
@@ -125,6 +126,32 @@ class UpsertPersonInput(CreatePersonInput):
         "fill_blanks", "prefer_incoming", "prefer_existing", "propose_only"
     ] = "fill_blanks"
     confidence: float = Field(default=0.9, ge=0, le=1)
+    # Ingest provenance + rollups (CONTACT-OPS-INGEST-CONTRACT §3, migration 0040).
+    # ALL optional with default None so every existing caller of upsert_person /
+    # bulk_upsert_people is byte-for-byte unaffected. The REST /ingest envelope
+    # maps its `source` + `rollups` blocks onto these; an absent field is never
+    # written (so a later upsert that omits it does not clobber a prior value).
+    source_label: str | None = Field(default=None, max_length=120)
+    source_kind: str | None = Field(default=None, max_length=60)
+    external_ref: str | None = Field(default=None, max_length=400)
+    consent_basis: str | None = Field(default=None, max_length=60)
+    lead_score: float | None = Field(default=None)
+    stage: str | None = Field(default=None, max_length=120)
+
+    @field_validator("consent_basis")
+    @classmethod
+    def validate_consent_basis(cls, value: str | None) -> str | None:
+        # Validate against the ConsentBasis vocabulary when present. NULLable for
+        # back-compat (the column is nullable for the many persons created via
+        # non-ingest paths); the REST layer is what makes it REQUIRED on ingest.
+        if value is None:
+            return value
+        allowed = {member.value for member in ConsentBasis}
+        if value not in allowed:
+            raise ValueError(
+                f"consent_basis must be one of {sorted(allowed)}"
+            )
+        return value
 
 
 class UpsertPersonOutput(ToolOutput):
@@ -347,6 +374,45 @@ def _phone_type(value: str) -> PhoneType:
     return PhoneType(value)
 
 
+# Ingest-provenance + rollup attributes (CONTACT-OPS-INGEST-CONTRACT §3). The
+# names match the Person columns added in migration 0040 1:1.
+_PROVENANCE_FIELDS = (
+    "source_label",
+    "source_kind",
+    "external_ref",
+    "consent_basis",
+    "lead_score",
+    "stage",
+)
+
+
+def _apply_provenance(
+    person: Person, data: BaseModel, *, conflict_strategy: str
+) -> list[str]:
+    """Copy the ingest-provenance + rollup fields from ``data`` onto ``person``.
+
+    ADDITIVE: only fields that the model actually carries AND that are non-None on
+    the incoming payload are considered, so a caller that omits a field (or any
+    pre-ingest caller whose model has no such field) never writes NULL over an
+    existing value. ``prefer_existing`` leaves a non-empty current value intact
+    (consistent with the identity-field merge in ``upsert_person``); every other
+    strategy overwrites with the incoming value. Returns the list of column names
+    that actually changed (for ``changed_fields``).
+    """
+    changed: list[str] = []
+    for field in _PROVENANCE_FIELDS:
+        incoming = getattr(data, field, None)
+        if incoming is None:
+            continue
+        current = getattr(person, field, None)
+        if conflict_strategy == "prefer_existing" and current not in (None, ""):
+            continue
+        if current != incoming:
+            setattr(person, field, incoming)
+            changed.append(field)
+    return changed
+
+
 async def _insert_person(ctx: MCPContext, data: CreatePersonInput) -> Person:
     etag = str(uuid.uuid4())
     person = Person(
@@ -373,6 +439,11 @@ async def _insert_person(ctx: MCPContext, data: CreatePersonInput) -> Person:
         created_by_actor_id=uuid.UUID(ctx.user_id) if _is_uuid(ctx.user_id) else None,
         etag=etag,
     )
+    # Ingest provenance (CONTACT-OPS-INGEST-CONTRACT §3): persist source/consent/
+    # rollup columns when the incoming model carries them (UpsertPersonInput does;
+    # CreatePersonInput does not, so this is a no-op for plain create). On a fresh
+    # row "fill_blanks" overwrites the NULL defaults with whatever was supplied.
+    _apply_provenance(person, data, conflict_strategy="fill_blanks")
     ctx.db.add(person)
     ctx.db.add(
         PersonTenantMembership(
@@ -488,6 +559,38 @@ async def _find_by_identifier(
     return list(found.values())
 
 
+async def _find_by_external_ref(
+    ctx: MCPContext, source_label: str, external_ref: str
+) -> list[tuple[Person, list[IdentifierMatch]]]:
+    """Secondary dedup on ``(canonical_owner_tenant_id, source_label, external_ref)``.
+
+    The CONTACT-OPS-INGEST-CONTRACT (§3) fallback for leads that arrive WITHOUT an
+    email or phone: a producing app's own id (``external_ref``), scoped to that
+    producer (``source_label``) and the caller's tenant, is enough to recognize a
+    repeat push. Email/phone remain the PRIMARY key — this is consulted only when
+    that produced no match. Backed by the partial index
+    ``ix_persons_source_external_ref`` (migration 0040). ``source_label`` is
+    required here precisely so two different apps reusing the same external_ref
+    string can never collide.
+    """
+    value = external_ref.strip()
+    label = source_label.strip()
+    if not value or not label:
+        return []
+    result = await ctx.db.execute(
+        select(Person).where(
+            Person.canonical_owner_tenant_id == ctx.tenant_id,
+            Person.source_label == label,
+            Person.external_ref == value,
+        )
+    )
+    rows = cast(list[Person], result.scalars().all())
+    return [
+        (person, [IdentifierMatch(namespace="external_ref", value=value)])
+        for person in rows
+    ]
+
+
 async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
     require_role(ctx, "STAFF")
     require_scopes(ctx, ("person:write",))
@@ -500,7 +603,25 @@ async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
     )
     if cached is not None:
         return UpsertPersonOutput.model_validate(cached)
+    # PRIMARY match: email / phone (the natural keys handled by _find_by_identifier).
     matches = await _find_by_identifier(ctx, data.match_by)
+    # FALLBACK (CONTACT-OPS-INGEST-CONTRACT §3): only when email/phone produced NO
+    # match AND the caller supplied an external_ref identifier + a source_label,
+    # dedup on (tenant, source_label, external_ref). This lets a lead that arrives
+    # without email/phone still be recognized on a repeat push. Email/phone stays
+    # primary: this branch is skipped entirely whenever the primary match hit.
+    if not matches and data.source_label:
+        ref_idents = [
+            ident.value
+            for ident in data.match_by
+            if ident.namespace.lower() == "external_ref" and ident.value.strip()
+        ]
+        # Prefer the external_ref carried in match_by; fall back to the source
+        # block's external_ref (the REST envelope puts it there) so either shape
+        # dedups identically.
+        ref_value = ref_idents[0] if ref_idents else (data.external_ref or "")
+        if ref_value:
+            matches = await _find_by_external_ref(ctx, data.source_label, ref_value)
     if len(matches) > 1:
         raise ToolError(AMBIGUOUS_MATCH, "multiple natural-key matches found", retryable=False)
     if not matches:
@@ -531,6 +652,15 @@ async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
             if current != incoming:
                 setattr(person, field, incoming)
                 changed_fields.append(field)
+        # Ingest provenance (CONTACT-OPS-INGEST-CONTRACT §3): fill/overwrite the
+        # source/consent/rollup columns per the SAME conflict_strategy. An absent
+        # (None) incoming field is never written, so a later upsert that omits a
+        # field does not clobber a value an earlier push recorded.
+        changed_fields.extend(
+            _apply_provenance(
+                person, data, conflict_strategy=data.conflict_strategy
+            )
+        )
         if changed_fields:
             person.etag = str(uuid.uuid4())
         action = "updated" if changed_fields else "noop"
