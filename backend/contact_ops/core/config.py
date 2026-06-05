@@ -195,6 +195,12 @@ class Settings(BaseSettings):
     GARAGE_ADMIN_ENDPOINT: str = "http://unicorn-garage:3903"
     GARAGE_ACCESS_KEY: str = ""
     GARAGE_SECRET_KEY: str = ""
+    # Bearer token for the Garage *admin* API (control-plane: per-tenant bucket
+    # create + key grant in services/garage_lifecycle). Garage itself reads this
+    # same value from the GARAGE_ADMIN_TOKEN env to gate :3903; the backend must
+    # send it as `Authorization: Bearer` or provisioning 403s. Empty ⇒ no header
+    # (correct for a token-less dev Garage). Never logged.
+    GARAGE_ADMIN_TOKEN: str = ""
 
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""
