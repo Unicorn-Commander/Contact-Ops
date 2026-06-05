@@ -152,6 +152,15 @@ class Person(Base):
     updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     created_by_actor_id: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
     etag: Mapped[str] = mapped_column(Text, default="")
+    # Ingest provenance + rollups (migration 0040, CONTACT-OPS-INGEST-CONTRACT §3).
+    # Lightweight denormalized fields recording WHERE a person came from; the
+    # producing app keeps its vertical data. All nullable.
+    source_label: Mapped[str | None] = mapped_column(Text)
+    source_kind: Mapped[str | None] = mapped_column(Text)
+    external_ref: Mapped[str | None] = mapped_column(Text)
+    consent_basis: Mapped[str | None] = mapped_column(Text)
+    lead_score: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    stage: Mapped[str | None] = mapped_column(Text)
 
 
 class Organization(Base):
