@@ -265,7 +265,12 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if brigade_claims is None:
             return None
 
-        tenant_id = str(brigade_claims.get("org_id") or "")
+        # Canonical tenancy claim is workspace_id (SUITE-IDENTITY 0.1; Brigade
+        # retired org_id). Read workspace_id first, fall back to org_id for any
+        # legacy token still in flight.
+        tenant_id = str(
+            brigade_claims.get("workspace_id") or brigade_claims.get("org_id") or ""
+        )
         uc_uid = str(brigade_claims.get("sub") or "")
         if not tenant_id or not uc_uid:
             logger.warning(
