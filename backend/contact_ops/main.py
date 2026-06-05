@@ -29,6 +29,7 @@ from contact_ops.api.billing import router as billing_router
 from contact_ops.api.chat import router as chat_router
 from contact_ops.api.connectors import router as connectors_router
 from contact_ops.api.import_vcard import router as import_vcard_router
+from contact_ops.api.ingest import router as ingest_router
 from contact_ops.api.test_brigade_jwt import router as test_brigade_jwt_router
 from contact_ops.api.well_known import router as well_known_router
 from contact_ops.api.workspaces import router as workspaces_router
@@ -282,6 +283,11 @@ def create_application() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(connectors_router)
     app.include_router(import_vcard_router)
+    # REST ingest seam (CONTACT-OPS-INGEST-CONTRACT §1B): the APP front door over
+    # the same upsert core the MCP tools use. Authenticated API router, so it runs
+    # after the JWT middleware. Serves both a uchub user JWT and a Brigade service
+    # token (tenant resolved from the claim, never a header).
+    app.include_router(ingest_router)
     app.include_router(well_known_router)
     # Signed server-to-server workspace mirror read (SUITE-IDENTITY §4). Carries
     # its own inline HMAC signature auth and is in JWTValidationMiddleware
