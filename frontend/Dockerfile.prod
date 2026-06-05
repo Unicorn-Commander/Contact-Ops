@@ -19,6 +19,14 @@ ENV VITE_MCP_BASE_URL=$VITE_MCP_BASE_URL
 ENV VITE_KEYCLOAK_ISSUER=$VITE_KEYCLOAK_ISSUER
 ENV VITE_KEYCLOAK_CLIENT_ID=$VITE_KEYCLOAK_CLIENT_ID
 
+# Free-tier on-device AI (WebGPU + transformers.js). OFF by default; the public
+# build passes true so the free tier's local analyst is compiled in.
+ARG VITE_ENABLE_LOCAL_AI=false
+ENV VITE_ENABLE_LOCAL_AI=$VITE_ENABLE_LOCAL_AI
+# Optional explicit REST API base; when empty the SPA derives it from VITE_MCP_BASE_URL.
+ARG VITE_API_BASE=
+ENV VITE_API_BASE=$VITE_API_BASE
+
 # Build the application
 RUN npm run build
 

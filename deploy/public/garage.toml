@@ -1,0 +1,33 @@
+# Single-node Garage for the Contact-Ops PUBLIC instance (centerdeep VPS).
+# Replication factor 1 — single trusted node; we accept "no replicas" for a v1
+# launch (bumping to 3 means provisioning two more nodes). rpc_secret +
+# admin_token come from the environment (GARAGE_RPC_SECRET / GARAGE_ADMIN_TOKEN),
+# never committed. After first start, provision with:
+#   garage layout assign -z dc1 -c 50G <node-id> && garage layout apply --version 1
+#   garage bucket create contact-ops
+#   garage key create contact-ops-key      # → put access/secret in .env
+#   garage bucket allow --read --write --owner contact-ops --key contact-ops-key
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+replication_mode = "1"
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+# S3 API — internal only; the backend reaches it at http://contact-ops-garage:3900
+# over the contact-ops-internal docker network.
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "us-east-1"
+root_domain = ".s3.contacts.unicorncommander.ai"
+
+[s3_web]
+bind_addr = "127.0.0.1:3902"
+root_domain = ".web.contacts.unicorncommander.ai"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
