@@ -282,6 +282,20 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
 
         try:
             async with async_session_maker() as db:
+                # Bind the verified Brigade token's asserted tenant as the RLS
+                # context (transaction-local via set_config is_local=true; it
+                # never leaks to the pooled connection) so this resolution read
+                # satisfies the tenants_select policy (id = current_tenant_id()).
+                # The token is already signature/issuer/audience-verified, so
+                # trusting its asserted workspace for the existence+metadata read
+                # is safe; the same set_config pattern CO uses for normal requests.
+                await db.execute(
+                    text(
+                        "SELECT set_config('app.tenant_id', :tid, true), "
+                        "set_config('app.uc_uid', :uid, true)"
+                    ),
+                    {"tid": tenant_id, "uid": uc_uid},
+                )
                 row = await db.execute(
                     text(
                         """
