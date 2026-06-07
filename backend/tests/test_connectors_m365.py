@@ -42,3 +42,30 @@ def test_pkce_challenge_is_stable() -> None:
     state, verifier, challenge = create_state("m365", "user-1", str(uuid.uuid4()))
     assert state
     assert challenge == code_challenge(verifier)
+
+
+async def test_m365_ensure_fresh_token_refreshes_and_accepts_rotated_token(monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from contact_ops.connectors.m365 import M365Connector
+
+    async def fake_refresh(refresh_token: str) -> dict[str, object]:
+        assert refresh_token == "stored-refresh"
+        return {
+            "access_token": "fresh-access",
+            "refresh_token": "rotated-refresh",  # Microsoft rotates the refresh token
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "scopes": "Contacts.Read",
+        }
+
+    monkeypatch.setattr("contact_ops.connectors.m365.refresh_m365_token", fake_refresh)
+    connector = M365Connector(
+        {
+            "access_token": "stale",
+            "refresh_token": "stored-refresh",
+            "expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        }
+    )
+    assert await connector.ensure_fresh_token() is True
+    assert connector.payload["access_token"] == "fresh-access"
+    assert connector.payload["refresh_token"] == "rotated-refresh"  # rotation honoured

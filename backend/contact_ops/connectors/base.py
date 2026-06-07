@@ -6,7 +6,7 @@ import asyncio
 import json
 import uuid
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from cryptography.fernet import Fernet
@@ -45,6 +45,52 @@ class Connector(ABC):
     async def pull(self, ctx: MCPContext, since: datetime | None) -> list[CanonicalImportRecord]:
         """Return canonical records from the upstream provider."""
 
+    async def ensure_fresh_token(self) -> bool:
+        """Refresh the stored OAuth access token when it is expired or near expiry.
+
+        OAuth access tokens are short-lived (Google/Microsoft ~1h); the stored
+        ``access_token`` must be refreshed from the long-lived ``refresh_token``
+        before each pull or the provider returns 401. Providers that override
+        this mutate ``self.payload`` in place and return ``True`` so the caller
+        re-persists it.
+
+        The default is a no-op for connectors that authenticate without an
+        expiring token (e.g. iCloud app-specific passwords).
+        """
+        return False
+
+
+def token_needs_refresh(payload: dict[str, Any], *, skew_seconds: int = 300) -> bool:
+    """True when the access token is missing, unparseable, or within ``skew_seconds`` of expiry.
+
+    The skew window refreshes a token that is still technically valid but would
+    expire mid-pull, avoiding a 401 on a long paginated fetch.
+    """
+    expires_at = payload.get("expires_at")
+    if not expires_at:
+        return True
+    try:
+        expiry = datetime.fromisoformat(str(expires_at))
+    except ValueError:
+        return True
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    return expiry <= datetime.now(UTC) + timedelta(seconds=skew_seconds)
+
+
+def apply_refreshed_token(payload: dict[str, Any], refreshed: dict[str, Any]) -> None:
+    """Merge a refreshed token response into ``payload`` in place.
+
+    Providers commonly omit the refresh token (Google) and sometimes the scope
+    on a refresh response, so the prior values are preserved when absent.
+    """
+    payload["access_token"] = refreshed["access_token"]
+    payload["expires_at"] = refreshed["expires_at"]
+    if refreshed.get("refresh_token"):
+        payload["refresh_token"] = refreshed["refresh_token"]
+    if refreshed.get("scopes"):
+        payload["scopes"] = refreshed["scopes"]
+
 
 def encrypt_payload(payload: dict[str, Any]) -> bytes:
     return _fernet().encrypt(json.dumps(payload, sort_keys=True, default=str).encode())
@@ -68,6 +114,11 @@ async def run_connector_pull(
     run_id = await _start_run(ctx, connector_id, triggered_by)
     result = ConnectorRunResult()
     try:
+        # Refresh the upstream OAuth token if it has expired, BEFORE pulling.
+        # Persisted in its own committed session so a freshly minted token is
+        # not lost when the request transaction rolls back on a later error.
+        if await connector.ensure_fresh_token():
+            await _persist_connector_payload(ctx.tenant_id, connector_id, connector.payload)
         records = await connector.pull(ctx, since=None)
         seen: set[str] = set()
         upload_id = uuid.uuid5(
@@ -100,7 +151,10 @@ async def run_connector_pull(
         await _finish_run(ctx, connector_id, run_id, result, None)
     except Exception as exc:
         result.errors.append(str(exc))
-        await _finish_run(ctx, connector_id, run_id, result, str(exc))
+        # The MCP request transaction (ctx.db) is rolled back when this raises,
+        # so the failure must be recorded in an independent committed session or
+        # it vanishes from run history and the connector's status.
+        await _persist_run_failure(ctx, connector_id, triggered_by, result, str(exc))
         raise
     return run_id, result
 
@@ -189,6 +243,107 @@ async def _finish_run(
     )
     if status == "succeeded" and result.proposed_count > 0:
         asyncio.create_task(_run_post_pull_agent_pipeline(ctx.tenant_id))
+
+
+async def _persist_connector_payload(
+    tenant_id: uuid.UUID,
+    connector_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> None:
+    """Persist a refreshed connector payload in its own committed session.
+
+    A token refreshed mid-request must outlive the request transaction (which
+    the MCP layer rolls back on any later error), so it is written and committed
+    independently using a stable service identity for RLS/attribution.
+    """
+    settings = get_settings()
+    async with async_session_maker() as db:
+        await bind_session_context(
+            db, str(tenant_id), "service:connector-token-refresh", settings
+        )
+        await db.execute(
+            text(
+                """
+                UPDATE connector_configs
+                SET encrypted_payload = :payload
+                WHERE id = CAST(:connector_id AS uuid)
+                  AND tenant_id = CAST(:tenant_id AS uuid)
+                """
+            ),
+            {
+                "payload": encrypt_payload(payload),
+                "connector_id": str(connector_id),
+                "tenant_id": str(tenant_id),
+            },
+        )
+        await db.commit()
+
+
+async def _persist_run_failure(
+    ctx: MCPContext,
+    connector_id: uuid.UUID,
+    triggered_by: str,
+    result: ConnectorRunResult,
+    error_message: str,
+) -> None:
+    """Durably record a failed connector run in an independent committed session.
+
+    Mirrors the error branch of :func:`_finish_run`, but commits on its own
+    connection so the failed run row and the connector's ``error`` status
+    survive the request transaction's rollback.
+    """
+    settings = get_settings()
+    summary = {
+        "parsed": result.parsed_count,
+        "proposed": result.proposed_count,
+        "deduped": result.deduped_count,
+        "skipped": result.skipped_count,
+        "errors_count": len(result.errors),
+    }
+    async with async_session_maker() as db:
+        await bind_session_context(db, str(ctx.tenant_id), "service:connector-pull", settings)
+        await db.execute(
+            text(
+                """
+                INSERT INTO connector_runs
+                    (tenant_id, connector_id, triggered_by, completed_at, status,
+                     parsed_count, proposed_count, deduped_count, skipped_count, error_message)
+                VALUES (CAST(:tenant_id AS uuid), CAST(:connector_id AS uuid), :triggered_by,
+                        now(), 'failed', :parsed, :proposed, :deduped, :skipped,
+                        CAST(:error_message AS text))
+                """
+            ),
+            {
+                "tenant_id": str(ctx.tenant_id),
+                "connector_id": str(connector_id),
+                "triggered_by": triggered_by,
+                "parsed": result.parsed_count,
+                "proposed": result.proposed_count,
+                "deduped": result.deduped_count,
+                "skipped": result.skipped_count,
+                "error_message": error_message,
+            },
+        )
+        await db.execute(
+            text(
+                """
+                UPDATE connector_configs
+                SET last_pull_at = now(),
+                    last_pull_summary = CAST(:summary AS jsonb),
+                    last_error = CAST(:error_message AS text),
+                    status = 'error'
+                WHERE id = CAST(:connector_id AS uuid)
+                  AND tenant_id = CAST(:tenant_id AS uuid)
+                """
+            ),
+            {
+                "connector_id": str(connector_id),
+                "tenant_id": str(ctx.tenant_id),
+                "summary": json.dumps(summary),
+                "error_message": error_message,
+            },
+        )
+        await db.commit()
 
 
 async def _run_post_pull_agent_pipeline(tenant_id: uuid.UUID) -> None:
