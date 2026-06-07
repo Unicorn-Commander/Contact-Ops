@@ -73,9 +73,11 @@ export const useRecentEvents = () => {
 };
 export const usePeople = (args: Record<string, unknown>) => {
   const qk = useQueryKeys();
-  return useAuthedQuery(qk.people(args), (token) =>
-    args.query ? tools.searchPeople(args, token) : tools.listPeople(args, token)
-  );
+  // Always use search_people: with an empty query it returns the full directory
+  // (tenant-scoped) and it also applies the same filters. list_people requires a
+  // narrowing filter and errors on the default (no-search) People view, which left
+  // the directory blank until you typed something.
+  return useAuthedQuery(qk.people(args), (token) => tools.searchPeople(args, token));
 };
 export const usePerson = (id: string) => {
   const qk = useQueryKeys();
