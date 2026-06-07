@@ -205,7 +205,19 @@ def _address_type(label: str) -> str:
 
 
 def _split_labels(value: str) -> list[str]:
-    return [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
+    # Google Contacts CSV joins multiple labels with " ::: " and prefixes its own
+    # system labels with "* " (e.g. "* myContacts", "* starred"). Split on that
+    # separator first, drop the system labels, and tolerate comma/semicolon exports.
+    if not value:
+        return []
+    normalized = value.replace(" ::: ", ",").replace(":::", ",").replace(";", ",")
+    out: list[str] = []
+    for part in normalized.split(","):
+        cleaned = part.strip()
+        if not cleaned or cleaned.startswith("* "):
+            continue
+        out.append(cleaned)
+    return out
 
 
 def _birthday(value: str) -> dict[str, int | None] | None:

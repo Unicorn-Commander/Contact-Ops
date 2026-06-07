@@ -151,6 +151,7 @@ class ImportStats:
     merged: int = 0
     candidates_logged: int = 0
     errors: int = 0
+    skipped: int = 0  # individual fields skipped (e.g. an invalid phone) without losing the contact
 
 
 @dataclass(slots=True)

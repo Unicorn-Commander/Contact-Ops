@@ -12,6 +12,8 @@ import sqlalchemy as sa
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from contact_ops.core.config import get_settings
+from contact_ops.core.database import bind_session_context
 from contact_ops.importers.base import CanonicalImportRecord, ImportStats, ProvenanceContext
 from contact_ops.mcp.errors import AMBIGUOUS_MATCH, DUPLICATE_RECORD, ToolError
 from contact_ops.mcp.registry import MCPContext
@@ -129,13 +131,52 @@ class MCPImporterWriter:
 
     async def write_records(self, records: list[CanonicalImportRecord]) -> WriteResult:
         result = WriteResult()
+        settings = get_settings()
+        uc_uid = str(self.ctx.claims.get("uc_uid") or self.ctx.user_id)
+
+        async def _rebind() -> None:
+            # Per-record commits end the transaction, which clears the
+            # transaction-scoped `SET LOCAL app.tenant_id` GUC that RLS keys off.
+            # Re-establish it before each record's writes (and after the loop, so
+            # the caller's post-write work still has tenant context).
+            await bind_session_context(self.ctx.db, str(self.ctx.tenant_id), uc_uid, settings)
+            await bind_session_context(self.ctx.audit_db, str(self.ctx.tenant_id), uc_uid, settings)
+
         for record in records:
             try:
+                if not self.dry_run:
+                    await _rebind()
                 await self._write_one(record, result)
+                if not self.dry_run:
+                    # Commit per record so one bad row can't abort the whole batch's
+                    # shared (db + audit) transaction and roll back the good rows.
+                    await self.ctx.db.commit()
+                    await self.ctx.audit_db.commit()
             except Exception as exc:  # noqa: BLE001 - import should continue and report row-level failures.
+                if not self.dry_run:
+                    await self.ctx.db.rollback()
+                    await self.ctx.audit_db.rollback()
                 result.stats.errors += 1
                 result.errors.append(f"{record.source_record_id}: {exc}")
+        if not self.dry_run:
+            await _rebind()
         return result
+
+    async def _try_child(
+        self, result: WriteResult, record: CanonicalImportRecord, label: str, coro: Any
+    ) -> None:
+        """Run a single child-field write; skip (don't abort the contact) if it fails.
+
+        Field-level validation failures (e.g. an unparseable phone number) raise
+        before any DB write, so the session stays usable and we keep the rest of
+        the contact. A genuine DB error would abort the shared transaction and be
+        caught by write_records' per-record rollback backstop.
+        """
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001 - one bad field must not lose the contact.
+            result.stats.skipped += 1
+            result.errors.append(f"{record.source_record_id}: skipped {label}: {exc}")
 
     async def _write_one(self, record: CanonicalImportRecord, result: WriteResult) -> None:
         identifiers = record.stable_identifiers()
@@ -186,8 +227,19 @@ class MCPImporterWriter:
             await self._log_merge_candidate(created.person_id, candidate_ids, record)
             result.stats.candidates_logged += 1
 
-        await self._write_children(person_id, record)
-        await self._record_person_facts(person_id, record, source_id, event_id)
+        await self._write_children(person_id, record, result)
+        try:
+            # KNOWN ISSUE (flagged for a proper fix): field_provenance's RLS WITH CHECK
+            # requires the referenced action_event to be visible, but action_events are
+            # written to the separate audit session and aren't visible to the main
+            # session mid-transaction, so the insert is rejected. Don't lose the
+            # imported contact over provenance metadata — isolate the facts writes in a
+            # savepoint so their failure rolls back only the facts, not the person.
+            async with self.ctx.db.begin_nested():
+                await self._record_person_facts(person_id, record, source_id, event_id)
+        except Exception as exc:  # noqa: BLE001
+            result.stats.skipped += 1
+            result.errors.append(f"{record.source_record_id}: skipped facts/provenance: {exc}")
 
     def _create_input(self, record: CanonicalImportRecord) -> CreatePersonInput:
         return CreatePersonInput(
@@ -219,40 +271,57 @@ class MCPImporterWriter:
             conflict_strategy="fill_blanks",
         )
 
-    async def _write_children(self, person_id: uuid.UUID, record: CanonicalImportRecord) -> None:
+    async def _write_children(
+        self, person_id: uuid.UUID, record: CanonicalImportRecord, result: WriteResult
+    ) -> None:
         confidence = self.provenance.confidence()
         for email in record.emails:
-            await add_email(
-                self.ctx,
-                AddEmailInput(
-                    person_id=person_id,
-                    address=email.address,
-                    type=email.type,
-                    label=email.label,
-                    is_primary=email.is_primary,
-                    confidence=confidence,
+            await self._try_child(
+                result,
+                record,
+                f"email:{email.address}",
+                add_email(
+                    self.ctx,
+                    AddEmailInput(
+                        person_id=person_id,
+                        address=email.address,
+                        type=email.type,
+                        label=email.label,
+                        is_primary=email.is_primary,
+                        confidence=confidence,
+                    ),
                 ),
             )
         for phone in record.phones:
-            await add_phone(
-                self.ctx,
-                AddPhoneInput(
-                    person_id=person_id,
-                    e164=phone.e164,
-                    type=phone.type,
-                    label=phone.label,
-                    is_primary=phone.is_primary,
-                    confidence=confidence,
+            await self._try_child(
+                result,
+                record,
+                f"phone:{phone.e164}",
+                add_phone(
+                    self.ctx,
+                    AddPhoneInput(
+                        person_id=person_id,
+                        e164=phone.e164,
+                        type=phone.type,
+                        label=phone.label,
+                        is_primary=phone.is_primary,
+                        confidence=confidence,
+                    ),
                 ),
             )
         for address in record.addresses:
-            await add_address(
-                self.ctx,
-                AddAddressInput(
-                    subject_kind="person",
-                    subject_id=person_id,
-                    confidence=confidence,
-                    **address.model_dump(),
+            await self._try_child(
+                result,
+                record,
+                "address",
+                add_address(
+                    self.ctx,
+                    AddAddressInput(
+                        subject_kind="person",
+                        subject_id=person_id,
+                        confidence=confidence,
+                        **address.model_dump(),
+                    ),
                 ),
             )
         for identifier in record.identifiers:
@@ -267,28 +336,43 @@ class MCPImporterWriter:
                     ),
                 )
             except ToolError as exc:
-                if exc.code != DUPLICATE_RECORD:
-                    raise
+                if exc.code == DUPLICATE_RECORD:
+                    continue  # already present — idempotent, not an error
+                result.stats.skipped += 1
+                result.errors.append(
+                    f"{record.source_record_id}: skipped identifier:{identifier.namespace}: {exc}"
+                )
         if record.tags:
-            await tag_person(
-                self.ctx,
-                TagPersonInput(person_id=person_id, tags=record.tags, confidence=confidence),
-            )
-        for employment in record.employments:
-            org_id = await self._ensure_org(employment.company)
-            await set_employment(
-                self.ctx,
-                SetEmploymentInput(
-                    person_id=person_id,
-                    org_id=org_id,
-                    role_type="employee",
-                    title=employment.title,
-                    department=employment.department,
-                    started_at=_date(employment.started_at),
-                    is_primary=employment.is_primary,
-                    confidence=confidence,
+            await self._try_child(
+                result,
+                record,
+                "tags",
+                tag_person(
+                    self.ctx,
+                    TagPersonInput(person_id=person_id, tags=record.tags, confidence=confidence),
                 ),
             )
+        for employment in record.employments:
+            try:
+                org_id = await self._ensure_org(employment.company)
+                await set_employment(
+                    self.ctx,
+                    SetEmploymentInput(
+                        person_id=person_id,
+                        org_id=org_id,
+                        role_type="employee",
+                        title=employment.title,
+                        department=employment.department,
+                        started_at=_date(employment.started_at),
+                        is_primary=employment.is_primary,
+                        confidence=confidence,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - skip a bad employer, keep the contact.
+                result.stats.skipped += 1
+                result.errors.append(
+                    f"{record.source_record_id}: skipped employment:{employment.company}: {exc}"
+                )
 
     async def _ensure_org(self, name: str) -> uuid.UUID:
         existing = await self.ctx.db.scalar(

@@ -251,6 +251,10 @@ async def create_organization(
             )
 
     org = Organization(
+        # Organization.id has no model/Python default (only a DB server default the
+        # ORM doesn't fetch), so set it explicitly like create_person does — else
+        # the flush fails with "NULL identity key".
+        id=uuid.uuid4(),
         legal_name=req.legal_name,
         display_name=req.display_name or req.legal_name,
         kind=OrgKind(req.kind),
