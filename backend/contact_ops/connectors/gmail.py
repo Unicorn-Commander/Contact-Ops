@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from contact_ops.connectors.base import Connector
+from contact_ops.connectors.base import Connector, apply_refreshed_token, token_needs_refresh
 from contact_ops.core.config import get_settings
 from contact_ops.importers.base import (
     CanonicalImportRecord,
@@ -26,6 +26,13 @@ PEOPLE_URL = "https://people.googleapis.com/v1/people/me/connections"
 
 class GmailConnector(Connector):
     provider = "gmail"
+
+    async def ensure_fresh_token(self) -> bool:
+        refresh_token = self.payload.get("refresh_token")
+        if not refresh_token or not token_needs_refresh(self.payload):
+            return False
+        apply_refreshed_token(self.payload, await refresh_gmail_token(str(refresh_token)))
+        return True
 
     async def pull(self, ctx: MCPContext, since: object | None) -> list[CanonicalImportRecord]:
         access_token = str(self.payload["access_token"])
