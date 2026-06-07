@@ -18,6 +18,7 @@ Alembic-managed only.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -44,6 +45,12 @@ def _make_engine(dsn: str):  # type: ignore[no-untyped-def]
         pool_pre_ping=True,
         pool_recycle=3600,
         echo=False,
+        # JSONB columns (e.g. action_event.payload) routinely hold UUID / datetime
+        # / Decimal values; the stdlib default serializer raises on those, which
+        # aborted every importer child-write (add_email/add_phone emit an
+        # action_event whose payload carries a UUID). default=str makes JSONB
+        # serialization total without changing output for plain JSON types.
+        json_serializer=lambda obj: json.dumps(obj, default=str),
     )
 
 

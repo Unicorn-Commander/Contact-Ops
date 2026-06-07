@@ -40,7 +40,13 @@ sources_table = sa.Table(
     "sources",
     metadata,
     sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-    sa.Column("source_type", sa.Text),
+    # DB column is the `source_type` Postgres enum, not text — typing it as Text
+    # made SQLAlchemy emit `= $N::VARCHAR`, which Postgres rejects (no enum=varchar
+    # operator), aborting every import row. Reference the existing enum (no recreate).
+    sa.Column(
+        "source_type",
+        sa.dialects.postgresql.ENUM(name="source_type", create_type=False),
+    ),
     sa.Column("source_uri", sa.Text),
     sa.Column("source_record_id", sa.Text),
     sa.Column("retrieval_method", sa.Text),
@@ -70,7 +76,11 @@ field_provenance_table = sa.Table(
     sa.Column("current_value", sa.dialects.postgresql.JSONB),
     sa.Column("set_by_event_id", sa.dialects.postgresql.UUID(as_uuid=True)),
     sa.Column("set_by_actor", sa.dialects.postgresql.JSONB),
-    sa.Column("source", sa.Text),
+    # Also the `source_type` enum in the DB (see sources_table note above).
+    sa.Column(
+        "source",
+        sa.dialects.postgresql.ENUM(name="source_type", create_type=False),
+    ),
     sa.Column("source_record_id", sa.Text),
     sa.Column("confidence", sa.Numeric(4, 3)),
     sa.Column("established_at", sa.DateTime(timezone=True)),
