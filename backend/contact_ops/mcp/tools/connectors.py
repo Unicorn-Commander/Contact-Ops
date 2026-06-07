@@ -358,7 +358,7 @@ async def _load_connector(ctx: MCPContext, connector_id: uuid.UUID) -> dict[str,
             FROM connector_configs
             WHERE tenant_id = CAST(:tenant_id AS uuid)
               AND id = CAST(:connector_id AS uuid)
-              AND status = 'configured'
+              AND status IN ('configured', 'error')
             """
         ),
         {"tenant_id": str(ctx.tenant_id), "connector_id": str(connector_id)},
