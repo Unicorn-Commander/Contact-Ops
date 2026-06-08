@@ -1,8 +1,16 @@
 # Contact-Ops — session state & resume point (2026-06-08)
 
+> **Picking up?** Read this whole file. Code is all committed + pushed (PR #5),
+> nothing half-broken, app is live. The next ask is a **GUI refactor** of the
+> Graph + Review Queue (see "NEXT" below). Aaron rebooted; he'll resume here.
+
 Branch: `feat/csv-import-gui` (PR #5, off `main`). All code committed + pushed.
 Deployed on **bigboy** (`/home/muut/contact-ops`, `docker-compose.prod.yml`).
 Public: app `contacts.magicunicorn.dev`, MCP `mcp.contacts.magicunicorn.dev`.
+SSH alias: `magicunicorn` (user muut) = bigboy. Postgres container
+`contact-ops-postgres`, DB `contact_ops_db`, admin role `contact_ops_admin`.
+FalkorDB container `unicorn-falkordb`. MUI tenant
+`019e50a3-d995-723f-ab66-0f765f92c0f4`, uc_uid `REMOVED`.
 
 ## What shipped this session
 1. **CSV import in the GUI** (`/import` page now accepts `.csv` — Google Contacts + LinkedIn, header auto-detect) via the **propose-only Review-Queue** path, + **existing-person dedup** (re-import skips people you already have, by email/phone). MCP twin `propose_csv_records`. 18 tests green. Files: `services/csv_import.py`, `services/import_propose.py`, `api/import_csv.py`, `mcp/tools/import_csv.py`, refactored `services/vcard_import.py`; frontend `useVcardImport.ts` + `Import.tsx`.
@@ -20,7 +28,9 @@ Public: app `contacts.magicunicorn.dev`, MCP `mcp.contacts.magicunicorn.dev`.
 ## NEXT — the GUI refactor (the ask)
 1. **Graph viz = real rebuild, not patches.** Use a **force-directed canvas** layout that renders without WebGL (add `react-force-graph-2d`, swap the 2D render path) so it clusters properly + looks good; clean up the control panel. (The current 2D = hand-rolled SVG ring/cluster — a stopgap.)
 2. **Review Queue = UX cleanup** (not a rebuild): calmer rows, obvious bulk bar, handle 1000+ volume. `frontend/src/routes/pages/Inbox.tsx` (1264 lines).
-3. **BLOCKER on doing GUI well:** Claude can't see the rendered page (Chrome extension not connected) → all visual work has been blind off Aaron's Desktop screenshots, which is why it's slow/rough. **Unblock = connect the Claude Chrome extension** (Aaron trying his other Claude account) so Claude can iterate live.
+3. **BLOCKER on doing GUI well:** Claude can't see the rendered page → all visual work has been blind off Aaron's Desktop screenshots, which is why it's slow/rough. **Unblock = connect the Claude Chrome extension** so Claude can iterate live. STATUS 2026-06-08: Aaron re-logged Claude Code with another account + we retried — extension STILL not connected (`list_connected_browsers` = empty). The CLI `/login` is separate from the browser-extension connection. To actually connect: install the extension from claude.ai/chrome, log Chrome into claude.ai with the SAME account, **fully quit + reopen Chrome (Cmd+Q)**, then retry `tabs_context_mcp`. If it stays unconnected, fall back to: write detailed specs → Codex builds with a live frontend dev loop, OR keep iterating off screenshots (slower).
+
+   How to read screenshots from Aaron's Desktop: filenames contain a narrow-no-break-space (U+202F), so glob them — `ls -t ~/Desktop/Screenshot*` then Read the path; for zoom use PIL crop+resize (see this session's transcript).
 
 ## OPEN DECISIONS (awaiting Aaron)
 - **Review-queue disposition** for the 1,032: (1) approve the 193 CSV only [recommended], (2) approve all 1,032, (3) clear the 839 connector pull. Run server-side + dedup after.
