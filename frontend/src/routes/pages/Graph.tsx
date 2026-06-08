@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GraphCanvas, type GraphRenderMode } from "@/components/graph/GraphCanvas";
 import { GraphFilterPanel } from "@/components/graph/GraphFilterPanel";
-import { GraphLegend } from "@/components/graph/GraphLegend";
 import { NodeDetailDrawer } from "@/components/graph/NodeDetailDrawer";
 import { Spinner } from "@/design-system";
 import { usePeople } from "@/hooks/useMcp";
@@ -24,7 +23,7 @@ export function GraphRoute() {
   // Users can switch to 3D/auto in the controls.
   const [renderMode, setRenderMode] = useState<GraphRenderMode>("2d");
   const [snapshotAt, setSnapshotAt] = useState<Date | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // No person selected → show the whole tenant network (overview). Pick a person
   // (a /graph/:id deep link or the search picker) → drill into their ego network.
@@ -75,7 +74,7 @@ export function GraphRoute() {
     <div className="relative isolate -m-4 min-h-[calc(100svh-4rem)] overflow-hidden bg-background text-foreground lg:-m-6">
       <div className="absolute inset-0 bg-background" aria-hidden="true" />
 
-      <div className="co-scrollbar absolute left-3 top-3 z-20 max-h-[46svh] w-[min(32rem,calc(100vw-1.5rem))] space-y-3 overflow-y-auto rounded-lg border border-border bg-card/90 p-4 shadow-[var(--shadow-3)] backdrop-blur-xl md:left-4 md:top-4 md:max-h-none md:w-[min(30rem,calc(100vw-2rem))] md:overflow-visible">
+      <div className="co-scrollbar absolute left-3 top-3 z-20 max-h-[46svh] w-[min(23rem,calc(100vw-1.5rem))] space-y-3 overflow-y-auto rounded-lg border border-border bg-card/90 p-4 shadow-[var(--shadow-3)] backdrop-blur-xl md:left-4 md:top-4 md:max-h-none md:w-[min(22rem,calc(100vw-2rem))] md:overflow-visible">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -171,7 +170,6 @@ export function GraphRoute() {
           onConfidenceFloorChange={setConfidenceFloor}
           onRenderModeChange={setRenderMode}
         />
-        <GraphLegend />
           </>
         ) : null}
       </div>
@@ -209,13 +207,15 @@ export function GraphRoute() {
         onNodeClick={(node: GraphNode) => setSelectedNodeId(node.id)}
       />
 
-      <NodeDetailDrawer
-        node={selectedNode}
-        graph={graph.data}
-        rootPersonId={personId}
-        snapshotAt={snapshotAt}
-        onExpand={() => setHopLimit(2)}
-      />
+      {selectedNode ? (
+        <NodeDetailDrawer
+          node={selectedNode}
+          graph={graph.data}
+          rootPersonId={personId}
+          snapshotAt={snapshotAt}
+          onExpand={() => setHopLimit(2)}
+        />
+      ) : null}
     </div>
   );
 }

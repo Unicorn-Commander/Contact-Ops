@@ -1048,6 +1048,76 @@ function ListPane({
   );
 }
 
+function proposedFieldMap(entries: StructuredFieldEntry[]): Record<string, unknown> {
+  const map: Record<string, unknown> = {};
+  for (const entry of entries) map[entry.field] = entry.proposedValue;
+  return map;
+}
+
+function proposedValuesToStrings(value: unknown): string[] {
+  if (value === null || value === undefined || value === "") return [];
+  const arr = Array.isArray(value) ? value : [value];
+  return arr
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const obj = item as Record<string, unknown>;
+        return String(obj.address ?? obj.e164 ?? obj.value ?? obj.name ?? obj.company ?? JSON.stringify(obj));
+      }
+      return String(item);
+    })
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s !== "-" && s !== "null" && s !== "{}" && s !== "[]");
+}
+
+function PreviewRow({ label, values }: { label: string; values: string[] }) {
+  if (values.length === 0) return null;
+  return (
+    <div className="flex gap-co-8">
+      <span className="w-12 shrink-0 pt-co-2 font-mono text-10 uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 space-y-co-2 text-13 text-foreground">
+        {values.map((value, index) => (
+          <span key={`${label}-${index}`} className="block truncate" title={value}>
+            {value}
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * ImportPreviewCard - the human-readable "what contact will this create" summary
+ * for import / person.create proposals, shown instead of forcing the reviewer
+ * through the master|proposed|choice field table (which is empty-master noise
+ * for fresh imports). The full StructuredDiff is still available, collapsed.
+ */
+function ImportPreviewCard({ entries }: { entries: StructuredFieldEntry[] }) {
+  const map = proposedFieldMap(entries);
+  const emails = proposedValuesToStrings(map.emails ?? map.email);
+  const phones = proposedValuesToStrings(map.phones ?? map.phone);
+  const role = proposedValuesToStrings(map.headline ?? map.occupation_title);
+  const org = proposedValuesToStrings(map.employments ?? map.organization ?? map.organizations);
+  const tags = proposedValuesToStrings(map.tags);
+  const notes = proposedValuesToStrings(map.notes);
+  if (emails.length + phones.length + role.length + org.length + tags.length + notes.length === 0) {
+    return null;
+  }
+  return (
+    <section className="space-y-co-8 rounded-md border border-border bg-muted/25 p-co-12">
+      <p className="font-mono text-11 font-medium uppercase text-muted-foreground">New contact</p>
+      <div className="space-y-co-6">
+        <PreviewRow label="Email" values={emails} />
+        <PreviewRow label="Phone" values={phones} />
+        <PreviewRow label="Role" values={role} />
+        <PreviewRow label="Org" values={org} />
+        <PreviewRow label="Tags" values={tags} />
+        <PreviewRow label="Notes" values={notes} />
+      </div>
+    </section>
+  );
+}
+
 type DetailPaneProps = {
   proposal: Proposal | null;
   tier: ReturnType<typeof selectTier>;
@@ -1155,17 +1225,22 @@ function DetailPane({
           </p>
         </section>
 
-        <section>
-          <p className="mb-co-4 font-mono text-11 font-medium uppercase text-muted-foreground">
-            Structured changes
-          </p>
-          <StructuredDiff
-            fields={diffEntries}
-            choices={fieldChoices}
-            perFieldChoice={tier === 3}
-            onChange={onFieldChoice}
-          />
-        </section>
+        <ImportPreviewCard entries={diffEntries} />
+
+        <details className="group rounded-md border border-border bg-muted/15">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-co-4 p-co-10 font-mono text-11 font-medium uppercase text-muted-foreground hover:text-foreground">
+            <span>Field-by-field details</span>
+            <span className="text-muted-foreground transition-transform group-open:rotate-180">v</span>
+          </summary>
+          <div className="border-t border-border p-co-10">
+            <StructuredDiff
+              fields={diffEntries}
+              choices={fieldChoices}
+              perFieldChoice={tier === 3}
+              onChange={onFieldChoice}
+            />
+          </div>
+        </details>
 
         <EvidencePanel proposalId={proposal.proposal_id} defaultExpanded={tier === 2} />
 

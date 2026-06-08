@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraphMethods } from "react-force-graph-3d";
+import ForceGraph2D, { type ForceGraphMethods as ForceGraphMethods2D } from "react-force-graph-2d";
 import { Box, Network } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MonoNumeric, Spinner } from "@/design-system";
@@ -125,6 +126,7 @@ export function GraphCanvas({
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
+  const graph2dRef = useRef<ForceGraphMethods2D<GraphNode, GraphLink> | undefined>(undefined);
   const [size, setSize] = useState({ width: 900, height: 700 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [engineTick, setEngineTick] = useState(0);
@@ -275,14 +277,14 @@ export function GraphCanvas({
     (link: GraphLink) => {
       const confidence = Math.max(0.15, Math.min(1, link.strength ?? 0.6));
       const channel = isProposeOnlyRelationship(link.type) ? "confidence-amber" : "info";
-      return canvasColors.edge(channel, confidence);
+      return canvasColors.edge(channel, Math.min(1, confidence + 0.3));
     },
     [canvasColors]
   );
 
   const edgeWidth = useCallback((link: GraphLink) => {
     const confidence = Math.max(0.25, Math.min(1.6, (link.strength ?? 0.6) * 1.6));
-    return isProposeOnlyRelationship(link.type) ? Math.max(0.8, confidence * 0.75) : confidence;
+    return isProposeOnlyRelationship(link.type) ? Math.max(1, confidence * 0.9) : Math.max(1.4, confidence * 1.4);
   }, []);
 
   const edgeParticles = useCallback(
@@ -336,6 +338,9 @@ export function GraphCanvas({
   // graphs are tiny + centered, so they always showed).
   const handleEngineStop = useCallback(() => {
     graphRef.current?.zoomToFit(600, 40);
+  }, []);
+  const handleEngineStop2d = useCallback(() => {
+    graph2dRef.current?.zoomToFit(600, 40);
   }, []);
 
   const svgNodes = useMemo<SvgLayoutNode[]>(() => {
@@ -434,6 +439,10 @@ export function GraphCanvas({
     const allowed = new Set(labels.map((label) => label.id));
     return svgNodes.filter((node) => allowed.has(node.id)).slice(0, LABEL_CEILING);
   }, [labels, svgNodes]);
+  // Retained from the prior SVG fallback; ForceGraph2D is the active 2D
+  // renderer now. TODO: remove the svgNodes/svgNodeMap/visibleSvgLabels chain.
+  void svgNodeMap;
+  void visibleSvgLabels;
 
   const graphBody = loading ? (
     <div className="flex h-full min-h-[520px] w-full items-center justify-center">
@@ -464,89 +473,36 @@ export function GraphCanvas({
     </div>
   ) : effectiveMode === "2d" ? (
     <div ref={wrapRef} className="relative h-full min-h-[520px] w-full overflow-hidden bg-background">
-      <svg
-        className="absolute inset-0 block h-full w-full"
-        viewBox={`0 0 ${size.width} ${size.height}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label="2D ego network fallback"
-      >
-        <g>
-          {data.links.map((link, index) => {
-            const sourceId = resolveNodeId(link.source as string | GraphNode | undefined);
-            const targetId = resolveNodeId(link.target as string | GraphNode | undefined);
-            const source = sourceId ? svgNodeMap.get(sourceId) : null;
-            const target = targetId ? svgNodeMap.get(targetId) : null;
-            if (!source || !target) return null;
-            const proposeOnly = isProposeOnlyRelationship(link.type);
-            return (
-              <line
-                key={`${source.id}-${target.id}-${link.type}-${index}`}
-                x1={source.sx}
-                y1={source.sy}
-                x2={target.sx}
-                y2={target.sy}
-                stroke={edgeColor(link)}
-                strokeWidth={edgeWidth(link)}
-                strokeDasharray={proposeOnly ? "4 5" : undefined}
-                opacity={0.82}
-              />
-            );
-          })}
-        </g>
-        <g>
-          {svgNodes.map((node) => {
-            const highlighted = highlightedNodeSet.has(node.id);
-            const radius = Math.max(7, Math.min(22, (node.val ?? 4) * (highlighted ? 1.9 : 1.35)));
-            return (
-              <g
-                key={node.id}
-                role="button"
-                tabIndex={0}
-                aria-label={nodeTooltip(node)}
-                onClick={() => onNodeClick(node)}
-                onMouseEnter={() => setHoveredNodeId(node.id)}
-                onMouseLeave={() => setHoveredNodeId(null)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") onNodeClick(node);
-                }}
-                className="cursor-pointer outline-none"
-              >
-                <circle cx={node.sx} cy={node.sy} r={radius + 5} fill={canvasColors.node(node.kind)} opacity={highlighted ? 0.18 : 0.08} />
-                <circle cx={node.sx} cy={node.sy} r={radius} fill={canvasColors.node(node.kind)} opacity={0.94} />
-                <circle cx={node.sx} cy={node.sy} r={radius} fill="none" stroke={canvasColors.node(node.kind)} strokeWidth={highlighted ? 3 : 1.5} opacity={0.65} />
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-      <div className="pointer-events-none absolute inset-0">
-        {visibleSvgLabels.map((label) => (
-          <div
-            key={label.id}
-            className={cn(
-              "absolute inline-flex max-w-44 -translate-x-1/2 -translate-y-[calc(100%+0.75rem)] items-center gap-2 rounded-md border px-2 py-1 shadow-[var(--shadow-1)] backdrop-blur-xl",
-              nodeKindClass(label.kind),
-              (label.id === selectedNodeId || label.id === hoveredNodeId) && "ring-1 ring-primary/25"
-            )}
-            style={{
-              left: label.sx,
-              top: label.sy
-            }}
-          >
-            <span className={cn("h-2 w-2 shrink-0 rounded-full", label.id === selectedNodeId ? "bg-primary" : "bg-muted-foreground")} />
-            <span className="min-w-0">
-              <span className="block truncate text-[11px] font-medium leading-none text-foreground">{label.name}</span>
-              <span className="block truncate font-mono text-[10px] leading-none text-muted-foreground">{label.kind}</span>
-            </span>
-          </div>
-        ))}
-      </div>
+      <ForceGraph2D
+        ref={graph2dRef}
+        width={size.width}
+        height={size.height}
+        graphData={data}
+        backgroundColor="transparent"
+        nodeId="id"
+        nodeLabel={nodeLabelAccessor}
+        nodeColor={nodeColorAccessor}
+        nodeVal={nodeValAccessor}
+        nodeRelSize={5}
+        linkColor={linkColorAccessor}
+        linkWidth={linkWidthAccessor}
+        linkDirectionalParticles={linkParticlesAccessor}
+        linkDirectionalParticleWidth={linkParticleWidthAccessor}
+        linkDirectionalParticleColor={linkParticleColorAccessor}
+        linkDirectionalParticleSpeed={0.004}
+        cooldownTicks={forceConfig.cooldownTicks}
+        warmupTicks={forceConfig.warmupTicks}
+        onEngineStop={handleEngineStop2d}
+        onNodeClick={handleNodeClick}
+        onNodeHover={handleNodeHover}
+        onBackgroundClick={handleBackgroundClick}
+      />
       <div className="pointer-events-none absolute left-3 bottom-3 flex items-center gap-2 rounded-md border border-border bg-card/80 px-3 py-2 text-[11px] text-muted-foreground shadow-[var(--shadow-1)] backdrop-blur-xl">
         <Box className="h-3.5 w-3.5" />
-        <span>2D fallback active</span>
-        <MonoNumeric tone="muted">{visibleSvgLabels.length}</MonoNumeric>
-        <span>labels</span>
+        <span>
+          <MonoNumeric tone="muted">{data.nodes.length}</MonoNumeric> contacts ·{" "}
+          <MonoNumeric tone="muted">{data.links.length}</MonoNumeric> links
+        </span>
       </div>
     </div>
   ) : (
