@@ -262,7 +262,7 @@ export function DashboardRoute() {
   }
 
   const peopleCount = dashboard.data?.people.total_count ?? dashboard.data?.people.count ?? 0;
-  const orgCount = dashboard.data?.orgs.count ?? 0;
+  const orgCount = dashboard.data?.orgs.total_count ?? dashboard.data?.orgs.count ?? 0;
   const toolCount = tools.data?.tools?.length ?? 0;
   const eventItems = events.data?.items ?? [];
   const pending = pendingCount ?? 0;

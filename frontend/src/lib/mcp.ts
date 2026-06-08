@@ -238,8 +238,8 @@ export const tools = {
   list: (token: string) => mcpCall<{ tools: Array<{ name: string; description?: string }> }>("tools/list", {}, token),
   dashboard: async (token: string) => {
     const [people, orgs, tenants] = await Promise.all([
-      callTool<ListResult<PersonSummary>>("list_people", { limit: 1 }, token),
-      callTool<ListResult<OrganizationSummary>>("list_organizations", { limit: 1 }, token),
+      callTool<ListResult<PersonSummary>>("search_people", { limit: 1 }, token),
+      callTool<ListResult<OrganizationSummary>>("search_organizations", { limit: 1 }, token),
       callTool<ListResult<Tenant>>("list_tenants", { limit: 25 }, token)
     ]);
     return { people, orgs, tenants };

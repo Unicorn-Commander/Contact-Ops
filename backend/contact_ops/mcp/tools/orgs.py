@@ -177,6 +177,7 @@ class ListOrganizationsOutput(ToolOutput):
     items: list[dict[str, Any]]
     count: int
     next_cursor: str | None = None
+    total_count: int | None = None
 
 
 class SearchOrganizationsInput(ListOrganizationsInput):
@@ -517,6 +518,7 @@ async def list_organizations(
         stmt = stmt.where(Organization.domain.is_(None))
     if req.cursor:
         stmt = stmt.where(Organization.display_name > req.cursor)
+    total = await ctx.db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = (
         (await ctx.db.execute(stmt.order_by(Organization.display_name).limit(req.limit + 1)))
         .scalars()
@@ -526,6 +528,7 @@ async def list_organizations(
     return ListOrganizationsOutput(
         items=[_org_to_record(org).model_dump(mode="json") for org in items],
         count=len(items),
+        total_count=int(total or 0),
         next_cursor=items[-1].display_name if len(rows) > req.limit and items else None,
     )
 
@@ -548,6 +551,7 @@ async def search_organizations(
                 func.lower(Organization.industry).like(q),
             )
         )
+    total = await ctx.db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = (
         (await ctx.db.execute(stmt.order_by(Organization.display_name).limit(req.limit + 1)))
         .scalars()
@@ -557,6 +561,7 @@ async def search_organizations(
     return ListOrganizationsOutput(
         items=[_org_to_record(org).model_dump(mode="json") for org in items],
         count=len(items),
+        total_count=int(total or 0),
         next_cursor=items[-1].display_name if len(rows) > req.limit and items else None,
     )
 

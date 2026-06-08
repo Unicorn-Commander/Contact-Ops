@@ -812,6 +812,7 @@ async def search_people(ctx: MCPContext, args: BaseModel) -> SearchPeopleOutput:
                 Person.headline.ilike(q),
             )
         )
+    total = await ctx.db.scalar(select(func.count()).select_from(stmt.subquery()))
     stmt = stmt.order_by(Person.display_name.asc()).limit(data.limit)
     result = await ctx.db.execute(stmt)
     rows = result.scalars().all()
@@ -823,7 +824,7 @@ async def search_people(ctx: MCPContext, args: BaseModel) -> SearchPeopleOutput:
         )
         for person in rows
     ]
-    return SearchPeopleOutput(items=items, count=len(items), next_cursor=None)
+    return SearchPeopleOutput(items=items, count=len(items), total_count=int(total or 0), next_cursor=None)
 
 
 async def find_person_by_identifier(

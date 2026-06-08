@@ -1,16 +1,15 @@
 /**
  * CountUp — animated stat count-up for the v2 dashboard hero.
  *
- * Counts from 0 → `value` once, on first scroll-into-view, with an ease-out
- * curve. Respects prefers-reduced-motion: when set, it renders the final value
- * immediately and never animates. Uses a single rAF loop with a ref-held DOM
- * write target where possible, but keeps a React state value for the formatted
- * output so it stays declarative and SSR-safe.
+ * Counts from 0 → `value` with an ease-out curve, animating on mount AND again
+ * whenever `value` changes (the dashboard tiles mount at 0 and update once the
+ * counts load in). Respects prefers-reduced-motion: renders the final value
+ * immediately, no animation.
  *
  * Numbers render with tabular-nums (.co-mono-numeric) so the width doesn't jitter
  * as digits tick.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export interface CountUpProps {
@@ -41,43 +40,26 @@ export function CountUp({
 }: CountUpProps) {
   const reduce = prefersReducedMotion();
   const [display, setDisplay] = useState(() => (reduce ? value : 0));
-  const ref = useRef<HTMLSpanElement>(null);
-  const started = useRef(false);
 
   useEffect(() => {
     if (reduce) {
       setDisplay(value);
       return;
     }
-    const node = ref.current;
-    if (!node) return;
-
+    // Animate 0 → value. Re-runs whenever value changes, so a tile that mounted
+    // at 0 (data not loaded) ticks up once the real count arrives. No
+    // scroll-into-view gating — these are above-the-fold hero tiles.
     let raf = 0;
     let startTs = 0;
-
-    const run = () => {
-      const step = (ts: number) => {
-        if (!startTs) startTs = ts;
-        const t = Math.min((ts - startTs) / durationMs, 1);
-        setDisplay(value * easeOut(t));
-        if (t < 1) raf = requestAnimationFrame(step);
-      };
-      raf = requestAnimationFrame(step);
+    const step = (ts: number) => {
+      if (!startTs) startTs = ts;
+      const t = Math.min((ts - startTs) / durationMs, 1);
+      setDisplay(value * easeOut(t));
+      if (t < 1) raf = requestAnimationFrame(step);
     };
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting) && !started.current) {
-          started.current = true;
-          run();
-        }
-      },
-      { threshold: 0.4 }
-    );
-    io.observe(node);
+    raf = requestAnimationFrame(step);
 
     return () => {
-      io.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
   }, [value, durationMs, reduce]);
@@ -88,7 +70,7 @@ export function CountUp({
   });
 
   return (
-    <span ref={ref} className={cn("co-mono-numeric tabular-nums", className)}>
+    <span className={cn("co-mono-numeric tabular-nums", className)}>
       {prefix}
       {formatted}
       {suffix}
