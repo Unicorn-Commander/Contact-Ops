@@ -1,52 +1,49 @@
-"""Synchronous propose-only vCard import orchestration."""
+"""Synchronous propose-only vCard import orchestration.
+
+Parsing lives here; the per-record dedup + Review-Queue emit (shared with the
+CSV importer) lives in :mod:`contact_ops.services.import_propose`. That shared
+loop also gives vCard imports existing-person duplicate detection, so a
+re-import of contacts you already have is collapsed instead of re-proposed.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import uuid
+from typing import TYPE_CHECKING
 
 import structlog
-from pydantic import BaseModel, Field
 
-from contact_ops.importers.base import CanonicalImportRecord
 from contact_ops.importers.vcard import record_from_vcard_text, split_vcards
-from contact_ops.mcp.registry import MCPContext
+from contact_ops.services.import_propose import (
+    ImportPreview,
+    ImportRowError,
+    ImportSummary,
+    propose_canonical_records,
+)
 from contact_ops.services.proposal_emit import (
     PERSON_CREATE_PROPOSAL_PATH,
-    emit_person_create_proposal,
-    import_fingerprint,
     upload_id_for_text,
 )
+
+if TYPE_CHECKING:
+    # Type-only (see import_propose.py): a runtime MCPContext import here can
+    # re-enter the eager MCP tool registry mid-initialization.
+    from contact_ops.mcp.registry import MCPContext
 
 MAX_VCARD_SIZE_BYTES = 50 * 1024 * 1024
 VCARD_IMPORT_PROPOSAL_TOOL = PERSON_CREATE_PROPOSAL_PATH
 
 logger = structlog.get_logger(__name__)
 
+# Back-compat aliases — the REST endpoint and MCP tool import these names.
+VCardImportPreview = ImportPreview
+VCardImportRowError = ImportRowError
+VCardImportResult = ImportSummary
+
 
 class VCardImportError(ValueError):
     """Raised for invalid vCard uploads."""
-
-
-class VCardImportPreview(BaseModel):
-    display_name: str
-    emails: list[str] = Field(default_factory=list)
-    phones: list[str] = Field(default_factory=list)
-    organization: str | None = None
-
-
-class VCardImportRowError(BaseModel):
-    index: int
-    reason: str
-
-
-class VCardImportResult(BaseModel):
-    parsed_count: int
-    proposed_count: int
-    deduped_count: int
-    skipped_count: int
-    errors: list[VCardImportRowError]
-    preview: list[VCardImportPreview]
 
 
 async def propose_vcard_import(
@@ -56,7 +53,7 @@ async def propose_vcard_import(
     dry_run: bool = False,
     filename: str | None = None,
     upload_id: uuid.UUID | None = None,
-) -> VCardImportResult:
+) -> ImportSummary:
     """Parse vCards and propose person-create events without applying them."""
 
     if not _looks_like_vcard(vcard_text):
@@ -68,55 +65,27 @@ async def propose_vcard_import(
     if not blocks:
         raise VCardImportError("no complete vCard records found")
 
-    parsed_count = 0
-    proposed_count = 0
-    deduped_count = 0
-    errors: list[VCardImportRowError] = []
-    preview: list[VCardImportPreview] = []
-    seen: set[str] = set()
-
+    records = []
+    parse_errors: list[ImportRowError] = []
     for index, block in enumerate(blocks):
         try:
-            record = record_from_vcard_text(block, source_record_id=_source_record_id(block, index))
-        except Exception as exc:
-            errors.append(VCardImportRowError(index=index, reason=str(exc)))
+            record = record_from_vcard_text(
+                block, source_record_id=_source_record_id(block, index)
+            )
+        except Exception as exc:  # noqa: BLE001 - report the block, keep going
+            parse_errors.append(ImportRowError(index=index, reason=str(exc)))
             continue
+        records.append(record)
 
-        parsed_count += 1
-        if len(preview) < 5:
-            preview.append(_preview(record))
-
-        fingerprint = import_fingerprint(record)
-        if fingerprint in seen:
-            deduped_count += 1
-            continue
-        seen.add(fingerprint)
-
-        if dry_run:
-            continue
-
-        await emit_person_create_proposal(
-            ctx=ctx,
-            record=record,
-            upload_id=resolved_upload_id,
-            source={
-                "action": "vcard_import",
-                "upload_id": str(resolved_upload_id),
-                "filename": source_filename,
-                "record_index": index,
-                "source_record_id": record.source_record_id,
-            },
-        )
-        proposed_count += 1
-
-    skipped_count = len(errors)
-    result = VCardImportResult(
-        parsed_count=parsed_count,
-        proposed_count=proposed_count,
-        deduped_count=deduped_count,
-        skipped_count=skipped_count,
-        errors=errors,
-        preview=preview,
+    result = await propose_canonical_records(
+        ctx=ctx,
+        records=records,
+        source_kind="vcard",
+        source_action="vcard_import",
+        upload_id=resolved_upload_id,
+        filename=source_filename,
+        dry_run=dry_run,
+        parse_errors=parse_errors,
     )
     logger.info(
         "vcard_import_completed",
@@ -124,6 +93,7 @@ async def propose_vcard_import(
         upload_id=str(resolved_upload_id),
         parsed_count=result.parsed_count,
         proposed_count=result.proposed_count,
+        duplicate_count=result.duplicate_count,
     )
     return result
 
@@ -138,22 +108,12 @@ def decode_vcard_bytes(data: bytes) -> str:
 
 
 def _looks_like_vcard(text_value: str) -> bool:
-    return text_value.lstrip("\ufeff\r\n\t ").upper().startswith("BEGIN:VCARD")
+    return text_value.lstrip("﻿\r\n\t ").upper().startswith("BEGIN:VCARD")
 
 
 def _source_record_id(block: str, index: int) -> str:
     digest = hashlib.sha256(block.encode()).hexdigest()
     return f"vcard:{index}:{digest}"
-
-
-def _preview(record: CanonicalImportRecord) -> VCardImportPreview:
-    organization = record.employments[0].company if record.employments else None
-    return VCardImportPreview(
-        display_name=record.display_name,
-        emails=[email.address for email in record.emails],
-        phones=[phone.e164 for phone in record.phones],
-        organization=organization,
-    )
 
 
 def _sanitize_filename(filename: str | None) -> str | None:

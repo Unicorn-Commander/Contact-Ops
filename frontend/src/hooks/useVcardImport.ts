@@ -1,5 +1,12 @@
 /**
- * useVcardImport — POST /import/vcard multipart hook.
+ * useVcardImport — multipart contact-import hook (vCard AND CSV).
+ *
+ * Despite the name (kept so existing imports don't churn), this drives BOTH
+ * import endpoints and picks one by the file's extension:
+ *   - `.vcf` / `.vcard`  → POST /import/vcard
+ *   - `.csv`             → POST /import/csv   (Google Contacts / LinkedIn)
+ * Both share the same multipart contract and the same JSON response shape, so
+ * the page is agnostic to which one ran.
  *
  * Mirrors the same patterns as `useMcp` / `useChat`:
  *   - Bearer token comes from `react-oidc-context` via `useAccessToken()`.
@@ -9,25 +16,26 @@
  *     "file too large" message without re-parsing the server detail string.
  *
  * The hook owns the multipart construction (file + dry_run flag) so the page
- * stays presentational. The endpoint host is the same MCP base — the backend
- * track hangs `/import/vcard` off the same Traefik router as `/mcp` + `/chat`.
+ * stays presentational. Both endpoints hang off the same MCP base / Traefik
+ * router as `/mcp` + `/chat`.
  *
- * Contract — kept verbatim with `POST /import/vcard` on the Codex backend:
+ * Contract — `POST /import/vcard` and `POST /import/csv`:
  *
  *   Request (multipart):
- *     file:    <.vcf>
+ *     file:    <.vcf | .csv>
  *     dry_run: "true" | "false"
  *
  *   Response 200 JSON:
  *     parsed_count: number
  *     proposed_count: number
- *     deduped_count: number
+ *     deduped_count: number      // collapsed duplicates WITHIN the file
+ *     duplicate_count: number    // matched a person already in your contacts
  *     skipped_count: number
  *     errors: Array<{ index: number, reason: string }>
- *     preview: Array<{ display_name, emails, phones, organization? }>
+ *     preview: Array<{ display_name, emails, phones, organization?, duplicate? }>
  *
  *   413 → file too large (cap 50 MiB)
- *   400 → `detail` carries the user-facing reason ("not a vCard", …)
+ *   400 → `detail` carries the user-facing reason ("not a vCard"/"unrecognized CSV", …)
  */
 import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
@@ -47,12 +55,16 @@ export interface ImportPreviewRecord {
   emails: string[];
   phones: string[];
   organization?: string;
+  /** True when this record already matches a person in your contacts. */
+  duplicate?: boolean;
 }
 
 export interface VcardImportResult {
   parsed_count: number;
   proposed_count: number;
   deduped_count: number;
+  /** Records that matched a person already in your contacts (skipped, not re-proposed). */
+  duplicate_count?: number;
   skipped_count: number;
   errors: ImportError[];
   preview: ImportPreviewRecord[];
@@ -86,6 +98,15 @@ export class ImportTransportError extends Error {
 /** Hard client-side cap. Matches the 50 MiB server limit so we don't even start
  *  the multipart for a file we know the backend will reject. */
 export const MAX_VCARD_BYTES = 50 * 1024 * 1024;
+/** Same cap; clearer name now that this hook also handles CSV. */
+export const MAX_IMPORT_BYTES = MAX_VCARD_BYTES;
+
+/** Choose the import endpoint from the file's extension. The server is the
+ *  source of truth (it validates content), so a `.txt`-named vCard still works
+ *  by falling through to the vCard endpoint. */
+function endpointForFile(file: File): string {
+  return file.name.toLowerCase().endsWith(".csv") ? "/import/csv" : "/import/vcard";
+}
 
 export interface UseVcardImportArgs {
   file: File;
@@ -105,7 +126,7 @@ export function useVcardImport() {
 
   return useMutation<VcardImportResult, Error, UseVcardImportArgs>({
     mutationFn: async ({ file, dryRun }) => {
-      if (file.size > MAX_VCARD_BYTES) {
+      if (file.size > MAX_IMPORT_BYTES) {
         throw new FileTooLargeError();
       }
 
@@ -115,7 +136,7 @@ export function useVcardImport() {
 
       let response: Response;
       try {
-        response = await fetch(`${env.mcpBaseUrl}/import/vcard`, {
+        response = await fetch(`${env.mcpBaseUrl}${endpointForFile(file)}`, {
           method: "POST",
           headers: {
             // Do NOT set Content-Type manually — the browser sets the multipart

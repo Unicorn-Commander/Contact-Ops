@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  Info,
   Layers,
   RefreshCw,
   ShieldAlert,
@@ -52,12 +53,14 @@ import { cn } from "@/lib/utils";
 
 // ---- Helpers ---------------------------------------------------------------
 
-/** Tolerant filename extension test — Mac Contacts ships .vcf, Outlook .VCF.
- *  We don't gate strictly on this (the server is the source of truth), but
- *  a soft warning would only ever lead to errors the server already returns. */
-function looksLikeVcard(file: File): boolean {
+/** Tolerant filename extension test — vCard (.vcf/.vcard) or CSV (Google,
+ *  LinkedIn). We don't gate strictly on this (the server is the source of
+ *  truth), but a soft warning saves a round-trip on an obvious wrong file. */
+function looksLikeSupported(file: File): boolean {
   const name = file.name.toLowerCase();
-  return name.endsWith(".vcf") || name.endsWith(".vcard");
+  return (
+    name.endsWith(".vcf") || name.endsWith(".vcard") || name.endsWith(".csv")
+  );
 }
 
 /** Human-readable file size — no third-party dep needed. */
@@ -214,7 +217,7 @@ function DropZone({
         role="button"
         tabIndex={disabled ? -1 : 0}
         aria-disabled={disabled || undefined}
-        aria-label="Drop a .vcf file here or click to browse"
+        aria-label="Drop a .vcf or .csv file here or click to browse"
         onClick={openPicker}
         onKeyDown={handleKey}
         onDragEnter={(event) => {
@@ -249,7 +252,7 @@ function DropZone({
         </span>
         <div className="space-y-1.5">
           <p className="text-base font-semibold tracking-tight text-foreground">
-            {isDragging ? "Drop to attach" : "Drop a .vcf file here"}
+            {isDragging ? "Drop to attach" : "Drop a .vcf or .csv file here"}
           </p>
           <p className="text-sm text-muted-foreground">
             or{" "}
@@ -257,11 +260,13 @@ function DropZone({
             from your computer
           </p>
         </div>
-        <p className="text-xs text-muted-foreground">Up to 50 MiB · iCloud, Mac Contacts, Google, Outlook all supported</p>
+        <p className="text-xs text-muted-foreground">
+          Up to 50 MiB · vCard (.vcf) from iCloud / Mac Contacts · CSV from Google Contacts or LinkedIn
+        </p>
         <input
           ref={inputRef}
           type="file"
-          accept=".vcf,.vcard,text/vcard,text/x-vcard,text/directory"
+          accept=".vcf,.vcard,.csv,text/vcard,text/x-vcard,text/directory,text/csv"
           className="sr-only"
           onChange={handleChange}
           aria-hidden="true"
@@ -285,8 +290,8 @@ function DropZone({
             </p>
             <p className="co-mono-numeric text-xs text-muted-foreground">
               {formatBytes(selected.size)}
-              {!looksLikeVcard(selected) ? (
-                <span className="ml-2 text-warning">· not a .vcf — server will validate</span>
+              {!looksLikeSupported(selected) ? (
+                <span className="ml-2 text-warning">· not a .vcf/.csv — server will validate</span>
               ) : null}
             </p>
           </div>
@@ -341,7 +346,9 @@ function SummaryCard({ result, dryRun }: SummaryProps) {
               <CardDescription className="mt-0.5">
                 {dryRun
                   ? "Nothing was written — re-upload with the toggle off to send these to the Review Queue."
-                  : "Records are now in the Review Queue waiting for your approval."}
+                  : result.proposed_count === 0 && (result.duplicate_count ?? 0) > 0
+                    ? "Everything in this file is already in your contacts — nothing new to add."
+                    : "Records are now in the Review Queue waiting for your approval."}
               </CardDescription>
             </div>
           </div>
@@ -365,11 +372,11 @@ function SummaryCard({ result, dryRun }: SummaryProps) {
               hint={dryRun ? "would be created" : "queued for review"}
             />
             <StatTile
-              label="Deduped"
-              value={result.deduped_count}
+              label="Already in contacts"
+              value={result.duplicate_count ?? 0}
               icon={Layers}
               tone="emerald"
-              hint="matched existing people"
+              hint="matched a person you already have — skipped"
             />
             <StatTile
               label="Skipped"
@@ -468,6 +475,11 @@ function PreviewRow({ record }: { record: ImportPreviewRecord }) {
       <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
         {record.display_name || <span className="italic text-muted-foreground">No display name</span>}
       </p>
+      {record.duplicate ? (
+        <span className="inline-flex shrink-0 items-center rounded-full bg-[oklch(var(--co-emerald-500)/0.15)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[oklch(var(--co-emerald-500))]">
+          Already saved
+        </span>
+      ) : null}
       {record.organization ? (
         <p className="truncate text-xs text-muted-foreground" title={record.organization}>
           {record.organization}
@@ -614,10 +626,37 @@ export function ImportRoute() {
           <h1 className="text-2xl font-semibold tracking-tight">Import contacts</h1>
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Upload a vCard (.vcf) export — from iCloud, Mac Contacts, Google, Outlook, or anywhere else. Every
-          record gets <span className="font-medium text-foreground">proposed</span> to your Review Queue for
-          approval.
+          Upload a <span className="font-medium text-foreground">vCard (.vcf)</span> or a{" "}
+          <span className="font-medium text-foreground">contacts CSV</span> — Google Contacts, LinkedIn, iCloud,
+          Mac Contacts, Outlook, anywhere. Every record gets{" "}
+          <span className="font-medium text-foreground">proposed</span> to your Review Queue for approval, and
+          anyone already in your contacts is skipped — so a re-import won&apos;t create duplicates.
         </p>
+
+        {/* #10 — explain why this is a manual file upload, not account linking. */}
+        <details className="group max-w-2xl rounded-lg border border-border bg-card/50 px-4 py-3 text-sm [&_summary]:cursor-pointer">
+          <summary className="flex items-center gap-2 font-medium text-foreground marker:content-none">
+            <Info className="h-4 w-4 shrink-0 text-link" strokeWidth={1.8} />
+            Why upload a file instead of linking my account?
+            <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" strokeWidth={1.8} />
+          </summary>
+          <div className="mt-3 space-y-2 leading-relaxed text-muted-foreground">
+            <p>
+              Short version: it&apos;s a pain, and it&apos;s not our fault. Google and Microsoft gate live
+              contact access behind a security review that takes weeks plus an annual third-party audit — and
+              we&apos;re not going to push your whole address book through that pipeline just to read it once.
+              An export <span className="font-medium text-foreground">you</span> control is faster, more
+              private, and works <span className="font-medium text-foreground">right now</span>. One-click
+              account sync is on the roadmap.
+            </p>
+            <p className="text-xs">
+              <span className="font-medium text-foreground">Get your export:</span>{" "}
+              Google Contacts → Export → <span className="font-medium">Google CSV</span> ·{" "}
+              LinkedIn → Settings → Get a copy of your data ·{" "}
+              iCloud / Mac Contacts / Outlook → export <span className="font-medium">vCard (.vcf)</span>.
+            </p>
+          </div>
+        </details>
       </header>
 
       <DropZone

@@ -18,6 +18,7 @@ _OPTIONAL_TOOL_MODULES = (
     "identifiers",
     "imports",
     "import_vcard",
+    "import_csv",
     "notes",
     "orgs",
     "phones",

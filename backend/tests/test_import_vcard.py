@@ -14,7 +14,7 @@ from contact_ops.main import app
 from contact_ops.mcp.registry import MCPContext, get_tool
 from contact_ops.mcp.tools import register_all_tools
 from contact_ops.mcp.tools.import_vcard import ProposeVCardRecordsInput, propose_vcard_records
-from contact_ops.services import vcard_import
+from contact_ops.services import import_propose
 from contact_ops.services.vcard_import import VCardImportError, propose_vcard_import
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -43,7 +43,9 @@ def _ctx() -> MCPContext:
         user_id="user-1",
         actor_chain={"sub": "user-1"},
         human_authority="user-1",
-        db=cast(Any, None),
+        # FakeSession so import_propose._load_existing_index() (the dup-detection
+        # query) returns an empty index instead of touching a real DB.
+        db=cast(Any, _FakeSession()),
         audit_db=cast(Any, None),
         request_id="test-request",
         claims={
@@ -58,7 +60,7 @@ def _ctx() -> MCPContext:
 @pytest.mark.asyncio
 async def test_parse_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     proposed: list[str] = []
-    monkeypatch.setattr(vcard_import, "_emit_person_create_proposal", _capture_emit(proposed))
+    monkeypatch.setattr(import_propose, "emit_person_create_proposal", _capture_emit(proposed))
 
     result = await propose_vcard_import(ctx=_ctx(), vcard_text=VCARD_ONE + VCARD_TWO)
 
@@ -82,7 +84,7 @@ async def test_parse_error_on_non_vcard() -> None:
 @pytest.mark.asyncio
 async def test_dedupe_within_upload(monkeypatch: pytest.MonkeyPatch) -> None:
     proposed: list[str] = []
-    monkeypatch.setattr(vcard_import, "_emit_person_create_proposal", _capture_emit(proposed))
+    monkeypatch.setattr(import_propose, "emit_person_create_proposal", _capture_emit(proposed))
 
     result = await propose_vcard_import(ctx=_ctx(), vcard_text=VCARD_ONE + VCARD_ONE)
 
@@ -95,7 +97,7 @@ async def test_dedupe_within_upload(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_dry_run_skips_proposals(monkeypatch: pytest.MonkeyPatch) -> None:
     proposed: list[str] = []
-    monkeypatch.setattr(vcard_import, "_emit_person_create_proposal", _capture_emit(proposed))
+    monkeypatch.setattr(import_propose, "emit_person_create_proposal", _capture_emit(proposed))
 
     result = await propose_vcard_import(ctx=_ctx(), vcard_text=VCARD_ONE, dry_run=True)
 
@@ -159,8 +161,8 @@ def _session_factory() -> Any:
 
 
 class _FakeSession:
-    async def execute(self, *_args: Any, **_kwargs: Any) -> None:
-        return None
+    async def execute(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
 
     async def commit(self) -> None:
         return None
@@ -178,4 +180,10 @@ def _set_standalone(value: bool) -> None:
 def _run_async(awaitable: Awaitable[Any]) -> Any:
     import asyncio
 
-    return asyncio.get_event_loop().run_until_complete(awaitable)
+    # Python 3.12: get_event_loop() raises in a sync context with no running
+    # loop. Drive the coroutine on a fresh, self-contained loop instead.
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(awaitable)
+    finally:
+        loop.close()
