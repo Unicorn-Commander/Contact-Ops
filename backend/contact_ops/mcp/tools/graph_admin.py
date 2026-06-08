@@ -76,6 +76,10 @@ class FindDuplicatesGraphInput(BaseModel):
     limit: int = Field(default=25, ge=1, le=100)
 
 
+class GraphOverviewInput(BaseModel):
+    limit: int = Field(default=1000, ge=50, le=2500)
+
+
 class GraphNode(BaseModel):
     id: str
     name: str
@@ -235,7 +239,76 @@ async def extract_ego_graph(ctx: MCPContext, input: ExtractEgoGraphInput) -> Ego
                 source=source_key,
                 target=target_key,
                 type=str(edge_type),
-                strength=float(confidence) if confidence is not None else None,
+                strength=_to_float(confidence),
+            )
+        )
+    return EgoGraphOutput(
+        nodes=list(nodes.values()),
+        links=links,
+        node_count=len(nodes),
+        edge_count=len(links),
+        truncated=len(nodes) >= input.limit,
+    )
+
+
+# Tenant-wide overview: every edge (and the nodes it touches), so the default
+# graph view shows the whole connected network (org clusters) instead of
+# requiring the user to first pick one person. Same 8-column row shape as
+# EGO_GRAPH so the output construction below is identical.
+GRAPH_OVERVIEW = """
+MATCH (a)-[r]->(b)
+RETURN a.id,
+       coalesce(a.display_name, a.name, a.address, a.e164),
+       labels(a),
+       b.id,
+       coalesce(b.display_name, b.name, b.address, b.e164),
+       labels(b),
+       type(r),
+       r.confidence
+LIMIT $limit
+"""
+
+
+async def graph_overview(ctx: MCPContext, input: GraphOverviewInput) -> EgoGraphOutput:
+    result = await _query(ctx, GRAPH_OVERVIEW, {"limit": input.limit})
+    nodes: dict[str, GraphNode] = {}
+    links: list[GraphLink] = []
+    for row in result.rows:
+        if len(row) < 8:
+            continue
+        (
+            source_id,
+            source_name,
+            source_labels,
+            target_id,
+            target_name,
+            target_labels,
+            edge_type,
+            confidence,
+        ) = row[:8]
+        source_key = str(source_id)
+        target_key = str(target_id)
+        nodes[source_key] = GraphNode(
+            id=source_key,
+            name=str(source_name or source_id),
+            kind=_first_label(source_labels),
+            group=_first_label(source_labels),
+            val=8,
+            tenant_id=str(ctx.tenant_id),
+        )
+        nodes[target_key] = GraphNode(
+            id=target_key,
+            name=str(target_name or target_id),
+            kind=_first_label(target_labels),
+            group=_first_label(target_labels),
+            tenant_id=str(ctx.tenant_id),
+        )
+        links.append(
+            GraphLink(
+                source=source_key,
+                target=target_key,
+                type=str(edge_type),
+                strength=_to_float(confidence),
             )
         )
     return EgoGraphOutput(
@@ -273,14 +346,32 @@ async def find_duplicates_graph(ctx: MCPContext, input: FindDuplicatesGraphInput
 def _first_label(labels: Any) -> str:
     if isinstance(labels, list) and labels:
         return str(labels[0])
+    # Non-compact GRAPH.QUERY returns a node's labels as a string like
+    # "[Person]" (or "[Person, Foo]"), not a Python list — unwrap it.
+    if isinstance(labels, str):
+        inner = labels.strip().strip("[]").strip()
+        if inner:
+            return inner.split(",")[0].strip()
     return "Entity"
+
+
+def _to_float(value: Any) -> float | None:
+    """Parse a confidence/strength value that FalkorDB returns as a string."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def register_graph_tools() -> None:
     if get_tool("extract_ego_graph") is not None:
         return
-    required_role = "STAFF"
-    required_scopes = ("contactops:graph.read",)
+    # Graph reads are the same sensitivity as reading contacts, so gate them on
+    # the same role+scope the People views use (CLIENT + person:read). The old
+    # contactops:graph.read scope was never seeded in Keycloak, so every graph
+    # query 403'd — masked only because the viewer was always empty.
+    required_role = "CLIENT"
+    required_scopes = ("person:read",)
     annotations = {
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -349,6 +440,17 @@ def register_graph_tools() -> None:
         input_model=ExtractEgoGraphInput,
         output_model=EgoGraphOutput,
         handler=extract_ego_graph,
+        required_role=required_role,
+        required_scopes=required_scopes,
+        annotations=annotations,
+        idempotency=idempotency,
+    )
+    register(
+        name="graph_overview",
+        description="Tenant-wide graph overview (all connected nodes/edges) for the default graph view.",
+        input_model=GraphOverviewInput,
+        output_model=EgoGraphOutput,
+        handler=graph_overview,
         required_role=required_role,
         required_scopes=required_scopes,
         annotations=annotations,

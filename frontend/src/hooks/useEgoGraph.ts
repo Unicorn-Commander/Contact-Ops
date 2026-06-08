@@ -52,3 +52,30 @@ export function useEgoGraph(personId?: string, hopLimit = 1, confidenceFloor = 0
     }
   });
 }
+
+/**
+ * useGraphOverview — the whole tenant network (every connected node + edge),
+ * so the Graph page shows something the moment you open it instead of demanding
+ * you first paste a person UUID. Same shape as the ego graph, so the canvas
+ * renders it identically. `enabled` is driven by "no person is selected".
+ */
+export function useGraphOverview(enabled = true, limit = 1500) {
+  const auth = useAuth();
+  const qk = useQueryKeys();
+  return useQuery({
+    queryKey: qk.egoGraph("__overview__", 0, limit),
+    enabled: Boolean(enabled && auth.user?.access_token),
+    queryFn: async () => {
+      const graph = await callTool<EgoGraph>(
+        "graph_overview",
+        { limit },
+        auth.user?.access_token ?? ""
+      );
+      return {
+        ...graph,
+        nodes: graph.nodes.map((node) => ({ ...node, color: colorForNode(node.kind) })),
+        links: graph.links.map((link) => ({ ...link, color: colorForEdge(link.type) }))
+      };
+    }
+  });
+}

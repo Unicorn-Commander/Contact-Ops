@@ -116,7 +116,10 @@ class FalkorDBGraphClient:
             "GRAPH.QUERY",
             graph_name,
             full_query,
-            "--compact",
+            # NOTE: intentionally NOT --compact. The readers (extract_ego_graph,
+            # graph_overview) expect decoded scalars + label-name strings, which
+            # is what non-compact GRAPH.QUERY returns. --compact returns
+            # [type, value] pairs and integer label ids, which these break on.
             "TIMEOUT",
             str(timeout_ms),
         ]

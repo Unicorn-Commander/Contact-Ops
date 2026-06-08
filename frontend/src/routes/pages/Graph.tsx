@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GraphCanvas, type GraphRenderMode } from "@/components/graph/GraphCanvas";
@@ -8,19 +9,32 @@ import { GraphFilterPanel } from "@/components/graph/GraphFilterPanel";
 import { GraphLegend } from "@/components/graph/GraphLegend";
 import { NodeDetailDrawer } from "@/components/graph/NodeDetailDrawer";
 import { Spinner } from "@/design-system";
-import { useEgoGraph, type GraphNode } from "@/hooks/useEgoGraph";
+import { usePeople } from "@/hooks/useMcp";
+import { useEgoGraph, useGraphOverview, type GraphNode } from "@/hooks/useEgoGraph";
 
 export function GraphRoute() {
   const params = useParams({ strict: false }) as { id?: string };
-  const [manualPersonId, setManualPersonId] = useState("");
+  const [selectedPersonId, setSelectedPersonId] = useState<string | undefined>(undefined);
+  const [search, setSearch] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [hopLimit, setHopLimit] = useState(1);
+  const [hopLimit, setHopLimit] = useState(2);
   const [confidenceFloor, setConfidenceFloor] = useState(0);
   const [renderMode, setRenderMode] = useState<GraphRenderMode>("auto");
   const [snapshotAt, setSnapshotAt] = useState<Date | null>(null);
 
-  const personId = params.id ?? (manualPersonId.trim() || undefined);
-  const graph = useEgoGraph(personId, hopLimit, confidenceFloor);
+  // No person selected → show the whole tenant network (overview). Pick a person
+  // (a /graph/:id deep link or the search picker) → drill into their ego network.
+  const personId = params.id ?? selectedPersonId;
+  const isOverview = !personId;
+
+  const overview = useGraphOverview(isOverview);
+  const ego = useEgoGraph(personId, hopLimit, confidenceFloor);
+  const graph = isOverview ? overview : ego;
+
+  // People search for the picker. search_people with an empty query returns the
+  // directory (we just don't render it until the user types).
+  const peopleQuery = usePeople({ query: search.trim(), limit: 8 });
+  const results = search.trim() ? (peopleQuery.data?.items ?? []) : [];
 
   useEffect(() => {
     setSnapshotAt(graph.data ? new Date() : null);
@@ -42,6 +56,17 @@ export function GraphRoute() {
   const edgeCount = graph.data?.edge_count ?? 0;
   const hasGraph = Boolean(graph.data);
 
+  function pickPerson(id: string) {
+    setSelectedPersonId(id);
+    setSearch("");
+    setSelectedNodeId(null);
+  }
+
+  function backToOverview() {
+    setSelectedPersonId(undefined);
+    setSelectedNodeId(null);
+  }
+
   return (
     <div className="relative isolate -m-4 min-h-[calc(100svh-4rem)] overflow-hidden bg-background text-foreground lg:-m-6">
       <div className="absolute inset-0 bg-background" aria-hidden="true" />
@@ -60,28 +85,64 @@ export function GraphRoute() {
                   <span className="co-mono-numeric font-mono">
                     <strong>{nodeCount}</strong> nodes / <strong>{edgeCount}</strong> edges
                   </span>{" "}
-                  in the current ego network
+                  {isOverview ? "across your whole network" : "in this ego network"}
                 </>
+              ) : isOverview ? (
+                "Your whole contact network"
               ) : (
-                "Tenant-scoped ego network discovery"
+                "Ego network"
               )}
             </p>
           </div>
           {graph.isLoading ? <Spinner size="sm" label="Loading graph" /> : null}
         </div>
 
+        {/* Person picker — type a name to center the graph on one contact; a
+            /graph/:id deep link pins it and hides the picker. */}
         {!params.id ? (
           <div className="space-y-2">
-            <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground" htmlFor="graph-person-id">
-              Person UUID
-            </label>
+            <div className="flex items-end justify-between gap-2">
+              <label
+                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                htmlFor="graph-person-search"
+              >
+                {selectedPersonId ? "Focused on a contact" : "Search a contact to focus"}
+              </label>
+              {selectedPersonId ? (
+                <Button variant="outline" size="sm" onClick={backToOverview}>
+                  Whole network
+                </Button>
+              ) : null}
+            </div>
             <Input
-              id="graph-person-id"
-              value={manualPersonId}
-              onChange={(event) => setManualPersonId(event.target.value)}
-              placeholder="Paste a person UUID to start exploring"
+              id="graph-person-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search people by name…"
               className="bg-background"
             />
+            {results.length > 0 ? (
+              <ul className="co-scrollbar max-h-56 overflow-y-auto rounded-md border border-border bg-card">
+                {results.map((person) => (
+                  <li key={person.person_id}>
+                    <button
+                      type="button"
+                      onClick={() => pickPerson(person.person_id)}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                    >
+                      <span className="truncate font-medium text-foreground">
+                        {person.display_name}
+                      </span>
+                      {person.current_org ? (
+                        <span className="truncate text-xs text-muted-foreground">
+                          {person.current_org}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         ) : null}
 
@@ -107,6 +168,15 @@ export function GraphRoute() {
               <Skeleton className="h-40 w-full" />
               <Skeleton className="h-40 w-full" />
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {!graph.isLoading && hasGraph && nodeCount === 0 ? (
+        <div className="absolute inset-0 flex items-center justify-center px-4">
+          <div className="max-w-md rounded-lg border border-border bg-card/80 p-6 text-center text-sm text-muted-foreground shadow-[var(--shadow-2)] backdrop-blur-xl">
+            No connections to show yet. As contacts share organizations or get
+            linked, they&apos;ll appear here.
           </div>
         </div>
       ) : null}
