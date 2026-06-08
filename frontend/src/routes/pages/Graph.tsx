@@ -19,8 +19,12 @@ export function GraphRoute() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hopLimit, setHopLimit] = useState(2);
   const [confidenceFloor, setConfidenceFloor] = useState(0);
-  const [renderMode, setRenderMode] = useState<GraphRenderMode>("auto");
+  // Default to the explicit 2D layout: it positions every node as SVG (no
+  // WebGL, no camera to mis-aim), so the network is reliably visible on open.
+  // Users can switch to 3D/auto in the controls.
+  const [renderMode, setRenderMode] = useState<GraphRenderMode>("2d");
   const [snapshotAt, setSnapshotAt] = useState<Date | null>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
 
   // No person selected → show the whole tenant network (overview). Pick a person
   // (a /graph/:id deep link or the search picker) → drill into their ego network.
@@ -94,9 +98,22 @@ export function GraphRoute() {
               )}
             </p>
           </div>
-          {graph.isLoading ? <Spinner size="sm" label="Loading graph" /> : null}
+          <div className="flex items-center gap-2">
+            {graph.isLoading ? <Spinner size="sm" label="Loading graph" /> : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setPanelOpen((open) => !open)}
+              aria-expanded={panelOpen}
+              title={panelOpen ? "Hide controls" : "Show controls"}
+            >
+              {panelOpen ? "Hide" : "Controls"}
+            </Button>
+          </div>
         </div>
 
+        {panelOpen ? (
+          <>
         {/* Person picker — type a name to center the graph on one contact; a
             /graph/:id deep link pins it and hides the picker. */}
         {!params.id ? (
@@ -155,6 +172,8 @@ export function GraphRoute() {
           onRenderModeChange={setRenderMode}
         />
         <GraphLegend />
+          </>
+        ) : null}
       </div>
 
       {graph.isLoading ? (
