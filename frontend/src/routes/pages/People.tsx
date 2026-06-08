@@ -203,7 +203,7 @@ export function PeopleRoute() {
             <h1 className="text-2xl font-semibold tracking-tight">People</h1>
             {!people.isLoading && people.data ? (
               <span className="co-mono-numeric rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                {count}
+                {totalPeople}
               </span>
             ) : null}
           </div>
@@ -226,7 +226,7 @@ export function PeopleRoute() {
       ) : items.length ? (
         <StatStrip>
           <StatTile label="People" value={totalPeople} icon={UsersRound} tone="fuchsia" />
-          <StatTile label="With email" value={withEmail} icon={Mail} tone="sky" hint="reachable contacts" />
+          <StatTile label="With email" value={withEmail} icon={Mail} tone="sky" hint="on this page" />
           <StatTile label="Organizations" value={orgCount} icon={Building2} tone="emerald" hint="across this page" />
         </StatStrip>
       ) : null}

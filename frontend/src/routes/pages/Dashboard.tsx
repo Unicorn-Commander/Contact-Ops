@@ -8,7 +8,6 @@ import {
   ListChecks,
   Plug,
   Plus,
-  Search,
   Sparkles,
   Upload,
   UserPlus,
@@ -392,27 +391,6 @@ export function DashboardRoute() {
         />
       ) : (
         <>
-          {/* Global search bar */}
-          <form
-            role="search"
-            className="relative max-w-2xl"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void navigate({ to: "/people" });
-            }}
-          >
-            <Search
-              className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              strokeWidth={1.8}
-            />
-            <input
-              type="search"
-              aria-label="Search people, organizations, and tags"
-              placeholder="Search people, orgs, tags…"
-              className="focus-ring h-11 w-full rounded-md border bg-card pl-11 pr-4 text-sm placeholder:text-muted-foreground"
-            />
-          </form>
-
           {/* AI at-a-glance */}
           <AtAGlance
             summary={glanceSummary}

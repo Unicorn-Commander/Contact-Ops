@@ -187,7 +187,7 @@ export function OrgsRoute() {
             <h1 className="text-2xl font-semibold tracking-tight">Organizations</h1>
             {!orgs.isLoading && orgs.data ? (
               <span className="co-mono-numeric rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                {count}
+                {totalOrgs}
               </span>
             ) : null}
           </div>
