@@ -184,6 +184,22 @@ export function GraphCanvas({
   }, [colorVersion]);
 
   const data = useMemo(() => graph ?? { nodes: [], links: [] }, [graph]);
+
+  // Belt-and-suspenders framing: also fit a moment after the data loads, in
+  // case the force engine settled before this mounted (onEngineStop also fits).
+  // Without a fit, a large root-less graph lays out beyond the default camera
+  // and the canvas looks empty even though the nodes are there.
+  useEffect(() => {
+    if (!graph || data.nodes.length === 0) return;
+    const id = setTimeout(() => {
+      try {
+        graphRef.current?.zoomToFit(600, 40);
+      } catch {
+        /* ref not ready / 2D mode — ignore */
+      }
+    }, 1500);
+    return () => clearTimeout(id);
+  }, [graph, data.nodes.length]);
   const incidentNodeIds = useMemo(() => {
     const selected = selectedNodeId ? [selectedNodeId] : [];
     const hovered = hoveredNodeId && hoveredNodeId !== selectedNodeId ? [hoveredNodeId] : [];
@@ -328,6 +344,72 @@ export function GraphCanvas({
     const centerX = size.width / 2;
     const centerY = compact ? size.height * 0.58 : size.height / 2;
     const radius = Math.max(compact ? 68 : 120, Math.min(size.width, size.height) * (compact ? 0.2 : 0.32));
+
+    // Overview (no focused person): cluster people by their organization so the
+    // graph reads as employer groups laid out in a grid, instead of one giant
+    // ring/hairball. Ego views (a focused person) keep the centre+ring below.
+    if (!rootPersonId && data.nodes.length > 24) {
+      const byId = new Map<string, GraphNode>(data.nodes.map((node) => [node.id, node]));
+      const isOrg = (node: GraphNode) => node.kind === "Organization";
+      const orgOfPerson = new Map<string, string>();
+      for (const link of data.links) {
+        const a = resolveNodeId(link.source as string | GraphNode);
+        const b = resolveNodeId(link.target as string | GraphNode);
+        if (!a || !b) continue;
+        const na = byId.get(a);
+        const nb = byId.get(b);
+        if (na && nb && isOrg(nb) && !isOrg(na)) orgOfPerson.set(a, b);
+        else if (na && nb && isOrg(na) && !isOrg(nb)) orgOfPerson.set(b, a);
+      }
+      type Cluster = { org: GraphNode | undefined; people: GraphNode[] };
+      const clusters = new Map<string, Cluster>();
+      const loose: GraphNode[] = [];
+      for (const node of data.nodes) {
+        if (isOrg(node)) {
+          const cluster = clusters.get(node.id) ?? { org: undefined, people: [] };
+          cluster.org = node;
+          clusters.set(node.id, cluster);
+        } else {
+          const orgId = orgOfPerson.get(node.id);
+          if (orgId) {
+            const cluster = clusters.get(orgId) ?? { org: byId.get(orgId), people: [] };
+            cluster.people.push(node);
+            clusters.set(orgId, cluster);
+          } else {
+            loose.push(node);
+          }
+        }
+      }
+      const clusterList = [...clusters.values()]
+        .filter((cluster) => cluster.org || cluster.people.length > 0)
+        .sort((a, b) => b.people.length - a.people.length);
+      const count = clusterList.length || 1;
+      const cols = Math.max(1, Math.round(Math.sqrt(count * (size.width / Math.max(1, size.height)))));
+      const rows = Math.max(1, Math.ceil(count / cols));
+      const cellW = size.width / cols;
+      const cellH = size.height / (rows + (loose.length ? 0.6 : 0));
+      const out: SvgLayoutNode[] = [];
+      clusterList.forEach((cluster, index) => {
+        const cx = ((index % cols) + 0.5) * cellW;
+        const cy = (Math.floor(index / cols) + 0.5) * cellH;
+        if (cluster.org) out.push({ ...cluster.org, sx: cx, sy: cy });
+        const baseR = Math.max(16, Math.min(cellW, cellH) * 0.3);
+        const perRing = 8;
+        cluster.people.forEach((person, j) => {
+          const ringR = baseR + Math.floor(j / perRing) * 15;
+          const angle = ((j % perRing) / perRing) * Math.PI * 2 - Math.PI / 2;
+          out.push({ ...person, sx: cx + Math.cos(angle) * ringR, sy: cy + Math.sin(angle) * ringR });
+        });
+      });
+      if (loose.length) {
+        const ly = size.height - cellH * 0.3;
+        loose.forEach((person, j) => {
+          out.push({ ...person, sx: ((j + 0.5) / loose.length) * size.width, sy: ly });
+        });
+      }
+      return out;
+    }
+
     const sorted = [...data.nodes].sort((a, b) => nodePriority(a, selectedNodeId, hoveredNodeId, rootPersonId) - nodePriority(b, selectedNodeId, hoveredNodeId, rootPersonId));
     const rootIndex = sorted.findIndex((node) => node.id === rootPersonId);
     if (rootIndex > 0) {
@@ -344,7 +426,7 @@ export function GraphCanvas({
         sy: centerY + Math.sin(angle) * (radius + confidenceOffset)
       };
     });
-  }, [data.nodes, graph, hoveredNodeId, rootPersonId, selectedNodeId, size.height, size.width]);
+  }, [data.nodes, data.links, graph, hoveredNodeId, rootPersonId, selectedNodeId, size.height, size.width]);
 
   const svgNodeMap = useMemo(() => new Map(svgNodes.map((node) => [node.id, node])), [svgNodes]);
 
