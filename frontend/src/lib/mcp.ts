@@ -285,7 +285,27 @@ export const tools = {
   createOrganization: (args: Record<string, unknown>, token: string) => callTool("create_organization", args, token),
   updateOrganization: (args: Record<string, unknown>, token: string) => callTool("update_organization", args, token),
   archiveOrganization: (args: Record<string, unknown>, token: string) => callTool("archive_organization", args, token),
-  listTags: (token: string) => callTool<ListResult<Tag>>("list_tags", { limit: 200 }, token),
+  listTags: async (token: string) => {
+    // Backend list_tags returns { tag, person_count, org_count, ... }; the Tag
+    // type the UI consumes is { slug, display_name, usage_count }. Map the
+    // contract here so the tag cloud, the Tags stat strip, and the People
+    // filter chips render real names + counts (they were blank dots / zeros before).
+    const res = await callTool<{ items: Array<Record<string, unknown>>; count: number; next_cursor?: string | null }>(
+      "list_tags",
+      { limit: 200 },
+      token
+    );
+    const items: Tag[] = (res.items ?? []).map((raw) => {
+      const slug = String(raw.tag ?? raw.slug ?? "").trim();
+      const usage = Number(raw.person_count ?? raw.usage_count ?? 0) + Number(raw.org_count ?? 0);
+      const display_name = slug
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+        .trim();
+      return { slug, display_name: display_name || slug, usage_count: usage };
+    });
+    return { items, count: res.count ?? items.length, next_cursor: res.next_cursor ?? null } as ListResult<Tag>;
+  },
   applyTags: (args: Record<string, unknown>, token: string) => callTool("apply_tags", args, token),
   listTenants: (token: string) => callTool<ListResult<Tenant>>("list_tenants", { limit: 100 }, token),
   createTenant: (args: Record<string, unknown>, token: string) => callTool("create_tenant", args, token),

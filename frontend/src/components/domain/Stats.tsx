@@ -47,7 +47,15 @@ export function StatTile({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
           <Icon className={cn("h-4 w-4", t.icon)} strokeWidth={1.8} />
         </div>
-        <p className="mt-2.5 text-3xl font-semibold tabular-nums tracking-tight">{value}</p>
+        <p
+          className={cn(
+            "mt-2.5 text-3xl font-semibold tabular-nums tracking-tight",
+            // A zero reads as a calm "none yet", not a stark broken-looking 0.
+            value === 0 || value === "0" ? "text-muted-foreground/50" : "text-foreground"
+          )}
+        >
+          {value}
+        </p>
         {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
       </CardContent>
     </Card>

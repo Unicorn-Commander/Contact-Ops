@@ -20,7 +20,8 @@ import {
 } from "@/design-system/tokens";
 
 export interface ConfidenceMeterV2Props {
-  value: number;
+  /** Confidence 0–1, or null/undefined for an unscored proposal. */
+  value: number | null | undefined;
   /** Show the tier word ("High" / "Good" / …). */
   showLabel?: boolean;
   className?: string;
@@ -35,6 +36,37 @@ const filledSegments: Record<ConfidenceTier, number> = {
 };
 
 export function ConfidenceMeterV2({ value, showLabel = true, className }: ConfidenceMeterV2Props) {
+  // Unscored proposals read as a calm neutral chip, NOT an alarming red
+  // "0% · Low". In this system an absent score serializes to 0 (raw contact
+  // imports the agent never graded), so 0 / null / undefined all mean
+  // "no score yet" — honest, and it stops the whole queue looking like junk.
+  // Any real, positive score (even a low 0.2) still renders its true tier.
+  if (value == null || Number.isNaN(value) || value <= 0) {
+    return (
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-[11px] font-medium leading-none text-muted-foreground",
+          className
+        )}
+        role="img"
+        aria-label="Unscored — no confidence yet"
+        title="Unscored — no confidence score yet"
+        data-confidence-tier="unscored"
+      >
+        <span className="flex items-end gap-[2px]" aria-hidden="true">
+          {[0, 1, 2, 3].map((i) => (
+            <span
+              key={i}
+              className="w-[3px] rounded-[1px] bg-muted-foreground/25"
+              style={{ height: `${5 + i * 2}px` }}
+            />
+          ))}
+        </span>
+        {showLabel ? <span>Unscored</span> : <span aria-hidden>—</span>}
+      </span>
+    );
+  }
+
   const tier = getConfidenceTier(value);
   const config = confidenceTiers[tier];
   const lit = filledSegments[tier];
