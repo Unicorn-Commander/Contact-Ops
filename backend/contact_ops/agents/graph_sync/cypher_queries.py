@@ -29,9 +29,10 @@ LIMIT $limit
 """
 
 EGO_GRAPH = """
-MATCH (f {id: $person_id})-[r]-(n)
+MATCH (f {id: $person_id})
+OPTIONAL MATCH (f)-[r]-(n)
 RETURN f.id,
-       f.display_name,
+       coalesce(f.display_name, f.name, f.address, f.e164),
        labels(f),
        n.id,
        coalesce(n.display_name, n.name, n.address, n.e164),

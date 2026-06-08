@@ -218,7 +218,6 @@ async def extract_ego_graph(ctx: MCPContext, input: ExtractEgoGraphInput) -> Ego
             confidence,
         ) = row[:8]
         source_key = str(source_id)
-        target_key = str(target_id)
         nodes[source_key] = GraphNode(
             id=source_key,
             name=str(source_name or source_id),
@@ -227,6 +226,11 @@ async def extract_ego_graph(ctx: MCPContext, input: ExtractEgoGraphInput) -> Ego
             val=8,
             tenant_id=str(ctx.tenant_id),
         )
+        # OPTIONAL MATCH (ego) returns the center even with no neighbor — that
+        # row has a null target. Keep the center node, skip the null edge.
+        if not _is_present(target_id):
+            continue
+        target_key = str(target_id)
         nodes[target_key] = GraphNode(
             id=target_key,
             name=str(target_name or target_id),
@@ -287,7 +291,6 @@ async def graph_overview(ctx: MCPContext, input: GraphOverviewInput) -> EgoGraph
             confidence,
         ) = row[:8]
         source_key = str(source_id)
-        target_key = str(target_id)
         nodes[source_key] = GraphNode(
             id=source_key,
             name=str(source_name or source_id),
@@ -296,6 +299,11 @@ async def graph_overview(ctx: MCPContext, input: GraphOverviewInput) -> EgoGraph
             val=8,
             tenant_id=str(ctx.tenant_id),
         )
+        # OPTIONAL MATCH (ego) returns the center even with no neighbor — that
+        # row has a null target. Keep the center node, skip the null edge.
+        if not _is_present(target_id):
+            continue
+        target_key = str(target_id)
         nodes[target_key] = GraphNode(
             id=target_key,
             name=str(target_name or target_id),
@@ -361,6 +369,13 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _is_present(value: Any) -> bool:
+    """True unless the value is a FalkorDB null (None or the empty/"null" string)."""
+    if value is None:
+        return False
+    return str(value).strip().lower() not in ("", "null", "none")
 
 
 def register_graph_tools() -> None:
