@@ -315,6 +315,12 @@ export function GraphCanvas({
   const handleNodeHover = useCallback((node: GraphNode | null) => setHoveredNodeId(node ? node.id : null), []);
   const handleBackgroundClick = useCallback(() => setHoveredNodeId(null), []);
   const handleEngineTick = useCallback(() => setEngineTick((value) => value + 1), []);
+  // Frame the whole graph once the force simulation settles. Without this a
+  // large, root-less overview can lay out off-camera and look blank (ego
+  // graphs are tiny + centered, so they always showed).
+  const handleEngineStop = useCallback(() => {
+    graphRef.current?.zoomToFit(600, 40);
+  }, []);
 
   const svgNodes = useMemo<SvgLayoutNode[]>(() => {
     if (!graph || data.nodes.length === 0) return [];
@@ -494,6 +500,7 @@ export function GraphCanvas({
         cooldownTicks={forceConfig.cooldownTicks}
         warmupTicks={forceConfig.warmupTicks}
         onEngineTick={handleEngineTick}
+        onEngineStop={handleEngineStop}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
         onBackgroundClick={handleBackgroundClick}
