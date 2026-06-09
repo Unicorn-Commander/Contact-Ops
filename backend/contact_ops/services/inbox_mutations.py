@@ -25,8 +25,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = structlog.get_logger(__name__)
 
 from contact_ops.schemas.inbox import (
     BulkSkipReason,
@@ -345,6 +348,77 @@ async def _apply_person_create_proposal(
         },
     )
     await _insert_person_children(db, person_id, payload)
+    # P0: approved contacts must appear in the relationship graph. The approval
+    # path wrote Postgres only — the FalkorDB node was never created, so approved
+    # people were invisible in the graph view. Sync it now (best-effort).
+    await _sync_person_to_graph(db, tenant_id, person_id, payload)
+
+
+async def _sync_person_to_graph(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    person_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> None:
+    """Best-effort upsert of an approved contact into the tenant's FalkorDB graph
+    so it shows up in the relationship view immediately. Postgres is the source of
+    truth; a graph-sync failure must NEVER fail the approval. This mirrors the
+    synchronous graph-write pattern already used by enrichment.py and the dedup
+    merge executor (the async graph_sync_outbox is unwired on this branch)."""
+    try:
+        from contact_ops.agents.graph_sync.cypher_writes import build_write
+        from contact_ops.agents.graph_sync.falkordb_client import (
+            FalkorDBGraphClient,
+            TenantGraph,
+            graph_name_for_slug,
+        )
+        from contact_ops.models import Tenant
+
+        tenant = await db.get(Tenant, tenant_id)
+        if tenant is None:
+            return
+        graph_name = tenant.graph_name or graph_name_for_slug(tenant.slug)
+        tg = TenantGraph(
+            tenant_id=tenant_id, graph_name=graph_name, graph_mode=tenant.graph_mode
+        )
+        # Pull the just-inserted primary email/phone for the node props (same
+        # shape graph_backfill.py writes), so the node matches the rest of the graph.
+        primary_email = await db.scalar(
+            text(
+                "SELECT address FROM emails WHERE person_id = CAST(:p AS uuid) "
+                "ORDER BY is_primary DESC, created_at LIMIT 1"
+            ),
+            {"p": str(person_id)},
+        )
+        primary_phone = await db.scalar(
+            text(
+                "SELECT e164 FROM phones WHERE person_id = CAST(:p AS uuid) "
+                "ORDER BY is_primary DESC, created_at LIMIT 1"
+            ),
+            {"p": str(person_id)},
+        )
+        node = {
+            "id": str(person_id),
+            "tenant_id": str(tenant_id),
+            "display_name": str(payload.get("display_name") or "Unnamed Contact"),
+            "given_name": payload.get("given_name"),
+            "family_name": payload.get("family_name"),
+            "primary_email": primary_email,
+            "primary_phone": primary_phone,
+            "linkedin_url": None,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "confidence": 1.0,
+            "provenance_event_id": None,
+        }
+        client = FalkorDBGraphClient()
+        try:
+            await client.bootstrap_graph(tg)
+            w = build_write("person", "upsert", node)
+            await client.query(tg, w.cypher, w.params)
+        finally:
+            await client.close()
+    except Exception:  # noqa: BLE001 — graph sync is advisory; never fail approval
+        logger.warning("approval_graph_sync_failed", person_id=str(person_id), exc_info=True)
 
 
 def _payload_after(payload: Any, decision_payload: Any) -> dict[str, Any]:
