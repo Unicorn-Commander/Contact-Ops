@@ -2,10 +2,13 @@ import { env } from "@/lib/env";
 import type {
   ActionEvent,
   BulkActionResult,
+  CanonicalizeTagsResult,
   CardDavPassword,
+  CleanOrgNamesResult,
   Connector,
   ConnectorProvider,
   ConnectorRun,
+  DataQualityReport,
   ListPendingProposalsResult,
   ListResult,
   Note,
@@ -368,6 +371,16 @@ export const tools = {
       args as unknown as Record<string, unknown>,
       token
     ),
+
+  // ---- Data quality (matches backend mcp/tools/data_quality.py) ----
+  dataQualityReport: (token: string, args: { sample_limit?: number } = {}) =>
+    callTool<DataQualityReport>("data_quality_report", args, token),
+  cleanOrgNames: (
+    args: { org_ids?: UUID[]; dry_run?: boolean },
+    token: string
+  ) => callTool<CleanOrgNamesResult>("clean_org_names", args, token),
+  canonicalizeTags: (args: { dry_run?: boolean }, token: string) =>
+    callTool<CanonicalizeTagsResult>("canonicalize_tags", args, token),
 
   // ---- Phase 3.3 inbox tools ----
   listPendingProposals: (args: Record<string, unknown>, token: string) =>

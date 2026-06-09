@@ -13,6 +13,7 @@ import { DashboardRoute } from "@/routes/pages/Dashboard";
 import { PeopleRoute, PersonDetailRoute } from "@/routes/pages/People";
 import { OrgsRoute, OrgDetailRoute } from "@/routes/pages/Orgs";
 import { TagsRoute } from "@/routes/pages/Tags";
+import { DataQualityRoute } from "@/routes/pages/DataQuality";
 import { TenantsRoute } from "@/routes/pages/Tenants";
 import { SettingsRoute } from "@/routes/pages/Settings";
 import { ImportRoute } from "@/routes/pages/Import";
@@ -535,6 +536,7 @@ const personGraphRoute = createRoute({ getParentRoute: () => appRoute, path: "/p
 const orgsRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs", component: OrgsRoute });
 const orgRoute = createRoute({ getParentRoute: () => appRoute, path: "/orgs/$id", component: OrgDetailRoute });
 const tagsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tags", component: TagsRoute });
+const dataQualityRoute = createRoute({ getParentRoute: () => appRoute, path: "/data-quality", component: DataQualityRoute });
 const reviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/review", component: LazyInboxRoute });
 const inboxRedirectRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -681,7 +683,7 @@ export const routeTree = rootRoute.addChildren([
   ...(designSystemPATsRoute ? [designSystemPATsRoute] : []),
   ...(designSystemReviewQueueRoute ? [designSystemReviewQueueRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, dataQualityRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
   callbackRoute
 ]);
 

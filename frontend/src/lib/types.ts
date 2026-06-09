@@ -327,6 +327,72 @@ export type BulkActionPayload = {
   blocked_tier_4: number;
 };
 
+// ---- Data quality (matches backend mcp/tools/data_quality.py) -------------
+
+export type DqOrgIssue = {
+  org_id: UUID;
+  name: string;
+  cleaned?: string;
+  edge_count?: number;
+};
+
+export type DqDuplicateMember = {
+  org_id: UUID;
+  name: string;
+  cleaned?: string;
+  edge_count?: number;
+};
+
+export type DqDuplicateGroup = {
+  key: string;
+  members: DqDuplicateMember[];
+  suggested_survivor_id: UUID;
+};
+
+export type DqTagVariant = { tag: string; person_count: number };
+export type DqTagVariantGroup = { canonical: string; variants: DqTagVariant[] };
+
+export type DataQualityReport = {
+  org_total: number;
+  issues: {
+    quote_wrapped: DqOrgIssue[];
+    phone_as_name: DqOrgIssue[];
+    whitespace: DqOrgIssue[];
+  };
+  org_duplicate_groups: DqDuplicateGroup[];
+  tag_variant_groups: DqTagVariantGroup[];
+  summary: {
+    quote_wrapped: number;
+    phone_as_name: number;
+    whitespace: number;
+    duplicate_groups: number;
+    duplicate_orgs: number;
+    tag_variant_groups: number;
+  };
+};
+
+export type CleanOrgNamesResult = {
+  dry_run: boolean;
+  changed: Array<{
+    org_id: UUID;
+    display_before: string;
+    display_after: string;
+    legal_before: string;
+    legal_after: string;
+  }>;
+  changed_count: number;
+  skipped_phone_like: number;
+  status: string;
+};
+
+export type CanonicalizeTagsResult = {
+  dry_run: boolean;
+  mapping: Record<string, string>;
+  memberships_changed: number;
+  sample: Array<{ person_id: UUID; before: string[]; after: string[] }>;
+  status: string;
+};
+
 // ---- Connectors (matches feat-connectors-backend MCP tools) ---------------
 //
 // The /connectors page pulls contacts from third-party sources. Each provider

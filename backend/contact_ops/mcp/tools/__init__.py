@@ -55,6 +55,7 @@ _PHASE_3_MODULES = (
     "inbox",
     "calibration_admin",
     "consumer_webhooks",
+    "data_quality",
 )
 
 

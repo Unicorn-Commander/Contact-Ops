@@ -13,6 +13,7 @@ import {
   Network,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Tags,
   Sun,
@@ -59,6 +60,7 @@ const nav = [
   { to: "/tags", label: "Tags", icon: Tags, accent: "text-[oklch(var(--co-amber-500))]" },
   { to: "/graph", label: "Graph", icon: Network, accent: "text-[oklch(var(--co-fuchsia-500))]" },
   { to: "/review", label: "Review Queue", icon: ListChecks, accent: "text-[oklch(var(--co-rose-500))]" },
+  { to: "/data-quality", label: "Data Quality", icon: ShieldCheck, accent: "text-[oklch(var(--co-emerald-500))]" },
   { to: "/import", label: "Import", icon: Upload, accent: "text-[oklch(var(--co-emerald-500))]" },
   { to: "/connectors", label: "Connectors", icon: Cable, accent: "text-[oklch(var(--co-fuchsia-500))]" }
 ] as const;
