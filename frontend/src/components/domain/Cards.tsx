@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
 import { Briefcase, Building2, ChevronRight, Globe, Mail } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { CSSProperties } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { TagChip } from "@/components/domain/Badges";
@@ -21,20 +22,41 @@ const avatarSize: Record<AvatarSize, string> = {
 };
 
 /**
+ * Deterministic, theme-independent avatar colour. A solid mid-tone puck with a
+ * white initial/glyph (the Gmail/Linear pattern) gives the directory gentle,
+ * scannable variety: the same person is always the same colour, and because the
+ * puck is self-contained the contrast holds in both light and dark. Hues stay on
+ * the ecosystem palette and are kept lightly desaturated so a long list reads
+ * calm, not candy.
+ */
+const AVATAR_HUES = [304, 330, 350, 24, 60, 145, 176, 224, 264] as const;
+
+function avatarStyle(seed?: string | null): CSSProperties {
+  const s = (seed ?? "").trim();
+  if (!s) return { backgroundColor: "oklch(0.5 0.02 280)", color: "white" };
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
+  const hue = AVATAR_HUES[h % AVATAR_HUES.length];
+  return { backgroundColor: `oklch(0.56 0.135 ${hue})`, color: "white" };
+}
+
+/**
  * The avatar puck shared by every entity card. People show initials; orgs and
  * other non-human entities show a glyph. People are humans, so a human-shaped
  * avatar is correct here — the AIG "never make an agent look human" rule applies
- * to agents, not to the people in the registry.
+ * to agents, not to the people in the registry. The puck colour is hashed from
+ * `name` so it is stable and scannable; pass the entity name even for glyph orgs.
  */
 function EntityAvatar({ name, icon: Icon, size = "md" }: { name?: string | null; icon?: LucideIcon; size?: AvatarSize }) {
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-primary/12 font-semibold text-primary",
+        "flex shrink-0 items-center justify-center rounded-full font-semibold shadow-[inset_0_1px_0_oklch(1_0_0/0.18),inset_0_0_0_1px_oklch(0_0_0/0.08)]",
         avatarSize[size]
       )}
+      style={avatarStyle(name)}
     >
-      {Icon ? <Icon className="h-5 w-5" strokeWidth={1.6} /> : initials(name)}
+      {Icon ? <Icon className="h-5 w-5" strokeWidth={1.9} /> : initials(name)}
     </div>
   );
 }
@@ -72,11 +94,11 @@ export function PersonCard({ person }: { person: PersonSummary }) {
               ) : null}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-              <span className={metaItem}>
+              <span className={cn(metaItem, !person.primary_email && "text-muted-foreground/45")}>
                 <Mail className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
                 <span className="truncate">{person.primary_email ?? "No email"}</span>
               </span>
-              <span className={metaItem}>
+              <span className={cn(metaItem, !person.current_org && "text-muted-foreground/45")}>
                 <Building2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
                 <span className="truncate">{person.current_org ?? "No organization"}</span>
               </span>
@@ -129,7 +151,7 @@ export function OrgCard({ org }: { org: OrganizationSummary }) {
     >
       <Card className={cardChrome()}>
         <CardContent className="flex items-center gap-4 p-4">
-          <EntityAvatar icon={Building2} />
+          <EntityAvatar name={name} icon={Building2} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <p className="truncate font-medium">{name}</p>
@@ -140,11 +162,11 @@ export function OrgCard({ org }: { org: OrganizationSummary }) {
               ) : null}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-              <span className={metaItem}>
+              <span className={cn(metaItem, !org.domain && "text-muted-foreground/45")}>
                 <Globe className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
                 <span className="truncate">{org.domain ?? "No domain"}</span>
               </span>
-              <span className={metaItem}>
+              <span className={cn(metaItem, !org.industry && "text-muted-foreground/45")}>
                 <Briefcase className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
                 <span className="truncate">{org.industry ?? "No industry"}</span>
               </span>
@@ -218,7 +240,7 @@ export function OrgGridCard({ org }: { org: OrganizationSummary }) {
     >
       <Card className={cardChrome("h-full")}>
         <CardContent className="flex h-full flex-col items-center gap-3 p-5 text-center">
-          <EntityAvatar icon={Building2} size="lg" />
+          <EntityAvatar name={name} icon={Building2} size="lg" />
           <div className="min-w-0 space-y-1">
             <p className="truncate font-medium">{name}</p>
             <p className="truncate text-sm text-muted-foreground">{org.industry ?? "No industry"}</p>
