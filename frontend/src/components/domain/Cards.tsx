@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { TagChip } from "@/components/domain/Badges";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/utils";
+import { avatarColor } from "@/lib/avatar";
 import type { OrganizationSummary, PersonSummary } from "@/lib/types";
 
 /**
@@ -22,22 +23,11 @@ const avatarSize: Record<AvatarSize, string> = {
 };
 
 /**
- * Deterministic, theme-independent avatar colour. A solid mid-tone puck with a
- * white initial/glyph (the Gmail/Linear pattern) gives the directory gentle,
- * scannable variety: the same person is always the same colour, and because the
- * puck is self-contained the contrast holds in both light and dark. Hues stay on
- * the ecosystem palette and are kept lightly desaturated so a long list reads
- * calm, not candy.
+ * Avatar puck style. The deterministic hue logic lives in `@/lib/avatar` so the
+ * directory cards and the relationship graph colour the same entity identically.
  */
-const AVATAR_HUES = [304, 330, 350, 24, 60, 145, 176, 224, 264] as const;
-
 function avatarStyle(seed?: string | null): CSSProperties {
-  const s = (seed ?? "").trim();
-  if (!s) return { backgroundColor: "oklch(0.5 0.02 280)", color: "white" };
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
-  const hue = AVATAR_HUES[h % AVATAR_HUES.length];
-  return { backgroundColor: `oklch(0.56 0.135 ${hue})`, color: "white" };
+  return { backgroundColor: avatarColor(seed), color: "white" };
 }
 
 /**

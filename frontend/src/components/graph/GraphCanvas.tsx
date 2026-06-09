@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MonoNumeric, Spinner } from "@/design-system";
 import { forceConfig } from "@/lib/graph/forceConfig";
 import { colorForNode, isProposeOnlyRelationship } from "@/lib/graph/colorScheme";
+import { drawAvatarNode2d, makeAvatarSprite3d, paintAvatarPointerArea2d } from "@/lib/graph/avatarNode";
 import { cn } from "@/lib/utils";
 import type { EgoGraph, GraphLink, GraphNode } from "@/hooks/useEgoGraph";
 
@@ -308,6 +309,36 @@ export function GraphCanvas({
     return set;
   }, [incidentNodeIds, hoveredNodeId, rootPersonId, selectedNodeId]);
 
+  // Canvas-ready ring colours for the avatar pucks, recomputed on theme change.
+  // Resting nodes get a soft border; focused (selected/hovered/incident) nodes
+  // get a brand-tinted ring.
+  const avatarRing = useMemo(() => {
+    void colorVersion;
+    return {
+      rest: tokenColorToCanvasColor("oklch(var(--border) / 0.7)", "rgba(255,255,255,0.18)"),
+      active: tokenColorToCanvasColor("oklch(var(--co-brand-300))", "#c9a9ff")
+    };
+  }, [colorVersion]);
+
+  // People = circular initials pucks, orgs = rounded-square tiles, coloured by
+  // the same deterministic hue as the directory cards. 2D paints into the canvas
+  // with zoom LOD; 3D bakes a billboard sprite. Pointer-area paint keeps hit-
+  // testing aligned to the custom puck shape.
+  const nodeCanvasObject = useCallback(
+    (node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) =>
+      drawAvatarNode2d(node, ctx, globalScale, {
+        highlighted: highlightedNodeSet.has(node.id),
+        ringColor: avatarRing.rest,
+        ringColorActive: avatarRing.active
+      }),
+    [highlightedNodeSet, avatarRing]
+  );
+  const nodePointerAreaPaint = useCallback(
+    (node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => paintAvatarPointerArea2d(node, color, ctx),
+    []
+  );
+  const nodeThreeObject = useCallback((node: GraphNode) => makeAvatarSprite3d(node), []);
+
   // Stable accessor identities: react-force-graph re-applies any prop whose
   // reference changes, and onEngineTick re-renders every simulation tick, so
   // inline accessors would be re-applied to the graph every frame during layout.
@@ -484,6 +515,9 @@ export function GraphCanvas({
         nodeColor={nodeColorAccessor}
         nodeVal={nodeValAccessor}
         nodeRelSize={5}
+        nodeCanvasObjectMode={() => "replace" as const}
+        nodeCanvasObject={nodeCanvasObject}
+        nodePointerAreaPaint={nodePointerAreaPaint}
         linkColor={linkColorAccessor}
         linkWidth={linkWidthAccessor}
         linkDirectionalParticles={linkParticlesAccessor}
@@ -520,6 +554,8 @@ export function GraphCanvas({
         nodeVal={nodeValAccessor}
         nodeOpacity={0.96}
         nodeResolution={16}
+        nodeThreeObject={nodeThreeObject}
+        nodeThreeObjectExtend={false}
         linkColor={linkColorAccessor}
         linkOpacity={0.78}
         linkWidth={linkWidthAccessor}
