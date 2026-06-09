@@ -55,3 +55,37 @@ body {
     animation: none !important;
   }
 }
+
+/* ----------------------------------------------------------------------------
+   Route transitions — native View Transitions API, enabled via TanStack Router
+   `defaultViewTransition`. A restrained cross-fade: the outgoing view fades fast
+   while the incoming view fades + drifts up a few px, so navigation feels
+   intentional, never like a slideshow. Unchanged regions (the app shell) cross-
+   fade old==new pixels and so look static. No-op on engines without the API.
+---------------------------------------------------------------------------- */
+::view-transition-old(root) {
+  animation: co-vt-out var(--motion-fast, 120ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+::view-transition-new(root) {
+  animation: co-vt-in var(--motion-base, 200ms) var(--motion-ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+@keyframes co-vt-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes co-vt-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Motion-sensitive users get an instant swap, never a cross-fade. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
