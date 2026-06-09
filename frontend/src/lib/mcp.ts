@@ -307,6 +307,8 @@ export const tools = {
   createPerson: (args: Record<string, unknown>, token: string) => callTool("create_person", args, token),
   updatePerson: (args: Record<string, unknown>, token: string) => callTool("update_person", args, token),
   archivePerson: (args: Record<string, unknown>, token: string) => callTool("archive_person", args, token),
+  setRelationshipCategory: (args: Record<string, unknown>, token: string) =>
+    callTool("set_relationship_category", args, token),
   listOrganizations: (args: Record<string, unknown>, token: string) =>
     callTool<ListResult<OrganizationSummary>>("list_organizations", args, token),
   searchOrganizations: (args: Record<string, unknown>, token: string) =>

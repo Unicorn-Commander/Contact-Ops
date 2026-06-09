@@ -154,7 +154,24 @@ class GetPersonOutput(ToolOutput):
     merged_into_id: uuid.UUID | None = None
     emails: list[dict[str, Any]] | None = None
     phones: list[dict[str, Any]] | None = None
+    # The owner's personal relationship to this contact (friend, coworker,
+    # family, client, …). Held per-tenant in person_tenant_membership.custom_attrs
+    # so it's the *caller's* view, not a shared fact about the person.
+    relationship_category: str | None = None
     recent_events: list[dict[str, Any]]
+
+
+class SetRelationshipCategoryInput(BaseModel):
+    person_id: uuid.UUID
+    # The owner's relationship to this contact. Free text (the UI offers common
+    # values: friend, family, coworker, colleague, client, vendor, acquaintance,
+    # mentor, classmate, neighbor, …). Empty / null clears it.
+    category: str | None = Field(default=None, max_length=40)
+
+
+class SetRelationshipCategoryOutput(ToolOutput):
+    person_id: uuid.UUID
+    relationship_category: str | None
 
 
 class UpdatePersonInput(BaseModel):
@@ -249,6 +266,7 @@ class SearchPeopleInput(ListPeopleInput):
 class SearchResult(PersonSummary):
     match_score: float
     match_snippets: list[str] = Field(default_factory=list)
+    relationship_category: str | None = None
 
 
 class SearchPeopleOutput(ToolOutput):
@@ -592,6 +610,10 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
             }
             for row in phone_rows
         ]
+    membership = await ctx.db.get(PersonTenantMembership, (person.id, ctx.tenant_id))
+    relationship_category = (
+        (membership.custom_attrs or {}).get("relationship_category") if membership else None
+    )
     events = await ctx.db.execute(
         select(ActionEvent)
         .where(ActionEvent.tenant_id == ctx.tenant_id, ActionEvent.aggregate_id == person.id)
@@ -608,6 +630,7 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
         merged_into_id=person.merged_into_id,
         emails=emails,
         phones=phones,
+        relationship_category=relationship_category,
         recent_events=[
             {
                 "event_id": str(event.event_id),
@@ -616,6 +639,33 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
             }
             for event in events.scalars()
         ],
+    )
+
+
+async def set_relationship_category(
+    ctx: MCPContext, args: BaseModel
+) -> SetRelationshipCategoryOutput:
+    require_role(ctx, "STAFF")
+    require_scopes(ctx, ("person:write",))
+    data = SetRelationshipCategoryInput.model_validate(args)
+    person = await load_person(ctx, data.person_id)
+    category = (data.category or "").strip() or None
+
+    membership = await ctx.db.get(PersonTenantMembership, (person.id, ctx.tenant_id))
+    if membership is None:
+        membership = PersonTenantMembership(person_id=person.id, tenant_id=ctx.tenant_id)
+        ctx.db.add(membership)
+    # Reassign a NEW dict so SQLAlchemy flags the JSONB column dirty (in-place
+    # mutation of a JSONB dict isn't tracked).
+    attrs = dict(membership.custom_attrs or {})
+    if category:
+        attrs["relationship_category"] = category
+    else:
+        attrs.pop("relationship_category", None)
+    membership.custom_attrs = attrs
+    await ctx.db.flush()
+    return SetRelationshipCategoryOutput(
+        person_id=person.id, relationship_category=category
     )
 
 
@@ -825,11 +875,23 @@ async def search_people(ctx: MCPContext, args: BaseModel) -> SearchPeopleOutput:
     stmt = stmt.order_by(Person.display_name.asc()).offset(offset).limit(data.limit)
     result = await ctx.db.execute(stmt)
     rows = result.scalars().all()
+    # Batch-load this page's relationship categories (the owner's per-tenant view)
+    # in one query, so the directory can show + edit them without an N+1.
+    cat_map: dict[uuid.UUID, str | None] = {}
+    if rows:
+        membership_rows = await ctx.db.execute(
+            select(PersonTenantMembership.person_id, PersonTenantMembership.custom_attrs).where(
+                PersonTenantMembership.tenant_id == ctx.tenant_id,
+                PersonTenantMembership.person_id.in_([p.id for p in rows]),
+            )
+        )
+        cat_map = {pid: (attrs or {}).get("relationship_category") for pid, attrs in membership_rows}
     items = [
         SearchResult(
             **person_summary(person, await primary_email_for(ctx, person.id)).model_dump(),
             match_score=1.0,
             match_snippets=[],
+            relationship_category=cat_map.get(person.id),
         )
         for person in rows
     ]
@@ -1011,6 +1073,21 @@ def register_people_tools() -> None:
         input_model=UpdatePersonInput,
         output_model=UpdatePersonOutput,
         handler=update_person,
+        required_role="STAFF",
+        required_scopes=("person:write",),
+        annotations={**base, "readOnlyHint": False, "idempotentHint": True},
+        idempotency="none",
+    )
+    register(
+        name="set_relationship_category",
+        description=(
+            "Set the OWNER's relationship to a contact (friend, coworker, family, "
+            "client, …) — a per-tenant personal label, not a shared fact. Empty "
+            "category clears it. STAFF with person:write required."
+        ),
+        input_model=SetRelationshipCategoryInput,
+        output_model=SetRelationshipCategoryOutput,
+        handler=set_relationship_category,
         required_role="STAFF",
         required_scopes=("person:write",),
         annotations={**base, "readOnlyHint": False, "idempotentHint": True},

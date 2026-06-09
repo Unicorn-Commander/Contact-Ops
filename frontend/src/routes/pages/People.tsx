@@ -11,6 +11,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PersonCard, PersonGridCard } from "@/components/domain/Cards";
+import { RelationshipCategoryPicker } from "@/components/domain/RelationshipCategoryPicker";
 import { TagChip } from "@/components/domain/Badges";
 import { ContactMethodList, EmploymentTimeline } from "@/components/domain/Lists";
 import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
@@ -425,6 +426,7 @@ export function PersonDetailRoute() {
   const person = usePerson(id);
   const photos = usePhotos(id);
   const archive = useMcpMutation(tools.archivePerson);
+  const setCategory = useMcpMutation(tools.setRelationshipCategory);
 
   if (person.isLoading) return <PersonDetailSkeleton />;
   if (!person.data)
@@ -463,6 +465,11 @@ export function PersonDetailRoute() {
           </div>
         </div>
         <div className="flex gap-2">
+          <RelationshipCategoryPicker
+            value={data.relationship_category}
+            busy={setCategory.isPending}
+            onSelect={(category) => void setCategory.mutateAsync({ person_id: id, category })}
+          />
           <Button variant="outline" asChild>
             <Link to="/people/$id/graph" params={{ id }}>
               <Network className="h-4 w-4" strokeWidth={1.6} />

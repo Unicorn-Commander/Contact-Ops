@@ -18,6 +18,7 @@ export type PersonSummary = {
   headline?: string | null;
   tags?: string[];
   relationship_temperature?: string | null;
+  relationship_category?: string | null;
   last_interaction_at?: string | null;
   etag?: string;
   match_score?: number;
@@ -34,6 +35,7 @@ export type Person = ToolEnvelope & {
   headline?: string | null;
   bio?: string | null;
   occupation_title?: string | null;
+  relationship_category?: string | null;
   emails?: ContactMethod[];
   phones?: ContactMethod[];
   recent_events: ActionEvent[];

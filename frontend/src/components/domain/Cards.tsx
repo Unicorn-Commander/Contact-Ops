@@ -77,6 +77,11 @@ export function PersonCard({ person }: { person: PersonSummary }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <p className="truncate font-medium">{person.display_name}</p>
+              {person.relationship_category ? (
+                <Badge variant="outline" className="shrink-0 capitalize">
+                  {person.relationship_category}
+                </Badge>
+              ) : null}
               {person.relationship_temperature ? (
                 <Badge variant="secondary" className="shrink-0 capitalize">
                   {person.relationship_temperature}
