@@ -252,6 +252,32 @@ export const tools = {
   listPeople: (args: Record<string, unknown>, token: string) => callTool<ListResult<PersonSummary>>("list_people", args, token),
   searchPeople: (args: Record<string, unknown>, token: string) =>
     callTool<ListResult<PersonSummary>>("search_people", args, token),
+  /**
+   * Field coverage for the dashboard "Data health" card. `search_people` caps at
+   * 100 rows and exposes no cursor, so coverage is computed over a single
+   * up-to-100 sample and labelled honestly (the registry here is ~800 contacts).
+   * Only EMAIL and ORGANIZATION are reported: `primary_phone` is not in the
+   * search payload and `tags` is not hydrated by search — either would render a
+   * misleading 0%, so both are deliberately omitted rather than faked.
+   */
+  peopleCoverage: async (token: string) => {
+    const res = await callTool<ListResult<PersonSummary>>("search_people", { limit: 100 }, token);
+    const items = res.items ?? [];
+    const n = items.length;
+    const total = res.total_count ?? n;
+    const share = (count: number) => (n ? count / n : 0);
+    const withEmail = items.filter((p) => p.primary_email != null && String(p.primary_email).trim() !== "").length;
+    const withOrg = items.filter((p) => p.current_org_id != null).length;
+    const coverage = [
+      { label: "Has an email", value: share(withEmail) },
+      { label: "Linked to an org", value: share(withOrg) }
+    ];
+    const note =
+      n > 0 && n < total
+        ? `Across a sample of ${n} of ${total.toLocaleString()} contacts`
+        : `Across all ${total.toLocaleString()} contacts`;
+    return { coverage, note, sampleSize: n, total };
+  },
   getPerson: (person_id: UUID, token: string) =>
     callTool<Person>(
       "get_person",

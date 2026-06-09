@@ -2,9 +2,8 @@
  * SnoozePicker - DropdownMenu of quick snooze options + custom date.
  *
  * Quick options compute the snooze_until datetime client-side; "Custom
- * date" reveals an inline date input. "Until X event" would pull from
- * Project-Ops; deferred to a follow-up (the option still shows but is
- * disabled when Project-Ops federation isn't configured).
+ * date" reveals an inline date input. (A future "Until X event" option will
+ * pull from Project-Ops federation; it is omitted until that picker is built.)
  *
  * The `h` keypress on the focused proposal opens this picker via the
  * `forceOpen` prop wired from Inbox.tsx.
@@ -60,14 +59,11 @@ function nextMondayAt9(): Date {
 export type SnoozePickerProps = {
   onSnooze: (until: Date, reason: SnoozeReason) => void;
   busy?: boolean;
-  /** Project-Ops federation status (Aaron's B5 "Until X event"). */
-  hasProjectOpsFederation?: boolean;
 };
 
 export function SnoozePicker({
   onSnooze,
   busy = false,
-  hasProjectOpsFederation = false,
 }: SnoozePickerProps) {
   const [customMode, setCustomMode] = useState(false);
   const [customDate, setCustomDate] = useState("");
@@ -123,18 +119,6 @@ export function SnoozePicker({
             </div>
           )}
         </div>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          disabled={!hasProjectOpsFederation}
-          onSelect={() => {
-            /* TODO: open searchable Project-Ops task picker */
-          }}
-        >
-          Until an event...
-          {!hasProjectOpsFederation && (
-            <span className="ml-auto text-[10px] text-muted-foreground">requires Project-Ops</span>
-          )}
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -928,14 +928,6 @@ function NavSidebar({ view, onViewChange, totals }: NavSidebarProps) {
           </li>
         ))}
       </ul>
-      <div className="mt-co-24 space-y-co-4">
-        <p className="px-co-10 font-mono text-11 font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          Saved views
-        </p>
-        <p className="px-co-10 text-12 text-muted-foreground italic">
-          (local) coming in 3.4
-        </p>
-      </div>
     </nav>
   );
 }

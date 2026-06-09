@@ -209,9 +209,10 @@ export function SettingsRoute() {
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <Button variant="ghost" size="icon" aria-label="Copy password">
-                    <Copy className="h-4 w-4" strokeWidth={1.6} />
-                  </Button>
+                  {/* No copy button here: the plaintext is shown exactly once at
+                      creation (the callout above). A saved row holds only the
+                      last-4, so there is nothing to copy — a button that can't
+                      work is worse than none. */}
                   <Button
                     variant="ghost"
                     size="icon"

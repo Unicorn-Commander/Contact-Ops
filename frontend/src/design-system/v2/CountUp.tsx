@@ -50,6 +50,14 @@ export function CountUp({
       setDisplay(value);
       return;
     }
+    // A backgrounded tab throttles BOTH requestAnimationFrame AND setTimeout, so
+    // if we start (or get hidden) while hidden, the animation can visibly freeze
+    // on a partial value until the tab is foregrounded. There's nothing to watch
+    // animate in a hidden tab anyway — snap straight to the final value.
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      setDisplay(value);
+      return;
+    }
     // Animate 0 → value. Re-runs whenever value changes (a tile that mounted at
     // 0 ticks up once the real count loads). No scroll-into-view gating — these
     // are above-the-fold hero tiles.
@@ -66,10 +74,18 @@ export function CountUp({
     // the duration has elapsed. setTimeout still fires when rAF is paused
     // (hidden/throttled tab), so the count can never get stuck mid-animation.
     const settle = window.setTimeout(() => setDisplay(value), durationMs + 160);
+    // If the user backgrounds the tab mid-animation, snap to the final value
+    // immediately (the settle timer would itself be throttled), so coming back
+    // to the tab never shows a half-counted number.
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") setDisplay(value);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
       window.clearTimeout(settle);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [value, durationMs, reduce]);
 

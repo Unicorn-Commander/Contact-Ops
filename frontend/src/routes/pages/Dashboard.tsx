@@ -4,7 +4,6 @@ import {
   Building2,
   CheckCircle2,
   ChevronRight,
-  GitMerge,
   ListChecks,
   Plug,
   Plus,
@@ -20,7 +19,7 @@ import { useAuth } from "react-oidc-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useDashboard, useRecentEvents, useToolsList } from "@/hooks/useMcp";
+import { useDashboard, useDataCoverage, useRecentEvents, useToolsList } from "@/hooks/useMcp";
 import { useApproveMutation, useInboxList, useRejectMutation, type InboxFilters } from "@/hooks/useInbox";
 import { useConnectors } from "@/hooks/useConnectors";
 import { AuditList } from "@/routes";
@@ -255,6 +254,8 @@ export function DashboardRoute() {
   const connectors = useConnectors();
   const connectorRows = connectors.data?.items ?? [];
   const configuredConnectors = connectorRows.filter((c) => c.status === "configured");
+  // Real field-coverage for the "Data health" card (sampled + labelled honestly).
+  const coverage = useDataCoverage();
 
   if (dashboard.isLoading) {
     return <DashboardSkeleton />;
@@ -507,9 +508,13 @@ export function DashboardRoute() {
                 </CardContent>
               </Card>
 
-              {/* Data health — degrades to a placeholder until coverage metrics
-                  are exposed by the backend (no fabricated percentages). */}
-              <DataHealth coverage={[]} />
+              {/* Data health — real field coverage (email + organization),
+                  sampled from the registry and labelled honestly. */}
+              <DataHealth
+                coverage={coverage.data?.coverage ?? []}
+                note={coverage.data?.note}
+                isLoading={coverage.isLoading}
+              />
 
               <Card>
                 <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -558,20 +563,6 @@ export function DashboardRoute() {
                     detail={pending ? `${pending.toLocaleString()} proposals queued` : "Idle"}
                     ok
                   />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="flex items-start gap-3 p-5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <GitMerge className="h-4 w-4" strokeWidth={1.8} />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">Recent merges</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Duplicate resolutions appear here as agents reconcile records. None in the last 30 days.
-                    </p>
-                  </div>
                 </CardContent>
               </Card>
             </div>

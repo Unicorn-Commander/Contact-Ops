@@ -47,6 +47,7 @@ export function tenantKey(tenantId: TenantId) {
     orgs: (args: Record<string, unknown>) => [...base, "orgs", args] as const,
     org: (id: string) => [...base, "org", id] as const,
     tags: [...base, "tags"] as const,
+    dataCoverage: [...base, "data-coverage"] as const,
     photos: (personId: string) => [...base, "photos", personId] as const,
     carddavPasswords: [...base, "carddav-passwords"] as const,
 

@@ -33,6 +33,10 @@ export type GapMetric = {
 export interface DataHealthProps {
   coverage: CoverageMetric[];
   gaps?: GapMetric[];
+  /** Optional honest footnote, e.g. "Across a sample of 100 of 823 contacts". */
+  note?: string;
+  /** Render skeleton bars while coverage is being computed. */
+  isLoading?: boolean;
   className?: string;
 }
 
@@ -63,7 +67,7 @@ function CoverageRow({ label, value, tone }: CoverageMetric) {
   );
 }
 
-export function DataHealth({ coverage, gaps = [], className }: DataHealthProps) {
+export function DataHealth({ coverage, gaps = [], note, isLoading = false, className }: DataHealthProps) {
   const hasData = coverage.length > 0;
   return (
     <Card className={className}>
@@ -74,7 +78,19 @@ export function DataHealth({ coverage, gaps = [], className }: DataHealthProps) 
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3.5">
-        {hasData ? (
+        {isLoading ? (
+          <div className="space-y-3.5" aria-hidden>
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="h-3 w-24 rounded bg-muted" />
+                  <span className="h-3 w-8 rounded bg-muted" />
+                </div>
+                <span className="block h-1.5 w-full rounded-full bg-muted" />
+              </div>
+            ))}
+          </div>
+        ) : hasData ? (
           <>
             {coverage.map((c) => (
               <CoverageRow key={c.label} {...c} />
@@ -90,10 +106,11 @@ export function DataHealth({ coverage, gaps = [], className }: DataHealthProps) 
                 ))}
               </p>
             ) : null}
+            {note ? <p className="border-t pt-3 text-[11px] leading-relaxed text-muted-foreground/80">{note}</p> : null}
           </>
         ) : (
           <p className={cn("text-xs leading-relaxed text-muted-foreground")}>
-            Coverage metrics — email, phone, organization — appear here as records sync. Import or add contacts to see
+            Coverage metrics — email and organization — appear here once you have contacts. Import or add people to see
             where the registry is thin.
           </p>
         )}

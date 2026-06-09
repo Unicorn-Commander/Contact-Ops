@@ -211,30 +211,12 @@ export function IcloudConnectModal({
     password.replace(/-/g, "").length >= PASSWORD_MIN_CHARS &&
     fieldFilled(displayName);
 
-  // Temp diagnostic — surface what the modal actually sees on a Save click.
-  // Mask the password value, only the length matters. Remove once we close
-  // out the "Save does nothing" report.
-  const debugSnapshot = () => ({
-    canSubmit,
-    isSubmitting,
-    appleId_value: appleId,
-    appleId_trimmed: appleId.trim(),
-    appleId_regex_match: APPLE_ID_RE.test(appleId.trim()),
-    password_length_raw: password.length,
-    password_length_no_dashes: password.replace(/-/g, "").length,
-    displayName_value: displayName,
-    displayName_filled: fieldFilled(displayName)
-  });
-
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    console.log("[iCloud Connect] Save clicked. State:", debugSnapshot());
     if (!canSubmit) {
       setTouched({ appleId: true, password: true });
-      console.warn("[iCloud Connect] canSubmit=false → request NOT sent. Reasons above.");
       return;
     }
-    console.log("[iCloud Connect] canSubmit=true → calling onSubmit() now…");
     void onSubmit({
       apple_id: appleId.trim(),
       app_password: password,

@@ -16,6 +16,19 @@ export interface AgentSigilProps {
   className?: string;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Agents are identified by an opaque UUID. Rendering all 36 characters inline
+ * is pure noise (and four identical rows look like a bug), so a UUID slug is
+ * shortened to its first segment — stable, scannable, and the full id stays in
+ * the title tooltip. A human-readable slug (e.g. "ai-contacts-analyst") renders
+ * as-is.
+ */
+function agentLabel(slug: string): string {
+  return UUID_RE.test(slug.trim()) ? slug.trim().slice(0, 8) : slug;
+}
+
 export function AgentSigil({ slug, iconOnly = false, className }: AgentSigilProps) {
   const style = agentColorVars(slug) as CSSProperties;
   return (
@@ -29,7 +42,7 @@ export function AgentSigil({ slug, iconOnly = false, className }: AgentSigilProp
         <Cpu className="h-2.5 w-2.5" strokeWidth={1.6} />
       </span>
       {iconOnly ? null : (
-        <span className="truncate font-mono text-xs text-[oklch(var(--agent-color))]">{slug}</span>
+        <span className="truncate font-mono text-xs text-[oklch(var(--agent-color))]">{agentLabel(slug)}</span>
       )}
     </span>
   );

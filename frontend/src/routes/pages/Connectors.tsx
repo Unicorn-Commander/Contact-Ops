@@ -407,26 +407,19 @@ export function ConnectorsRoute() {
   const handleSubmitIcloud = useCallback(
     async (values: { apple_id: string; app_password: string; display_name: string }) => {
       setIcloudError(null);
-      // Temp diagnostic — trace the mutation's actual fate.
-      console.log("[iCloud Submit] handler entered. Apple ID:", values.apple_id, "pw len:", values.app_password.length, "name:", values.display_name);
       try {
-        console.log("[iCloud Submit] awaiting mutateAsync…");
-        const result = await configureIcloud.mutateAsync(values);
-        console.log("[iCloud Submit] mutateAsync RESOLVED:", result);
+        await configureIcloud.mutateAsync(values);
         setIcloudOpen(false);
       } catch (error) {
-        console.error("[iCloud Submit] mutateAsync REJECTED:", error);
         if (error instanceof UnauthorizedError) return;
         const errLike =
           error instanceof Error
             ? error
             : { message: typeof error === "string" ? error : JSON.stringify(error) };
-        console.log("[iCloud Submit] error.message:", errLike.message);
         // Decode known codes (e.g. INVALID_CREDENTIALS) into actionable copy;
         // unknown errors fall through to error.message verbatim so we never
         // hide a genuine bug behind a generic line.
         const decoded = decodeConnectorError(errLike, { provider: "icloud" });
-        console.log("[iCloud Submit] decoded message:", decoded);
         setIcloudError(
           decoded ??
             (errLike.message

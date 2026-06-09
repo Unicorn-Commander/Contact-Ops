@@ -97,6 +97,10 @@ export const useTags = () => {
   const qk = useQueryKeys();
   return useAuthedQuery(qk.tags, tools.listTags);
 };
+export const useDataCoverage = () => {
+  const qk = useQueryKeys();
+  return useAuthedQuery(qk.dataCoverage, tools.peopleCoverage);
+};
 export const usePhotos = (personId: string) => {
   const qk = useQueryKeys();
   return useAuthedQuery(qk.photos(personId), (token) => tools.listPhotos(personId, token));
