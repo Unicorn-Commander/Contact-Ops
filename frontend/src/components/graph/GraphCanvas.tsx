@@ -95,19 +95,37 @@ function nodeTooltip(node: GraphNode) {
   return `${node.name} · ${node.kind}`;
 }
 
-function tokenColorToCanvasColor(tokenColor: string, fallback = "currentColor") {
+// Resolve a design-token colour to a PLAIN rgba() string the WebGL renderer can
+// parse. three.js / 3d-force-graph (via `polished`) only understand
+// hex/rgb(a)/hsl/named — NOT CSS vars, NOT `oklch()`/`color()`, and they THROW
+// ("polished error #5: invalid color") on `currentColor`. That throw crashes
+// the 3D render loop → blank graph (2D silently tolerates bad colours, which is
+// why only 3D broke). Rasterizing the colour to a 1×1 pixel round-trips ANY
+// valid CSS colour — oklch included — to a guaranteed rgba() string.
+function tokenColorToCanvasColor(tokenColor: string, fallback = "rgba(139,139,139,1)") {
   if (typeof window === "undefined" || typeof document === "undefined") return fallback;
+  let cssColor = tokenColor;
   const variable = tokenColor.match(/var\(--([^)]+)\)/)?.[1];
-  if (!variable) return tokenColor;
-  const channel = window.getComputedStyle(document.documentElement).getPropertyValue(`--${variable}`).trim();
-  if (!channel) return fallback;
-  const alpha = tokenColor.match(/\/\s*([^)]+)\)/)?.[1]?.trim();
-  const cssColor = alpha ? `oklch(${channel} / ${alpha})` : `oklch(${channel})`;
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return cssColor;
-  ctx.fillStyle = cssColor;
-  return ctx.fillStyle || cssColor;
+  if (variable) {
+    const channel = window.getComputedStyle(document.documentElement).getPropertyValue(`--${variable}`).trim();
+    if (!channel) return fallback;
+    const alpha = tokenColor.match(/\/\s*([^)]+)\)/)?.[1]?.trim();
+    cssColor = alpha ? `oklch(${channel} / ${alpha})` : `oklch(${channel})`;
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return fallback;
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = "#888888"; // safe base if the next assignment is rejected
+    ctx.fillStyle = cssColor;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`;
+  } catch {
+    return fallback;
+  }
 }
 
 export function GraphCanvas({
@@ -549,7 +567,7 @@ export function GraphCanvas({
         width={size.width}
         height={size.height}
         graphData={data}
-        backgroundColor="transparent"
+        backgroundColor="rgba(0,0,0,0)"
         nodeId="id"
         numDimensions={3}
         nodeLabel={nodeLabelAccessor}
