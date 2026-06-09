@@ -219,6 +219,12 @@ async def _run_import_job(
         except Exception as exc:  # noqa: BLE001 - job status must preserve failure detail.
             await db.rollback()
             await audit_db.rollback()
+            # The rollbacks above cleared SET LOCAL app.tenant_id (txn-scoped).
+            # import_jobs has FORCE ROW LEVEL SECURITY, so the failed-status
+            # UPDATE would match 0 rows under a non-privileged role (the job
+            # would be stuck 'running'). Re-bind before writing the failure.
+            await bind_session_context(db, str(req.tenant_id), uc_uid, settings)
+            await bind_session_context(audit_db, str(req.tenant_id), uc_uid, settings)
             await db.execute(
                 import_jobs_table.update()
                 .where(import_jobs_table.c.id == job_id)

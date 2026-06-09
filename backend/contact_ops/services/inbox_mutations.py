@@ -260,6 +260,7 @@ async def _apply_person_create_proposal(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     proposal_id: uuid.UUID,
+    graph_client: Any = None,
 ) -> None:
     row = await db.execute(
         text(
@@ -350,8 +351,9 @@ async def _apply_person_create_proposal(
     await _insert_person_children(db, person_id, payload)
     # P0: approved contacts must appear in the relationship graph. The approval
     # path wrote Postgres only — the FalkorDB node was never created, so approved
-    # people were invisible in the graph view. Sync it now (best-effort).
-    await _sync_person_to_graph(db, tenant_id, person_id, payload)
+    # people were invisible in the graph view. Sync it now (best-effort). A
+    # caller (bulk_approve) may pass a shared client to avoid per-contact setup.
+    await _sync_person_to_graph(db, tenant_id, person_id, payload, client=graph_client)
 
 
 async def _sync_person_to_graph(
@@ -359,12 +361,20 @@ async def _sync_person_to_graph(
     tenant_id: uuid.UUID,
     person_id: uuid.UUID,
     payload: dict[str, Any],
+    *,
+    client: Any = None,
 ) -> None:
     """Best-effort upsert of an approved contact into the tenant's FalkorDB graph
     so it shows up in the relationship view immediately. Postgres is the source of
     truth; a graph-sync failure must NEVER fail the approval. This mirrors the
     synchronous graph-write pattern already used by enrichment.py and the dedup
-    merge executor (the async graph_sync_outbox is unwired on this branch)."""
+    merge executor (the async graph_sync_outbox is unwired on this branch).
+
+    Pass ``client`` (a connected FalkorDBGraphClient) to REUSE one connection
+    across a batch — bulk_approve does this so a 100-contact approval does one
+    client + one bootstrap instead of 100. When ``client`` is None we own a
+    fresh client (and bootstrap it); a shared client is bootstrapped once by
+    the caller, so we skip the 6 redundant CREATE INDEX round-trips here."""
     try:
         from contact_ops.agents.graph_sync.cypher_writes import build_write
         from contact_ops.agents.graph_sync.falkordb_client import (
@@ -410,13 +420,16 @@ async def _sync_person_to_graph(
             "confidence": 1.0,
             "provenance_event_id": None,
         }
-        client = FalkorDBGraphClient()
+        own_client = client is None
+        gc = client if client is not None else FalkorDBGraphClient()
         try:
-            await client.bootstrap_graph(tg)
+            if own_client:
+                await gc.bootstrap_graph(tg)
             w = build_write("person", "upsert", node)
-            await client.query(tg, w.cypher, w.params)
+            await gc.query(tg, w.cypher, w.params)
         finally:
-            await client.close()
+            if own_client:
+                await gc.close()
     except Exception:  # noqa: BLE001 — graph sync is advisory; never fail approval
         logger.warning("approval_graph_sync_failed", person_id=str(person_id), exc_info=True)
 
@@ -855,65 +868,82 @@ async def bulk_approve(
                 f"bulk >10 requires typed phrase {expected!r}",
             )
 
-    for pid in proposal_ids:
-        row = await get_proposal_for_decision(db=db, proposal_id=pid, tenant_id=tenant_id)
-        if row is None:
-            skipped.append(pid)
-            reasons[str(pid)] = "not_found"
-            continue
-        if row["status"] != "proposed":
-            skipped.append(pid)
-            reasons[str(pid)] = "already_resolved"
-            continue
-        tier_here = _compute_tier(row)
-        if tier_here == 4:
-            # Tier 4 in selection is excluded from bulk per design doc §11.6.
-            skipped.append(pid)
-            reasons[str(pid)] = "tier_4_in_selection"
-            continue
-        if bool(row["tenant_hipaa_mode"]):
-            skipped.append(pid)
-            reasons[str(pid)] = "hipaa_requires_t4"
-            continue
+    # One shared FalkorDB client + a single bootstrap for the whole batch instead
+    # of one-per-contact (a 100-contact bulk-approve otherwise did ~100 client
+    # setups and ~700 redundant CREATE INDEX round-trips). Created lazily — only
+    # if the batch actually contains a person.create — and closed once in finally.
+    graph_client: Any = None
+    try:
+        for pid in proposal_ids:
+            row = await get_proposal_for_decision(db=db, proposal_id=pid, tenant_id=tenant_id)
+            if row is None:
+                skipped.append(pid)
+                reasons[str(pid)] = "not_found"
+                continue
+            if row["status"] != "proposed":
+                skipped.append(pid)
+                reasons[str(pid)] = "already_resolved"
+                continue
+            tier_here = _compute_tier(row)
+            if tier_here == 4:
+                # Tier 4 in selection is excluded from bulk per design doc §11.6.
+                skipped.append(pid)
+                reasons[str(pid)] = "tier_4_in_selection"
+                continue
+            if bool(row["tenant_hipaa_mode"]):
+                skipped.append(pid)
+                reasons[str(pid)] = "hipaa_requires_t4"
+                continue
 
-        # P0: actually EFFECT person.create proposals (create the person + its
-        # children + graph node), exactly as single approve_proposal does. Bulk
-        # previously only flipped status='applied' without creating anything, so
-        # bulk-approving imported contacts marked them done but never produced a
-        # Person — the owner's main workflow for a large import was a silent no-op.
-        if row["event_type"] == "person.create":
-            await _apply_person_create_proposal(db=db, tenant_id=tenant_id, proposal_id=pid)
+            # P0: actually EFFECT person.create proposals (create the person + its
+            # children + graph node), exactly as single approve_proposal does. Bulk
+            # previously only flipped status='applied' without creating anything, so
+            # bulk-approving imported contacts marked them done but never produced a
+            # Person — the owner's main workflow for a large import was a silent no-op.
+            if row["event_type"] == "person.create":
+                if graph_client is None:
+                    from contact_ops.agents.graph_sync.falkordb_client import (
+                        FalkorDBGraphClient,
+                    )
 
-        # apply
-        await db.execute(
-            text(
-                """
-                UPDATE action_event
-                SET status = 'applied', applied_at = now(),
-                    approved_by = CAST(:reviewer AS uuid),
-                    decided_by_user_id = CAST(:reviewer AS uuid),
-                    snoozed_until = NULL
-                WHERE event_id = CAST(:id AS uuid)
-                """
-            ),
-            {"id": str(pid), "reviewer": str(reviewer_id)},
-        )
-        decision_id = await _write_inbox_decision(
-            db=db,
-            tenant_id=tenant_id,
-            proposal_id=pid,
-            cluster_id=None,
-            reviewer_id=reviewer_id,
-            decision="approve",
-            tier_assigned=tier_here,
-            time_to_decide_sec=time_to_decide_sec,
-            keyboard_path=keyboard_path,
-            typed_phrase_used=typed_phrase is not None,
-            field_choices=None,
-            agent_confidence=float(row["confidence"]) if row["confidence"] is not None else None,
-        )
-        decision_ids.append(decision_id)
-        applied += 1
+                    graph_client = FalkorDBGraphClient()
+                await _apply_person_create_proposal(
+                    db=db, tenant_id=tenant_id, proposal_id=pid, graph_client=graph_client
+                )
+
+            # apply
+            await db.execute(
+                text(
+                    """
+                    UPDATE action_event
+                    SET status = 'applied', applied_at = now(),
+                        approved_by = CAST(:reviewer AS uuid),
+                        decided_by_user_id = CAST(:reviewer AS uuid),
+                        snoozed_until = NULL
+                    WHERE event_id = CAST(:id AS uuid)
+                    """
+                ),
+                {"id": str(pid), "reviewer": str(reviewer_id)},
+            )
+            decision_id = await _write_inbox_decision(
+                db=db,
+                tenant_id=tenant_id,
+                proposal_id=pid,
+                cluster_id=None,
+                reviewer_id=reviewer_id,
+                decision="approve",
+                tier_assigned=tier_here,
+                time_to_decide_sec=time_to_decide_sec,
+                keyboard_path=keyboard_path,
+                typed_phrase_used=typed_phrase is not None,
+                field_choices=None,
+                agent_confidence=float(row["confidence"]) if row["confidence"] is not None else None,
+            )
+            decision_ids.append(decision_id)
+            applied += 1
+    finally:
+        if graph_client is not None:
+            await graph_client.close()
 
     return {
         "applied": applied,

@@ -219,12 +219,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _rls_boot_self_test(settings)
     except RLSSelfTestError:
         raise
-    except OperationalError as exc:
+    except (OperationalError, OSError) as exc:
         # P0: a down/unreachable Postgres at boot must be FATAL, not a warning.
         # Booting "healthy" against a dead DB turns an obvious outage into
         # confusing per-request failures (Docker healthcheck passes, traffic is
         # accepted, every call then errors). Refuse to start so the orchestrator
         # restarts/holds instead of serving a broken box.
+        # NB: a refused/timed-out connection surfaces as ConnectionRefusedError /
+        # TimeoutError (OSError subclasses) on asyncpg, NOT SQLAlchemy
+        # OperationalError — so OSError must be caught here too, or the down-DB
+        # case falls through to the warn-and-continue handler below.
         logger.error("db_unreachable_at_boot", error=str(exc))
         raise
     except Exception as exc:  # noqa: BLE001 — other diagnostic errors must not crash boot
