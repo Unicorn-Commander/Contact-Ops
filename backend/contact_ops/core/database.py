@@ -44,6 +44,10 @@ def _make_engine(dsn: str):  # type: ignore[no-untyped-def]
         max_overflow=20,
         pool_pre_ping=True,
         pool_recycle=3600,
+        # Fail fast instead of blocking forever when the pool is exhausted — the
+        # default pool_timeout is None (infinite wait), so a stalled DB/FalkorDB
+        # partition would hang request N+1 indefinitely with no signal.
+        pool_timeout=10,
         echo=False,
         # JSONB columns (e.g. action_event.payload) routinely hold UUID / datetime
         # / Decimal values; the stdlib default serializer raises on those, which

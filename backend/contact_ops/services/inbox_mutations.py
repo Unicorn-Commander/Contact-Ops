@@ -876,6 +876,14 @@ async def bulk_approve(
             reasons[str(pid)] = "hipaa_requires_t4"
             continue
 
+        # P0: actually EFFECT person.create proposals (create the person + its
+        # children + graph node), exactly as single approve_proposal does. Bulk
+        # previously only flipped status='applied' without creating anything, so
+        # bulk-approving imported contacts marked them done but never produced a
+        # Person — the owner's main workflow for a large import was a silent no-op.
+        if row["event_type"] == "person.create":
+            await _apply_person_create_proposal(db=db, tenant_id=tenant_id, proposal_id=pid)
+
         # apply
         await db.execute(
             text(
