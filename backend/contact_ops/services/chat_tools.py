@@ -148,7 +148,62 @@ class ChatToolExecutor:
                 await db.rollback()
                 await audit_db.rollback()
                 raise
-        return output.model_dump(mode="json")
+        result = output.model_dump(mode="json")
+        if name == "list_pending_proposals" and isinstance(result, dict):
+            result = _compact_pending_proposals(result)
+        return result
+
+
+def _compact_pending_proposals(result: dict[str, Any]) -> dict[str, Any]:
+    """Slim ``list_pending_proposals`` for the chat context.
+
+    The full result carries every proposal's before/after payload (~1.8 KB each,
+    ~30 k tokens for 50 rows) — fine for a 200 k cloud model but it overflows a
+    locally-served model. This keeps just the fields needed to summarize/triage
+    the queue, so the sovereign Qwen agent can reason over the WHOLE queue (all
+    rows) inside its context window. Detail is one follow-up question away.
+    """
+    # Locally-served models can have an 8 k context (the midboy1 Qwen does), so
+    # this stays MINIMAL — just enough to triage: the name alone distinguishes a
+    # real person ("Glen Porter") from import junk ("Voip4", "WaterEmerg"). Drop
+    # rationale (boilerplate, repeated 50×) and all heavy payloads.
+    proposals = result.get("proposals") or []
+    compact: list[dict[str, Any]] = []
+    for p in proposals:
+        if not isinstance(p, dict):
+            continue
+        compact.append(
+            {
+                "id": str(p.get("proposal_id", ""))[-6:],
+                "name": p.get("entity_display_name"),
+                "kind": p.get("entity_kind"),
+                "action": p.get("action_type"),
+                "confidence": p.get("confidence"),
+                "fields": p.get("fields_changed"),
+                "dedup": p.get("is_dedup"),
+            }
+        )
+    return {
+        "total_estimate": result.get("total_estimate"),
+        "returned": len(compact),
+        "note": "compact triage view — payloads + rationale omitted; ask about a specific id for detail",
+        "proposals": compact,
+    }
+
+
+# Keys that are purely human-facing — dropping them from the JSON schema shrinks
+# the tool-definition footprint by ~half (load-bearing for small-context local
+# models like the 8 k Qwen, and cheaper for every model). Structural keys
+# (type/properties/required/enum/items/anyOf/$ref/$defs/...) are preserved.
+_SCHEMA_NOISE = frozenset({"description", "title", "default", "examples"})
+
+
+def _lean_schema(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {k: _lean_schema(v) for k, v in node.items() if k not in _SCHEMA_NOISE}
+    if isinstance(node, list):
+        return [_lean_schema(item) for item in node]
+    return node
 
 
 def _to_openai_tool(tool: ToolDef) -> dict[str, Any]:
@@ -156,8 +211,8 @@ def _to_openai_tool(tool: ToolDef) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.input_model.model_json_schema(),
+            "description": (tool.description or "")[:140],
+            "parameters": _lean_schema(tool.input_model.model_json_schema()),
         },
     }
 
