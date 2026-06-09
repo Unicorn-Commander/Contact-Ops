@@ -11,6 +11,7 @@ import type {
   DataQualityReport,
   ListPendingProposalsResult,
   ListResult,
+  MergeOrganizationsResult,
   Note,
   NoteTargetType,
   Organization,
@@ -381,6 +382,16 @@ export const tools = {
   ) => callTool<CleanOrgNamesResult>("clean_org_names", args, token),
   canonicalizeTags: (args: { dry_run?: boolean }, token: string) =>
     callTool<CanonicalizeTagsResult>("canonicalize_tags", args, token),
+  mergeOrganizations: (
+    args: { survivor_id: UUID; loser_ids: UUID[]; dry_run?: boolean },
+    token: string
+  ) => callTool<MergeOrganizationsResult>("merge_organizations", args, token),
+  unmergeOrganizations: (args: { merge_event_id: UUID }, token: string) =>
+    callTool<{ survivor_id: UUID; restored: UUID[]; roles_restored: number; status: string }>(
+      "unmerge_organizations",
+      args,
+      token
+    ),
 
   // ---- Phase 3.3 inbox tools ----
   listPendingProposals: (args: Record<string, unknown>, token: string) =>

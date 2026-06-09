@@ -10,7 +10,12 @@ import { useAuth } from "react-oidc-context";
 import { toast } from "sonner";
 import { useQueryKeys } from "@/hooks/useMcp";
 import { tools, UnauthorizedError, MCPError } from "@/lib/mcp";
-import type { CanonicalizeTagsResult, CleanOrgNamesResult } from "@/lib/types";
+import type {
+  CanonicalizeTagsResult,
+  CleanOrgNamesResult,
+  MergeOrganizationsResult,
+  UUID,
+} from "@/lib/types";
 
 export function useDataQualityReport() {
   const auth = useAuth();
@@ -51,6 +56,49 @@ export function useCleanOrgNamesMutation() {
       }
     },
     onError: (err) => toast.error(`Clean failed: ${errMessage(err)}`),
+  });
+}
+
+export function useMergeOrganizationsMutation() {
+  const auth = useAuth();
+  const token = auth.user?.access_token ?? "";
+  const queryClient = useQueryClient();
+  const qk = useQueryKeys();
+  const tenantScope = qk.dataQuality.slice(0, 2);
+  return useMutation({
+    mutationFn: (args: { survivorId: UUID; loserIds: UUID[] }) =>
+      tools.mergeOrganizations(
+        { survivor_id: args.survivorId, loser_ids: args.loserIds, dry_run: false },
+        token
+      ),
+    onSuccess: (data: MergeOrganizationsResult) => {
+      void queryClient.invalidateQueries({ queryKey: qk.dataQuality });
+      void queryClient.invalidateQueries({ queryKey: tenantScope });
+      toast.success(
+        `Merged ${data.merged.length} org${data.merged.length === 1 ? "" : "s"} (${data.roles_repointed} link${data.roles_repointed === 1 ? "" : "s"} re-pointed)`,
+        {
+          duration: 8000,
+          action: data.merge_event_id
+            ? {
+                label: "Undo",
+                onClick: () => {
+                  tools
+                    .unmergeOrganizations({ merge_event_id: data.merge_event_id as UUID }, token)
+                    .then(() => {
+                      toast.message("Merge undone");
+                      void queryClient.invalidateQueries({ queryKey: qk.dataQuality });
+                      void queryClient.invalidateQueries({ queryKey: tenantScope });
+                    })
+                    .catch((e: unknown) =>
+                      toast.error(`Undo failed: ${errMessage(e)}`)
+                    );
+                },
+              }
+            : undefined,
+        }
+      );
+    },
+    onError: (err) => toast.error(`Merge failed: ${errMessage(err)}`),
   });
 }
 

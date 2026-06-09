@@ -27,9 +27,10 @@ import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 
 from contact_ops.mcp.audit_helper import emit_action_event
+from contact_ops.mcp.errors import ORG_NOT_FOUND, VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, register
@@ -440,6 +441,219 @@ async def canonicalize_tags(
     )
 
 
+# ---- merge_organizations / unmerge_organizations ------------------------------
+
+
+async def _load_org(ctx: MCPContext, org_id: uuid.UUID) -> Organization:
+    org = await ctx.db.get(Organization, org_id)
+    if org is None or org.canonical_owner_tenant_id != ctx.tenant_id:
+        raise ToolError(ORG_NOT_FOUND, f"no organization with id {org_id}", retryable=False)
+    return org
+
+
+async def _enqueue_org_graph_sync(
+    ctx: MCPContext, survivor_id: uuid.UUID, loser_id: uuid.UUID, op: str
+) -> None:
+    """Best-effort FalkorDB sync. Never fails the merge if the outbox is absent."""
+    import json
+
+    try:
+        await ctx.db.execute(
+            text(
+                "INSERT INTO event_outbox (channel, tenant_id, payload) "
+                "VALUES (:channel, CAST(:tenant_id AS uuid), CAST(:payload AS jsonb))"
+            ),
+            {
+                "channel": "falkordb.edge.create",
+                "tenant_id": str(ctx.tenant_id),
+                "payload": json.dumps(
+                    {
+                        "type": op,
+                        "entity": "organization",
+                        "survivor_id": str(survivor_id),
+                        "alias_id": str(loser_id),
+                        "edge_label": "dedup:alias_of",
+                    }
+                ),
+            },
+        )
+    except Exception:  # noqa: BLE001 — graph sync is advisory, not load-bearing
+        pass
+
+
+class MergeOrganizationsInput(BaseModel):
+    survivor_id: uuid.UUID
+    loser_ids: list[uuid.UUID] = Field(min_length=1, max_length=50)
+    dry_run: bool = True
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class MergeOrganizationsOutput(ToolOutput):
+    dry_run: bool
+    survivor_id: str
+    merged: list[str]
+    roles_repointed: int
+    merge_event_id: str | None = None
+    status: str
+
+
+async def merge_organizations(
+    ctx: MCPContext, req: MergeOrganizationsInput
+) -> MergeOrganizationsOutput:
+    require_role(ctx, "STAFF")
+    require_scopes(ctx, ("org:write",))
+
+    losers = [lid for lid in req.loser_ids if lid != req.survivor_id]
+    if not losers:
+        raise ToolError(VALIDATION_FAILED, "loser_ids must differ from survivor_id", retryable=False)
+
+    survivor = await _load_org(ctx, req.survivor_id)
+    if survivor.merge_status != MergeStatus.canonical:
+        raise ToolError(VALIDATION_FAILED, "survivor is not a canonical organization", retryable=False)
+
+    # Resolve each loser's roles up front (needed to make the merge reversible).
+    repointed: dict[str, list[str]] = {}
+    total_roles = 0
+    loser_orgs: list[Organization] = []
+    for lid in losers:
+        loser = await _load_org(ctx, lid)
+        if loser.merge_status != MergeStatus.canonical:
+            raise ToolError(
+                VALIDATION_FAILED, f"organization {lid} is already merged/archived", retryable=False
+            )
+        loser_orgs.append(loser)
+        role_ids = (
+            (await ctx.db.execute(select(PersonOrgRole.id).where(PersonOrgRole.organization_id == lid)))
+            .scalars()
+            .all()
+        )
+        repointed[str(lid)] = [str(r) for r in role_ids]
+        total_roles += len(role_ids)
+
+    if req.dry_run:
+        return MergeOrganizationsOutput(
+            dry_run=True,
+            survivor_id=str(req.survivor_id),
+            merged=[str(lid) for lid in losers],
+            roles_repointed=total_roles,
+            status="planned",
+        )
+
+    for loser in loser_orgs:
+        # Re-point this loser's employment edges onto the survivor. Per-person
+        # primary uniqueness can't be violated: a valid pre-merge state already
+        # holds <=1 active primary role per person across all orgs.
+        await ctx.db.execute(
+            update(PersonOrgRole)
+            .where(PersonOrgRole.organization_id == loser.id)
+            .values(organization_id=req.survivor_id)
+        )
+        loser.merge_status = MergeStatus.merged_into
+        loser.merged_into_id = req.survivor_id
+        loser.etag = uuid.uuid4().hex
+        await ctx.db.flush()
+        await _enqueue_org_graph_sync(ctx, req.survivor_id, loser.id, "org_merge_applied")
+
+    event_id = await emit_action_event(
+        ctx,
+        event_type="organization.merge_applied",
+        aggregate_type="organization",
+        aggregate_id=req.survivor_id,
+        affected_ids=losers,
+        payload_before=None,
+        payload_after={
+            "survivor_id": str(req.survivor_id),
+            "loser_ids": [str(lid) for lid in losers],
+            "roles_repointed": total_roles,
+        },
+        evidence={"survivor_id": str(req.survivor_id), "repointed": repointed},
+        confidence=req.confidence,
+    )
+
+    return MergeOrganizationsOutput(
+        dry_run=False,
+        survivor_id=str(req.survivor_id),
+        merged=[str(lid) for lid in losers],
+        roles_repointed=total_roles,
+        merge_event_id=str(event_id),
+        status="applied",
+    )
+
+
+class UnmergeOrganizationsInput(BaseModel):
+    merge_event_id: uuid.UUID
+
+
+class UnmergeOrganizationsOutput(ToolOutput):
+    survivor_id: str
+    restored: list[str]
+    roles_restored: int
+    status: str
+
+
+async def unmerge_organizations(
+    ctx: MCPContext, req: UnmergeOrganizationsInput
+) -> UnmergeOrganizationsOutput:
+    require_role(ctx, "STAFF")
+    require_scopes(ctx, ("org:write",))
+
+    ev = (
+        await ctx.audit_db.execute(
+            text(
+                "SELECT event_type, tenant_id, evidence FROM action_event "
+                "WHERE event_id = CAST(:eid AS uuid)"
+            ),
+            {"eid": str(req.merge_event_id)},
+        )
+    ).mappings().first()
+    if ev is None or ev["event_type"] != "organization.merge_applied":
+        raise ToolError(VALIDATION_FAILED, "no organization.merge_applied event with that id", retryable=False)
+    if uuid.UUID(str(ev["tenant_id"])) != ctx.tenant_id:
+        raise ToolError(VALIDATION_FAILED, "tenant mismatch", retryable=False)
+
+    evidence = ev["evidence"] or {}
+    survivor_id = uuid.UUID(str(evidence["survivor_id"]))
+    repointed: dict[str, list[str]] = evidence.get("repointed", {})
+
+    restored_roles = 0
+    restored_orgs: list[str] = []
+    for loser_str, role_ids in repointed.items():
+        loser_id = uuid.UUID(loser_str)
+        if role_ids:
+            await ctx.db.execute(
+                update(PersonOrgRole)
+                .where(PersonOrgRole.id.in_([uuid.UUID(r) for r in role_ids]))
+                .values(organization_id=loser_id)
+            )
+            restored_roles += len(role_ids)
+        loser = await ctx.db.get(Organization, loser_id)
+        if loser is not None:
+            loser.merge_status = MergeStatus.canonical
+            loser.merged_into_id = None
+            loser.etag = uuid.uuid4().hex
+        restored_orgs.append(loser_str)
+        await _enqueue_org_graph_sync(ctx, survivor_id, loser_id, "org_unmerge")
+    await ctx.db.flush()
+
+    await emit_action_event(
+        ctx,
+        event_type="organization.unmerge",
+        aggregate_type="organization",
+        aggregate_id=survivor_id,
+        affected_ids=[uuid.UUID(s) for s in restored_orgs],
+        payload_before=None,
+        payload_after={"survivor_id": str(survivor_id), "restored": restored_orgs},
+        evidence={"supersedes_event_id": str(req.merge_event_id)},
+    )
+
+    return UnmergeOrganizationsOutput(
+        survivor_id=str(survivor_id),
+        restored=restored_orgs,
+        roles_restored=restored_roles,
+        status="applied",
+    )
+
+
 # ---- registration -------------------------------------------------------------
 
 
@@ -496,6 +710,46 @@ def register_data_quality_tools() -> None:
         handler=canonicalize_tags,
         required_role="STAFF",
         required_scopes=("tag:write",),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="none",
+    )
+    register(
+        name="merge_organizations",
+        description=(
+            "Merge duplicate organizations into a survivor: re-point employment "
+            "edges, mark losers merged. dry_run defaults True; fully reversible "
+            "via unmerge_organizations. Requires STAFF + org:write."
+        ),
+        input_model=MergeOrganizationsInput,
+        output_model=MergeOrganizationsOutput,
+        handler=merge_organizations,
+        required_role="STAFF",
+        required_scopes=("org:write",),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        idempotency="none",
+    )
+    register(
+        name="unmerge_organizations",
+        description=(
+            "Reverse a previous organization merge by its merge_event_id — "
+            "restores the losers to canonical and re-points their edges back. "
+            "Requires STAFF + org:write."
+        ),
+        input_model=UnmergeOrganizationsInput,
+        output_model=UnmergeOrganizationsOutput,
+        handler=unmerge_organizations,
+        required_role="STAFF",
+        required_scopes=("org:write",),
         annotations={
             "readOnlyHint": False,
             "destructiveHint": False,

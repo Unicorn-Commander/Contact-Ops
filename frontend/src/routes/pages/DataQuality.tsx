@@ -30,6 +30,7 @@ import {
   useCanonicalizeTagsMutation,
   useCleanOrgNamesMutation,
   useDataQualityReport,
+  useMergeOrganizationsMutation,
 } from "@/hooks/useDataQuality";
 import type { DataQualityReport, DqDuplicateGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -375,7 +376,7 @@ function DuplicateOrgsSection({ data }: { data: DataQualityReport }) {
       subtitle={`${data.summary.duplicate_groups} group${data.summary.duplicate_groups === 1 ? "" : "s"} (${data.summary.duplicate_orgs} orgs) look like the same company`}
       action={
         <Badge variant="outline" className="rounded-[var(--radius-sm)] text-12 text-muted-foreground">
-          Review before merging
+          Pick the survivor, then merge
         </Badge>
       }
     >
@@ -394,29 +395,44 @@ function DuplicateOrgsSection({ data }: { data: DataQualityReport }) {
 }
 
 function DuplicateGroupRow({ group }: { group: DqDuplicateGroup }) {
+  const merge = useMergeOrganizationsMutation();
+  const [survivorId, setSurvivorId] = useState(group.suggested_survivor_id);
+  const loserIds = group.members.map((m) => m.org_id).filter((id) => id !== survivorId);
+
   return (
     <li className="flex flex-wrap items-center gap-co-6 rounded-md border border-border/60 bg-muted/20 px-co-8 py-co-6 text-13">
       {group.members.map((m) => {
-        const survivor = m.org_id === group.suggested_survivor_id;
+        const survivor = m.org_id === survivorId;
         return (
-          <span
+          <button
+            type="button"
             key={m.org_id}
+            onClick={() => setSurvivorId(m.org_id)}
+            title={survivor ? "Survivor — kept" : "Click to keep this one instead"}
             className={cn(
-              "inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] px-co-6 py-0.5 text-12",
+              "focus-ring inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] px-co-6 py-0.5 text-12 transition-colors",
               survivor
-                ? "border border-success/40 bg-success/10 font-medium text-foreground"
-                : "border border-border bg-card text-muted-foreground",
+                ? "border border-success/50 bg-success/10 font-medium text-foreground"
+                : "border border-border bg-card text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground",
             )}
-            title={survivor ? "Suggested survivor (most connections)" : undefined}
           >
             {survivor ? <Check className="h-3 w-3 text-success" /> : null}
             {m.name}
             {typeof m.edge_count === "number" && m.edge_count > 0 ? (
               <span className="text-10 text-muted-foreground/70">{m.edge_count}</span>
             ) : null}
-          </span>
+          </button>
         );
       })}
+      <span className="ml-auto">
+        <ApplyButton
+          idleLabel={`Merge ${loserIds.length}`}
+          confirmLabel="Confirm merge"
+          busy={merge.isPending}
+          disabled={loserIds.length === 0}
+          onApply={() => merge.mutate({ survivorId, loserIds })}
+        />
+      </span>
     </li>
   );
 }

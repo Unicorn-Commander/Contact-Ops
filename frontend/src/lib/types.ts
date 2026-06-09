@@ -393,6 +393,15 @@ export type CanonicalizeTagsResult = {
   status: string;
 };
 
+export type MergeOrganizationsResult = {
+  dry_run: boolean;
+  survivor_id: UUID;
+  merged: UUID[];
+  roles_repointed: number;
+  merge_event_id: UUID | null;
+  status: string;
+};
+
 // ---- Connectors (matches feat-connectors-backend MCP tools) ---------------
 //
 // The /connectors page pulls contacts from third-party sources. Each provider
