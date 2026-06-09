@@ -27,11 +27,20 @@ import {
 // import `actionVerbFor` from here.
 export { actionVerbFor };
 
+/**
+ * Modifier flags forwarded from a row click / Enter-Space so the parent can
+ * implement Linear/Gmail-style range + toggle selection:
+ *   plain   → open detail (focus)
+ *   ⌘/Ctrl  → toggle this row in the multi-select set
+ *   Shift   → select the contiguous range from the anchor to this row
+ */
+export type RowClickMeta = { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean };
+
 export type ProposalRowProps = {
   proposal: Proposal;
   focused?: boolean;
   selected?: boolean;
-  onSelect?: () => void;
+  onSelect?: (meta: RowClickMeta) => void;
   onFocus?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
@@ -51,12 +60,14 @@ export function ProposalRow({
       role="button"
       tabIndex={0}
       data-proposal-id={proposal.proposal_id}
-      onClick={onSelect}
+      onClick={(e) =>
+        onSelect?.({ shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey })
+      }
       onFocus={onFocus}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onSelect?.();
+          onSelect?.({ shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey });
         }
       }}
       style={agentRowStyle(proposal.agent_id)}

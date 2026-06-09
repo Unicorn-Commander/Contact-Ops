@@ -22,7 +22,10 @@ export type InboxHotkey =
   | "select-all"
   | "command-palette"
   | "focus-mode"
-  | "undo";
+  | "undo"
+  | "extend-down"
+  | "extend-up"
+  | "toggle-select";
 
 export type InboxHotkeyHandlers = {
   [K in InboxHotkey]?: () => void;
@@ -71,7 +74,12 @@ export function useInboxShortcuts(handlers: InboxHotkeyHandlers): void {
   bind("mod+a", handlers["select-all"], [handlers["select-all"]]);
   bind("mod+k", handlers["command-palette"], [handlers["command-palette"]]);
   bind("mod+.", handlers["focus-mode"], [handlers["focus-mode"]]);
-  bind("mod+z", handlers.undo, [handlers.undo]);
+  bind("mod+z, u", handlers.undo, [handlers.undo]);
+  // Range-extend the multi-selection from the anchor (Linear/Gmail cadence).
+  bind("shift+j, shift+down", handlers["extend-down"], [handlers["extend-down"]]);
+  bind("shift+k, shift+up", handlers["extend-up"], [handlers["extend-up"]]);
+  // Toggle the focused row into the multi-select set without opening it.
+  bind("x", handlers["toggle-select"], [handlers["toggle-select"]]);
 }
 
 export type InboxShortcutDescription = {
@@ -91,9 +99,11 @@ export const INBOX_SHORTCUT_DESCRIPTIONS: InboxShortcutDescription[] = [
   { key: "H", description: "Snooze focused" },
   { key: "M", description: "Mute agent for this entity" },
   { key: "D", description: "Dismiss as duplicate" },
+  { key: "X", description: "Add focused to selection" },
+  { key: "⇧J / ⇧K", description: "Extend selection down / up" },
   { key: "Esc", description: "Clear selection / close detail" },
   { key: "⌘A", description: "Select all visible" },
   { key: "⌘K", description: "Command palette" },
   { key: "⌘.", description: "Toggle Focus Mode" },
-  { key: "⌘Z", description: "Undo last decision" },
+  { key: "⌘Z / U", description: "Undo last decision" },
 ];

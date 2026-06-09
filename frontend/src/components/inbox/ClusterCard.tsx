@@ -21,8 +21,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ProposalRow } from "@/components/inbox/ProposalRow";
+import { ProposalRow, type RowClickMeta } from "@/components/inbox/ProposalRow";
 import { SwipeableProposalRow } from "@/components/inbox/SwipeableProposalRow";
+
+const NO_MODS: RowClickMeta = { shiftKey: false, metaKey: false, ctrlKey: false };
 import { AgentBadge, KeyboardHint, MonoNumeric } from "@/design-system";
 import { ConfidenceMeterV2 } from "@/design-system/v2/ConfidenceMeterV2";
 
@@ -35,7 +37,13 @@ export type ClusterCardProps = {
   onToggle: () => void;
   focusedProposalId?: string | null;
   selectedProposalIds?: Set<string>;
-  onSelectProposal?: (proposal: Proposal) => void;
+  onSelectProposal?: (proposal: Proposal, meta: RowClickMeta) => void;
+  /**
+   * ⌘/Ctrl- or Shift-click on the cluster *header* selects the cluster's
+   * proposals (instead of expanding). Lets a queue of singleton clusters be
+   * bulk-triaged from the visible layer without expanding each one.
+   */
+  onClusterModifierSelect?: (meta: RowClickMeta) => void;
   onFocusProposal?: (proposal: Proposal) => void;
   onQuickApprove?: (proposal: Proposal) => void;
   onQuickReject?: (proposal: Proposal) => void;
@@ -58,6 +66,7 @@ export function ClusterCard({
   focusedProposalId,
   selectedProposalIds,
   onSelectProposal,
+  onClusterModifierSelect,
   onFocusProposal,
   onQuickApprove,
   onQuickReject,
@@ -74,13 +83,29 @@ export function ClusterCard({
   const overflow = Math.max(0, proposals.length - MAX_INLINE);
   const created = formatDistanceToNowStrict(new Date(cluster.latest_created_at), { addSuffix: true });
   const eligibleCount = proposals.filter((p) => p.confidence >= 0.85).length;
+  const clusterSelected =
+    Boolean(selectedProposalIds) &&
+    proposals.length > 0 &&
+    proposals.every((p) => selectedProposalIds!.has(p.proposal_id));
 
   return (
-    <Card className="co-v2-glass-calm overflow-hidden border-transparent">
+    <Card
+      className={cn(
+        "co-v2-glass-calm overflow-hidden border-transparent",
+        clusterSelected && "ring-1 ring-primary/60",
+      )}
+    >
       <header
         role="button"
         tabIndex={0}
-        onClick={onToggle}
+        onClick={(e) => {
+          if ((e.shiftKey || e.metaKey || e.ctrlKey) && onClusterModifierSelect) {
+            e.preventDefault();
+            onClusterModifierSelect({ shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey });
+            return;
+          }
+          onToggle();
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -91,10 +116,16 @@ export function ClusterCard({
           "flex items-center gap-co-8 px-co-12 py-co-8",
           "cursor-pointer select-none",
           "transition-colors duration-150 ease-snappy hover:bg-[oklch(var(--co-brand-500)/0.06)]",
+          clusterSelected && "bg-primary/10",
           "focus-ring",
         )}
         aria-expanded={expanded}
         aria-label={`Cluster for ${cluster.entity_display_name}, ${proposals.length} proposals`}
+        title={
+          onClusterModifierSelect
+            ? "Click to expand · ⌘-click to select · ⇧-click to select a range"
+            : undefined
+        }
       >
         <ChevronRight
           className={cn(
@@ -164,7 +195,7 @@ export function ClusterCard({
                     proposal={p}
                     focused={focusedProposalId === p.proposal_id}
                     selected={selectedProposalIds?.has(p.proposal_id) ?? false}
-                    onSelect={() => onSelectProposal?.(p)}
+                    onSelect={() => onSelectProposal?.(p, NO_MODS)}
                     onFocus={() => onFocusProposal?.(p)}
                     onApprove={() => onQuickApprove?.(p)}
                     onReject={() => onQuickReject?.(p)}
@@ -175,7 +206,7 @@ export function ClusterCard({
                     proposal={p}
                     focused={focusedProposalId === p.proposal_id}
                     selected={selectedProposalIds?.has(p.proposal_id) ?? false}
-                    onSelect={() => onSelectProposal?.(p)}
+                    onSelect={(meta) => onSelectProposal?.(p, meta)}
                     onFocus={() => onFocusProposal?.(p)}
                     onApprove={() => onQuickApprove?.(p)}
                     onReject={() => onQuickReject?.(p)}

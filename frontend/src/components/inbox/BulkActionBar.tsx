@@ -25,9 +25,12 @@ export type BulkActionBarProps = {
   blockedCrossTenant: number;
   tenantSlugs: string[];
   busy?: boolean;
+  /** Total proposals matching the current view/filter — drives "Select all N". */
+  matchedTotal?: number;
   onApproveAll?: () => void;
   onRejectAll?: () => void;
   onSnoozeAll?: () => void;
+  onSelectAll?: () => void;
   onClear?: () => void;
 };
 
@@ -39,15 +42,18 @@ export function BulkActionBar({
   blockedCrossTenant,
   tenantSlugs,
   busy = false,
+  matchedTotal = 0,
   onApproveAll,
   onRejectAll,
   onSnoozeAll,
+  onSelectAll,
   onClear,
 }: BulkActionBarProps) {
   const prefersReduced = useReducedMotion();
-  const visible = selectionCount >= 2;
+  const visible = selectionCount >= 1;
   const blockedTotal = blockedHipaa + blockedTier4 + blockedCrossTenant;
   const isMixedTenant = tenantSlugs.length > 1;
+  const canSelectAll = matchedTotal > selectionCount;
 
   return (
     <AnimatePresence>
@@ -67,6 +73,18 @@ export function BulkActionBar({
               <MonoNumeric tone="strong">{selectionCount}</MonoNumeric>
               <span>selected</span>
             </span>
+            {canSelectAll && onSelectAll && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-co-6 text-12 text-link hover:bg-[oklch(var(--co-brand-500)/0.08)]"
+                disabled={busy}
+                onClick={onSelectAll}
+                title={`Select all ${matchedTotal} matching the current filter`}
+              >
+                Select all <MonoNumeric tone="strong">{matchedTotal}</MonoNumeric>
+              </Button>
+            )}
             <Badge variant="outline" className="gap-co-4 rounded-[var(--radius-sm)]">
               <MonoNumeric tone="strong" className="text-success">{eligibleCount}</MonoNumeric>
               <span className="text-muted-foreground">eligible</span>

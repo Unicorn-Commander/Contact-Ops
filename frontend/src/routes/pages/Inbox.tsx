@@ -16,10 +16,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HotkeysProvider } from "react-hotkeys-hook";
+import { useAuth } from "react-oidc-context";
 import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AlertTriangle, Bell, ExternalLink, ListChecks, Monitor } from "lucide-react";
 import { toast } from "sonner";
+
+import { tools } from "@/lib/mcp";
 
 import {
   ResizableHandle,
@@ -78,12 +81,16 @@ import {
   useInboxShortcuts,
 } from "@/lib/inbox/keyboardShortcuts";
 import type { FieldChoice, StructuredFieldEntry } from "@/components/inbox/StructuredDiff";
+import type { RowClickMeta } from "@/components/inbox/ProposalRow";
 import type { Proposal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type View = "needs-review" | "snoozed" | "resolved";
 
 const PANE_DEFAULTS = { nav: "18%", list: "42%", detail: "40%" };
+
+// A plain (no-modifier) row activation — opens the detail pane.
+const NO_MODS: RowClickMeta = { shiftKey: false, metaKey: false, ctrlKey: false };
 
 // ---- URL <-> QualityFilterState (shareable approve-all links) ----
 
@@ -158,6 +165,12 @@ function InboxCockpit() {
   } | null>(null);
 
   const focusMode = useFocusMode();
+  const auth = useAuth();
+
+  // Selection anchor for shift-range select; last decision for ⌘Z/U undo.
+  // Refs (not state) — they steer imperative handlers and must never go stale.
+  const anchorIdRef = useRef<string | null>(null);
+  const lastDecisionRef = useRef<{ id: string; kind: "approve" | "reject" } | null>(null);
 
   function readUrlParams() {
     const params = new URLSearchParams(window.location.search);
@@ -227,6 +240,17 @@ function InboxCockpit() {
     [allClustersRaw, visibleProposals],
   );
 
+  // Canonical top-to-bottom order of rows as rendered (clusters flattened) —
+  // the basis for shift-range select and post-decision auto-advance.
+  const orderedProposals = useMemo(
+    () => hydrated.flatMap((c) => c.proposals),
+    [hydrated],
+  );
+  const orderedIds = useMemo(
+    () => orderedProposals.map((p) => p.proposal_id),
+    [orderedProposals],
+  );
+
   // Default-expand the first 3 clusters when needs-review small
   useEffect(() => {
     if (view !== "needs-review") return;
@@ -285,6 +309,108 @@ function InboxCockpit() {
     });
   }
 
+  /** Additively select every row between two ids in visual order (Gmail-style). */
+  function selectRange(aId: string, bId: string) {
+    const ai = orderedIds.indexOf(aId);
+    const bi = orderedIds.indexOf(bId);
+    if (ai === -1 || bi === -1) return;
+    const [lo, hi] = ai <= bi ? [ai, bi] : [bi, ai];
+    setSelectedIds((prev) => {
+      const out = new Set(prev);
+      for (let i = lo; i <= hi; i++) out.add(orderedIds[i]);
+      return out;
+    });
+  }
+
+  // Route a row click by its modifier keys: plain → open detail (focus),
+  // ⌘/Ctrl → toggle into multi-select, Shift → range-select from the anchor.
+  function handleRowSelect(p: Proposal, meta: RowClickMeta) {
+    const id = p.proposal_id;
+    if (meta.shiftKey && anchorIdRef.current) {
+      selectRange(anchorIdRef.current, id);
+      setFocusedId(id);
+      return;
+    }
+    if (meta.metaKey || meta.ctrlKey) {
+      toggleSelected(id);
+      anchorIdRef.current = id;
+      return;
+    }
+    setFocusedId(id);
+    anchorIdRef.current = id;
+  }
+
+  // ⌘/Ctrl- or Shift-click on a cluster header selects its proposals — the
+  // bulk path for a queue of singleton clusters (rows stay collapsed).
+  function handleClusterSelect(proposals: Proposal[], meta: RowClickMeta) {
+    const ids = proposals.map((p) => p.proposal_id);
+    if (ids.length === 0) return;
+    if (meta.shiftKey && anchorIdRef.current) {
+      // Cover the whole cluster span relative to the anchor (both ends).
+      selectRange(anchorIdRef.current, ids[0]);
+      selectRange(anchorIdRef.current, ids[ids.length - 1]);
+      return;
+    }
+    setSelectedIds((prev) => {
+      const out = new Set(prev);
+      const allSelected = ids.every((id) => out.has(id));
+      for (const id of ids) {
+        if (allSelected) out.delete(id);
+        else out.add(id);
+      }
+      return out;
+    });
+    anchorIdRef.current = ids[0];
+  }
+
+  // Shift+J/K (or Shift+↑/↓): grow the selection one row from the anchor.
+  function extendSelection(delta: 1 | -1) {
+    if (orderedIds.length === 0) return;
+    if (!anchorIdRef.current) anchorIdRef.current = focusedId ?? orderedIds[0];
+    const curIdx = focusedId ? orderedIds.indexOf(focusedId) : -1;
+    const nextIdx = Math.max(0, Math.min(orderedIds.length - 1, curIdx + delta));
+    const nextId = orderedIds[nextIdx];
+    setFocusedId(nextId);
+    selectRange(anchorIdRef.current, nextId);
+  }
+
+  // The row the cursor should land on after `removedId` leaves the list — the
+  // next sibling, else the previous, so keyboard triage flows without a re-aim.
+  function nextFocusAfter(removedId: string): string | null {
+    const idx = orderedIds.indexOf(removedId);
+    if (idx === -1) return null;
+    return orderedIds[idx + 1] ?? orderedIds[idx - 1] ?? null;
+  }
+
+  // ⌘Z / U — reverse the last decision. Approves reverse cleanly (reject:undo
+  // un-applies them); rejects have no server-side inverse, so we say so.
+  function undoLast() {
+    const last = lastDecisionRef.current;
+    if (!last) {
+      toast.message("Nothing to undo");
+      return;
+    }
+    if (last.kind === "reject") {
+      toast.message("That reject can't be undone here.", {
+        description: "Rejected proposals are dismissed; re-run the agent to re-propose.",
+      });
+      lastDecisionRef.current = null;
+      return;
+    }
+    const token = auth.user?.access_token ?? "";
+    tools
+      .rejectProposal({ proposal_id: last.id, mode: "undo" }, token)
+      .then(() => {
+        toast.success("Undone");
+        void list.refetch();
+      })
+      .catch((e: unknown) => {
+        const m = e instanceof Error ? e.message : "unknown error";
+        toast.error(`Undo failed: ${m}`);
+      });
+    lastDecisionRef.current = null;
+  }
+
   function doApprove(p: Proposal | null, keyboard: boolean) {
     if (!p) return;
     const tier = selectTier(p, { tenantAutoApprove: {} });
@@ -301,22 +427,28 @@ function InboxCockpit() {
       setFocusedId(p.proposal_id);
       return;
     }
+    const next = nextFocusAfter(p.proposal_id);
     approve.mutate({
       proposalId: p.proposal_id,
       tier,
       typedPhrase: null,
       keyboardPath: keyboard,
     });
+    lastDecisionRef.current = { id: p.proposal_id, kind: "approve" };
+    if (next) setFocusedId(next); // auto-advance: keep the triage cadence going
   }
 
   function doReject(p: Proposal | null, keyboard: boolean) {
     if (!p) return;
+    const next = nextFocusAfter(p.proposal_id);
     reject.mutate({
       proposalId: p.proposal_id,
       mode: "reject",
       tier: 1,
       keyboardPath: keyboard,
     });
+    lastDecisionRef.current = { id: p.proposal_id, kind: "reject" };
+    if (next) setFocusedId(next); // auto-advance
   }
 
   function doSnooze(p: Proposal | null, until: Date, keyboard: boolean) {
@@ -348,6 +480,7 @@ function InboxCockpit() {
   function clearSelection() {
     if (selectedIds.size > 0) {
       setSelectedIds(new Set());
+      anchorIdRef.current = null;
     } else if (focusedId) {
       // Esc closes detail when nothing selected
       setFocusedId(null);
@@ -460,6 +593,14 @@ function InboxCockpit() {
     "select-all": () => selectAllVisible(),
     "command-palette": () => setPaletteOpen(true),
     "focus-mode": () => focusMode.toggle(),
+    undo: () => undoLast(),
+    "extend-down": () => extendSelection(1),
+    "extend-up": () => extendSelection(-1),
+    "toggle-select": () => {
+      if (!focusedProposal) return;
+      toggleSelected(focusedProposal.proposal_id);
+      anchorIdRef.current = focusedProposal.proposal_id;
+    },
   });
 
   // ---- bulk computation ----
@@ -604,11 +745,11 @@ function InboxCockpit() {
               selectedProposalIds={selectedIds}
               expandedClusters={expandedClusters}
               onToggleCluster={toggleCluster}
-              onSelectProposal={(p) => setFocusedId(p.proposal_id)}
+              onSelectProposal={handleRowSelect}
+              onSelectCluster={handleClusterSelect}
               onFocusProposal={(p) => setFocusedId(p.proposal_id)}
               onQuickApprove={(p) => doApprove(p, false)}
               onQuickReject={(p) => doReject(p, false)}
-              onMultiSelect={(p) => toggleSelected(p.proposal_id)}
               isLoading={list.isPending}
               hasNextPage={Boolean(list.hasNextPage)}
               onLoadMore={() => list.fetchNextPage()}
@@ -721,6 +862,8 @@ function InboxCockpit() {
         blockedTier4={bulkSummary.blockedT4}
         blockedCrossTenant={bulkSummary.blockedCrossTenant}
         tenantSlugs={Array.from({ length: bulkSummary.tenantCount }, (_, i) => `t${i + 1}`)}
+        matchedTotal={visibleProposals.length}
+        onSelectAll={selectAllVisible}
         busy={bulkApprove.isPending || bulkReject.isPending}
         onApproveAll={() => {
           const eligibleIds = visibleProposals
@@ -938,11 +1081,11 @@ type ListPaneProps = {
   selectedProposalIds: Set<string>;
   expandedClusters: Set<string>;
   onToggleCluster: (clusterId: string) => void;
-  onSelectProposal: (p: Proposal) => void;
+  onSelectProposal: (p: Proposal, meta: RowClickMeta) => void;
+  onSelectCluster: (proposals: Proposal[], meta: RowClickMeta) => void;
   onFocusProposal: (p: Proposal) => void;
   onQuickApprove: (p: Proposal) => void;
   onQuickReject: (p: Proposal) => void;
-  onMultiSelect: (p: Proposal) => void;
   isLoading: boolean;
   hasNextPage: boolean;
   onLoadMore: () => void;
@@ -956,10 +1099,10 @@ function ListPane({
   expandedClusters,
   onToggleCluster,
   onSelectProposal,
+  onSelectCluster,
   onFocusProposal,
   onQuickApprove,
   onQuickReject,
-  onMultiSelect,
   isLoading,
   hasNextPage,
   onLoadMore,
@@ -982,8 +1125,6 @@ function ListPane({
       onLoadMore();
     }
   }, [virtualizer, clusters.length, hasNextPage, onLoadMore]);
-
-  void onMultiSelect; // wired in mobile path; kept here for parity if shift-click is added later
 
   if (clusters.length === 0) {
     return (
@@ -1022,12 +1163,13 @@ function ListPane({
                   focusedProposalId={focusedProposalId}
                   selectedProposalIds={selectedProposalIds}
                   onSelectProposal={onSelectProposal}
+                  onClusterModifierSelect={(meta) => onSelectCluster(cluster.proposals, meta)}
                   onFocusProposal={onFocusProposal}
                   onQuickApprove={onQuickApprove}
                   onQuickReject={onQuickReject}
                   onOpenDetail={() => {
                     const first = cluster.proposals[0];
-                    if (first) onSelectProposal(first);
+                    if (first) onSelectProposal(first, NO_MODS);
                   }}
                   hasConflict={cluster.hasConflict}
                 />
