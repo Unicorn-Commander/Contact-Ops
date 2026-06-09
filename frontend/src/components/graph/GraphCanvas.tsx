@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ForceGraph3D, { type ForceGraphMethods } from "react-force-graph-3d";
+import { type ForceGraphMethods } from "react-force-graph-3d";
 import ForceGraph2D, { type ForceGraphMethods as ForceGraphMethods2D } from "react-force-graph-2d";
 import { Box, Network } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -152,6 +152,26 @@ export function GraphCanvas({
   const lowPowerHint = useMemo(() => detectLowPowerHint(), []);
   const effectiveMode: "2d" | "3d" = renderMode === "auto" ? (lowPowerHint ? "2d" : "3d") : renderMode;
   const [colorVersion, setColorVersion] = useState(0);
+
+  // Load ForceGraph3D as a CLIENT-ONLY dynamic import (the pattern the sibling
+  // apps — customer-ops/meeting-ops — use). A static import evaluates
+  // react-force-graph-3d + its three/d3-force-3d at chunk-load, and the
+  // component can start its animation cycle before the force layout exists →
+  // "Cannot read properties of undefined (reading 'tick')" → blank 3D. Deferring
+  // the import to post-mount lets the module fully initialise first.
+  // Typed `any` like the sibling apps' dynamic-loaded force graph — the props
+  // below are the same ones the static <ForceGraph3D> type-checked.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [FG3D, setFG3D] = useState<any>(null);
+  useEffect(() => {
+    let alive = true;
+    void import("react-force-graph-3d").then((m) => {
+      if (alive) setFG3D(() => m.default);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!wrapRef.current) return;
@@ -562,7 +582,8 @@ export function GraphCanvas({
     </div>
   ) : (
     <div ref={wrapRef} className="relative h-full min-h-[520px] w-full overflow-hidden bg-background">
-      <ForceGraph3D
+      {FG3D ? (
+      <FG3D
         ref={graphRef}
         width={size.width}
         height={size.height}
@@ -598,7 +619,12 @@ export function GraphCanvas({
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
         onBackgroundClick={handleBackgroundClick}
-      />
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <Spinner size="sm" label="Loading 3D graph…" />
+        </div>
+      )}
       <div className="pointer-events-none absolute inset-0">
         {projectedLabels.map((label) => (
           <div

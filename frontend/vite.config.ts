@@ -7,7 +7,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src")
-    }
+    },
+    // Force a SINGLE copy of three + the d3-force-3d layout. `three` and
+    // `d3-force-3d` are direct deps AND deps of react-force-graph-3d; without
+    // dedupe the bundle can end up with two instances, so the force layout the
+    // 3D graph creates isn't the one its animation loop reads →
+    // "Cannot read properties of undefined (reading 'tick')" → blank 3D graph.
+    dedupe: ["three", "d3-force-3d", "react", "react-dom"]
   },
   server: {
     port: 5173,
