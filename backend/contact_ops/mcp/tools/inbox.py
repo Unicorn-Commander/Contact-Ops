@@ -66,6 +66,12 @@ from contact_ops.services.inbox_mutations import (
 from contact_ops.services.inbox_query import list_pending_proposals
 
 INBOX_SCOPE = "contactops:inbox.review"
+# Reads use the same `proposal:read` scope the UI + tokens actually carry (the
+# review queue is just a proposal list). `contactops:inbox.review` was declared
+# on every inbox tool but is unseeded in Keycloak, so the chat executor — the
+# one caller that enforces declared scopes — was wrongly 403ing reads for users
+# who can clearly see the queue. Decisions (approve/reject/...) keep INBOX_SCOPE.
+INBOX_READ_SCOPE = "proposal:read"
 INBOX_ROLE = "STAFF"
 
 
@@ -306,7 +312,7 @@ def register_inbox_tools() -> None:
         output_model=ListPendingProposalsOutput,
         handler=_handle_list_pending_proposals,
         required_role=INBOX_ROLE,
-        required_scopes=(INBOX_SCOPE,),
+        required_scopes=(INBOX_READ_SCOPE,),
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,
@@ -423,7 +429,7 @@ def register_inbox_tools() -> None:
         output_model=ProposalEvidenceOutput,
         handler=_handle_get_proposal_evidence,
         required_role=INBOX_ROLE,
-        required_scopes=(INBOX_SCOPE,),
+        required_scopes=(INBOX_READ_SCOPE,),
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,
