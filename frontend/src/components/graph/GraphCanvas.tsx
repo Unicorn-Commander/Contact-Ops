@@ -5,7 +5,8 @@ import { Box, Network } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MonoNumeric, Spinner } from "@/design-system";
 import { forceConfig } from "@/lib/graph/forceConfig";
-import { colorForNode, isProposeOnlyRelationship } from "@/lib/graph/colorScheme";
+import { colorForNode, edgeChannel, isProposeOnlyRelationship } from "@/lib/graph/colorScheme";
+import { avatarColor } from "@/lib/avatar";
 import { drawAvatarNode2d, paintAvatarPointerArea2d } from "@/lib/graph/avatarNode";
 import { cn } from "@/lib/utils";
 import type { EgoGraph, GraphLink, GraphNode } from "@/hooks/useEgoGraph";
@@ -133,6 +134,7 @@ export function GraphCanvas({
   selectedNodeId,
   renderMode,
   rootPersonId,
+  hiddenEdgeTypes,
   loading = false,
   onNodeClick
 }: {
@@ -140,6 +142,8 @@ export function GraphCanvas({
   selectedNodeId: string | null;
   renderMode: GraphRenderMode;
   rootPersonId?: string;
+  /** Relationship types the user has toggled OFF in the controls. */
+  hiddenEdgeTypes?: Set<string>;
   loading?: boolean;
   onNodeClick: (node: GraphNode) => void;
 }) {
@@ -212,6 +216,10 @@ export function GraphCanvas({
     void colorVersion;
     return {
       node: (kind: string) => tokenColorToCanvasColor(colorForNode(kind)),
+      // Per-entity hue (the 9-colour avatar palette) so the 3D network reads as
+      // a colourful crowd rather than a sea of one colour — and matches the same
+      // entity's puck in the 2D graph and the directory cards.
+      avatar: (seed: string) => tokenColorToCanvasColor(avatarColor(seed)),
       edge: (channel: string, confidence: number) => tokenColorToCanvasColor(`oklch(var(--${channel}) / ${confidence})`)
     };
   }, [colorVersion]);
@@ -234,9 +242,11 @@ export function GraphCanvas({
         const t = typeof l.target === "object" ? (l.target as GraphNode).id : (l.target as string);
         return { ...l, source: s, target: t };
       })
-      .filter((l) => ids.has(l.source) && ids.has(l.target));
+      .filter((l) => ids.has(l.source) && ids.has(l.target))
+      // Hide relationship types the user toggled off in the controls.
+      .filter((l) => !(hiddenEdgeTypes && hiddenEdgeTypes.has(l.type)));
     return { nodes: (g.nodes ?? []).map((n) => ({ ...n })), links };
-  }, [graph]);
+  }, [graph, hiddenEdgeTypes]);
 
   // Belt-and-suspenders framing: also fit a moment after the data loads, in
   // case the force engine settled before this mounted (onEngineStop also fits).
@@ -326,9 +336,11 @@ export function GraphCanvas({
 
   const edgeColor = useCallback(
     (link: GraphLink) => {
-      const confidence = Math.max(0.15, Math.min(1, link.strength ?? 0.6));
-      const channel = isProposeOnlyRelationship(link.type) ? "confidence-amber" : "info";
-      return canvasColors.edge(channel, Math.min(1, confidence + 0.3));
+      // Colour each edge by its RELATIONSHIP TYPE (works-at = blue, knows =
+      // green, reports-to = amber, …) so ties are legible at a glance and match
+      // the association-filter chips. Stronger ties read a touch more solid.
+      const confidence = Math.max(0.45, Math.min(1, (link.strength ?? 0.6) + 0.35));
+      return canvasColors.edge(edgeChannel(link.type), confidence);
     },
     [canvasColors]
   );
@@ -395,7 +407,7 @@ export function GraphCanvas({
   // Stable accessor identities: react-force-graph re-applies any prop whose
   // reference changes, and onEngineTick re-renders every simulation tick, so
   // inline accessors would be re-applied to the graph every frame during layout.
-  const nodeColorAccessor = useCallback((node: GraphNode) => canvasColors.node(node.kind), [canvasColors]);
+  const nodeColorAccessor = useCallback((node: GraphNode) => canvasColors.avatar(node.name || node.id), [canvasColors]);
   const nodeValAccessor = useCallback(
     (node: GraphNode) => {
       const highlighted = highlightedNodeSet.has(node.id);

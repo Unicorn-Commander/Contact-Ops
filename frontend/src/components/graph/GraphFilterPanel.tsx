@@ -2,22 +2,33 @@ import { Box, Monitor, Shuffle, Sparkles, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfidenceIndicator, MonoNumeric } from "@/design-system";
 import type { GraphRenderMode } from "@/components/graph/GraphCanvas";
+import { colorForEdge, labelForEdge } from "@/lib/graph/colorScheme";
 import { cn } from "@/lib/utils";
+
+export type GraphEdgeType = { type: string; count: number };
 
 export function GraphFilterPanel({
   hopLimit,
   confidenceFloor,
   renderMode,
+  edgeTypes,
+  hiddenEdgeTypes,
   onHopLimitChange,
   onConfidenceFloorChange,
-  onRenderModeChange
+  onRenderModeChange,
+  onToggleEdgeType,
+  onShowAllEdgeTypes
 }: {
   hopLimit: number;
   confidenceFloor: number;
   renderMode: GraphRenderMode;
+  edgeTypes: GraphEdgeType[];
+  hiddenEdgeTypes: Set<string>;
   onHopLimitChange: (value: number) => void;
   onConfidenceFloorChange: (value: number) => void;
   onRenderModeChange: (value: GraphRenderMode) => void;
+  onToggleEdgeType: (type: string) => void;
+  onShowAllEdgeTypes: () => void;
 }) {
   const modeButtons: Array<{ value: GraphRenderMode; label: string; icon: LucideIcon }> = [
     { value: "auto", label: "Auto", icon: Sparkles },
@@ -97,6 +108,53 @@ export function GraphFilterPanel({
           <span>Stronger evidence only</span>
         </div>
       </div>
+
+      {edgeTypes.length > 0 ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Associations</p>
+            {hiddenEdgeTypes.size > 0 ? (
+              <button
+                type="button"
+                onClick={onShowAllEdgeTypes}
+                className="text-[11px] font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Show all
+              </button>
+            ) : (
+              <MonoNumeric tone="muted">{edgeTypes.length} types</MonoNumeric>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {edgeTypes.map(({ type, count }) => {
+              const hidden = hiddenEdgeTypes.has(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => onToggleEdgeType(type)}
+                  aria-pressed={!hidden}
+                  title={hidden ? `Show ${labelForEdge(type)} ties` : `Hide ${labelForEdge(type)} ties`}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    hidden
+                      ? "border-dashed border-border bg-transparent text-muted-foreground/70 line-through"
+                      : "border-border bg-background text-foreground shadow-[var(--shadow-1)] hover:bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn("h-2.5 w-2.5 shrink-0 rounded-full", hidden && "opacity-40")}
+                    style={{ backgroundColor: colorForEdge(type) }}
+                    aria-hidden="true"
+                  />
+                  <span>{labelForEdge(type)}</span>
+                  <MonoNumeric tone="muted">{count}</MonoNumeric>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-2 rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
         <Shuffle className="h-3.5 w-3.5 shrink-0" />

@@ -25,6 +25,17 @@ export function GraphRoute() {
   const [renderMode, setRenderMode] = useState<GraphRenderMode>("3d");
   const [snapshotAt, setSnapshotAt] = useState<Date | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  // Relationship types the user has toggled OFF in the controls. Persisted across
+  // overview ↔ ego switches; a hidden type that isn't present is simply a no-op.
+  const [hiddenEdgeTypes, setHiddenEdgeTypes] = useState<Set<string>>(() => new Set());
+  const toggleEdgeType = (type: string) =>
+    setHiddenEdgeTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  const showAllEdgeTypes = () => setHiddenEdgeTypes(new Set());
 
   // No person selected → show the whole tenant network (overview). Pick a person
   // (a /graph/:id deep link or the search picker) → drill into their ego network.
@@ -59,6 +70,19 @@ export function GraphRoute() {
   const nodeCount = graph.data?.node_count ?? 0;
   const edgeCount = graph.data?.edge_count ?? 0;
   const hasGraph = Boolean(graph.data);
+
+  // Distinct relationship types in the current graph (with counts), most common
+  // first — drives the association filter chips. Computed from the UNFILTERED
+  // data so a toggled-off type's chip stays put rather than vanishing.
+  const edgeTypes = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const link of graph.data?.links ?? []) {
+      counts.set(link.type, (counts.get(link.type) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+  }, [graph.data]);
 
   function pickPerson(id: string) {
     setSelectedPersonId(id);
@@ -168,9 +192,13 @@ export function GraphRoute() {
           hopLimit={hopLimit}
           confidenceFloor={confidenceFloor}
           renderMode={renderMode}
+          edgeTypes={edgeTypes}
+          hiddenEdgeTypes={hiddenEdgeTypes}
           onHopLimitChange={setHopLimit}
           onConfidenceFloorChange={setConfidenceFloor}
           onRenderModeChange={setRenderMode}
+          onToggleEdgeType={toggleEdgeType}
+          onShowAllEdgeTypes={showAllEdgeTypes}
         />
           </>
         ) : null}
@@ -205,6 +233,7 @@ export function GraphRoute() {
         selectedNodeId={selectedNodeId}
         renderMode={renderMode}
         rootPersonId={personId}
+        hiddenEdgeTypes={hiddenEdgeTypes}
         loading={graph.isLoading}
         onNodeClick={(node: GraphNode) => setSelectedNodeId(node.id)}
       />
