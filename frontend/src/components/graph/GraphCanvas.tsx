@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MonoNumeric, Spinner } from "@/design-system";
 import { forceConfig } from "@/lib/graph/forceConfig";
 import { colorForNode, isProposeOnlyRelationship } from "@/lib/graph/colorScheme";
-import { drawAvatarNode2d, makeAvatarSprite3d, paintAvatarPointerArea2d } from "@/lib/graph/avatarNode";
+import { drawAvatarNode2d, paintAvatarPointerArea2d } from "@/lib/graph/avatarNode";
 import { cn } from "@/lib/utils";
 import type { EgoGraph, GraphLink, GraphNode } from "@/hooks/useEgoGraph";
 
@@ -337,7 +337,10 @@ export function GraphCanvas({
     (node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => paintAvatarPointerArea2d(node, color, ctx),
     []
   );
-  const nodeThreeObject = useCallback((node: GraphNode) => makeAvatarSprite3d(node), []);
+  // 3D nodes use ForceGraph3D's default coloured spheres (reliable across every
+  // WebGL stack — the pattern proven in Customer-Ops/Meeting-Ops). The custom
+  // CanvasTexture avatar sprite is 2D-only; replacing the 3D node with it was
+  // what rendered the 3D scene blank. Labels come from the HTML overlay below.
 
   // Stable accessor identities: react-force-graph re-applies any prop whose
   // reference changes, and onEngineTick re-renders every simulation tick, so
@@ -552,10 +555,9 @@ export function GraphCanvas({
         nodeLabel={nodeLabelAccessor}
         nodeColor={nodeColorAccessor}
         nodeVal={nodeValAccessor}
-        nodeOpacity={0.96}
+        nodeOpacity={0.92}
+        nodeRelSize={5}
         nodeResolution={16}
-        nodeThreeObject={nodeThreeObject}
-        nodeThreeObjectExtend={false}
         linkColor={linkColorAccessor}
         linkOpacity={0.78}
         linkWidth={linkWidthAccessor}
