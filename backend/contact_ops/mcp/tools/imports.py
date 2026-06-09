@@ -162,6 +162,13 @@ async def _run_import_job(
             .values(status="running", progress=0)
         )
         await db.commit()
+        # P0: `SET LOCAL app.tenant_id` is transaction-scoped — the status commit
+        # above ended the transaction and CLEARED the RLS GUC. Without re-binding,
+        # every importer read/write below runs with NO tenant context under
+        # enforced RLS (rows invisible / WITH-CHECK violations). Re-bind both
+        # sessions before the importer touches data.
+        await bind_session_context(db, str(req.tenant_id), uc_uid, settings)
+        await bind_session_context(audit_db, str(req.tenant_id), uc_uid, settings)
         try:
             importer = _importer(req)
             records = await importer.records()

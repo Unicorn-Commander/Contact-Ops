@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from contact_ops.agents.observability.metrics import metrics_endpoint
 from contact_ops.agents.observability.otel import init_otel
@@ -218,7 +219,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _rls_boot_self_test(settings)
     except RLSSelfTestError:
         raise
-    except Exception as exc:  # noqa: BLE001 — diagnostic test must not crash boot
+    except OperationalError as exc:
+        # P0: a down/unreachable Postgres at boot must be FATAL, not a warning.
+        # Booting "healthy" against a dead DB turns an obvious outage into
+        # confusing per-request failures (Docker healthcheck passes, traffic is
+        # accepted, every call then errors). Refuse to start so the orchestrator
+        # restarts/holds instead of serving a broken box.
+        logger.error("db_unreachable_at_boot", error=str(exc))
+        raise
+    except Exception as exc:  # noqa: BLE001 — other diagnostic errors must not crash boot
         logger.warning("rls_self_test_errored", error=str(exc), exc_info=True)
 
     # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is

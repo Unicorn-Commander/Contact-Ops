@@ -206,6 +206,26 @@ async def propose_canonical_records(
         )
         proposed_count += 1
 
+    if not dry_run and proposed_count > 0:
+        # P0: auto-process freshly-imported proposals so CSV/vCard imports don't
+        # sit in the Review Queue forever. The connector post-pull path already
+        # runs this pipeline; the import path did not, so imported contacts were
+        # stuck unapproved (and, pre-fix, never reached the graph). Same session
+        # as the emits above — committed together by the caller (framework). The
+        # agents flush, never self-commit, so the GUC stays bound. dedup -> quality
+        # -> confidence-approve: high-confidence reversible proposals auto-apply
+        # (and now sync to the graph via the approval path); the rest wait for a
+        # human. Lazy import to avoid the tools-package circular-import landmine.
+        from contact_ops.services.agents import (
+            run_confidence_approver,
+            run_dedup_agent,
+            run_quality_filter,
+        )
+
+        await run_dedup_agent(ctx.db, tenant_id=ctx.tenant_id)
+        await run_quality_filter(ctx.db, tenant_id=ctx.tenant_id)
+        await run_confidence_approver(ctx.db, tenant_id=ctx.tenant_id)
+
     return ImportSummary(
         parsed_count=parsed_count,
         proposed_count=proposed_count,
