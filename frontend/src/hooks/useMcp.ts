@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
 import { UnauthorizedError, tools } from "@/lib/mcp";
 import { tenantKey, userKey, type TenantKeyFactory } from "@/lib/queryKeys";
@@ -78,6 +78,24 @@ export const usePeople = (args: Record<string, unknown>) => {
   // narrowing filter and errors on the default (no-search) People view, which left
   // the directory blank until you typed something.
   return useAuthedQuery(qk.people(args), (token) => tools.searchPeople(args, token));
+};
+/**
+ * The WHOLE directory, paged. search_people now returns a real next_cursor
+ * (offset), so this walks every page — the People view fetches them all to
+ * render an A→Z directory instead of a truncated first page.
+ */
+export const useAllPeople = (args: { query?: string }) => {
+  const auth = useAuth();
+  const token = auth.user?.access_token;
+  const qk = useQueryKeys();
+  return useInfiniteQuery({
+    queryKey: qk.peopleAll(args),
+    enabled: Boolean(token),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      tools.searchPeople({ ...args, limit: 100, cursor: pageParam }, token ?? ""),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  });
 };
 export const usePerson = (id: string) => {
   const qk = useQueryKeys();

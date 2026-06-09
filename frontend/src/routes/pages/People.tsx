@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { Archive, Building2, Camera, ChevronLeft, Mail, Network, Plus, Save, Search, Upload, UsersRound } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { TagChip } from "@/components/domain/Badges";
 import { ContactMethodList, EmploymentTimeline } from "@/components/domain/Lists";
 import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
-import { useMcpMutation, usePeople, usePerson, usePhotos, useTags } from "@/hooks/useMcp";
+import { useAllPeople, useMcpMutation, usePerson, usePhotos, useTags } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { cn, initials } from "@/lib/utils";
 import { AuditList } from "@/routes";
@@ -176,24 +176,55 @@ export function PeopleRoute() {
   const [open, setOpen] = useState(false);
   const [hasEmailOnly, setHasEmailOnly] = useState(false);
   const [layout, setLayout] = useState<DirectoryLayout>("list");
-  const args = useMemo(() => ({ query: query || undefined, limit: 50, include_archived: false }), [query]);
-  const people = usePeople(args);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const people = useAllPeople({ query: query.trim() || undefined });
   const tags = useTags();
 
-  const items = useMemo(() => people.data?.items ?? [], [people.data]);
+  // Walk every page so the directory shows ALL people (grouped A→Z), not a
+  // truncated first 50. ~823 contacts ≈ 9 pages of 100; React Query caches them.
+  useEffect(() => {
+    if (people.hasNextPage && !people.isFetchingNextPage) void people.fetchNextPage();
+  }, [people.hasNextPage, people.isFetchingNextPage, people.data, people.fetchNextPage]);
+
+  const items = useMemo(
+    () => people.data?.pages.flatMap((p) => p.items ?? []) ?? [],
+    [people.data]
+  );
   const visible = hasEmailOnly ? items.filter((person) => Boolean(person.primary_email)) : items;
-  const count = people.data?.count ?? items.length;
   const tagItems = tags.data?.items ?? [];
   const filtered = Boolean(query) || hasEmailOnly;
 
-  // Loaded-page overview metrics for the directory stat strip. Counts reflect
-  // the current result set; the total-people stat prefers the server's total.
-  const totalPeople = people.data?.total_count ?? count;
+  const totalPeople = people.data?.pages?.[0]?.total_count ?? items.length;
+  const loadingAll = people.isLoading || people.hasNextPage || people.isFetchingNextPage;
   const withEmail = useMemo(() => items.filter((p) => Boolean(p.primary_email)).length, [items]);
   const orgCount = useMemo(
     () => new Set(items.map((p) => p.current_org_id ?? p.current_org).filter(Boolean)).size,
     [items]
   );
+
+  // A→Z section grouping — the alphabetic delimiters. Server sorts by
+  // display_name; we bucket by first letter (non-alpha → "#") and keep "#" last.
+  const sections = useMemo(() => {
+    const groups = new Map<string, typeof visible>();
+    for (const p of visible) {
+      const first = (p.display_name || "").trim().charAt(0).toUpperCase();
+      const letter = first >= "A" && first <= "Z" ? first : "#";
+      const arr = groups.get(letter);
+      if (arr) arr.push(p);
+      else groups.set(letter, [p]);
+    }
+    return [...groups.entries()].sort(([a], [b]) =>
+      a === "#" ? 1 : b === "#" ? -1 : a.localeCompare(b)
+    );
+  }, [visible]);
+  const presentLetters = useMemo(() => new Set(sections.map(([l]) => l)), [sections]);
+  const ALPHABET = useMemo(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ#".split(""), []);
+
+  function jumpTo(letter: string) {
+    scrollRef.current
+      ?.querySelector(`[data-letter="${letter}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <div className="space-y-6">
@@ -226,8 +257,8 @@ export function PeopleRoute() {
       ) : items.length ? (
         <StatStrip>
           <StatTile label="People" value={totalPeople} icon={UsersRound} tone="fuchsia" />
-          <StatTile label="With email" value={withEmail} icon={Mail} tone="sky" hint="on this page" />
-          <StatTile label="Organizations" value={orgCount} icon={Building2} tone="emerald" hint="across this page" />
+          <StatTile label="With email" value={withEmail} icon={Mail} tone="sky" />
+          <StatTile label="Organizations" value={orgCount} icon={Building2} tone="emerald" />
         </StatStrip>
       ) : null}
 
@@ -289,6 +320,9 @@ export function PeopleRoute() {
                   <span className="co-mono-numeric font-medium text-foreground">{visible.length}</span>{" "}
                   {visible.length === 1 ? "person" : "people"}
                   {filtered ? " match" : ""}
+                  {loadingAll && !people.isLoading ? (
+                    <span className="ml-1.5 text-xs text-muted-foreground/80">· loading the rest…</span>
+                  ) : null}
                 </>
               )}
             </p>
@@ -296,42 +330,64 @@ export function PeopleRoute() {
           </div>
 
           {people.isLoading ? (
-            layout === "grid" ? (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <Skeleton key={index} className="h-[188px] w-full rounded-xl" />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <PersonCardSkeleton key={index} />
-                ))}
-              </div>
-            )
+            <div className="space-y-2.5">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <PersonCardSkeleton key={index} />
+              ))}
+            </div>
           ) : visible.length ? (
-            <>
-              <div
-                className={cn(
-                  layout === "grid"
-                    ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
-                    : "space-y-2.5"
-                )}
-              >
-                {visible.map((person) =>
-                  layout === "grid" ? (
-                    <PersonGridCard key={person.person_id} person={person} />
-                  ) : (
-                    <PersonCard key={person.person_id} person={person} />
-                  )
-                )}
+            <div className="flex gap-3">
+              {/* A→Z directory with alphabetic section delimiters */}
+              <div ref={scrollRef} className="min-w-0 flex-1 space-y-5">
+                {sections.map(([letter, members]) => (
+                  <section key={letter} data-letter={letter} className="scroll-mt-24 space-y-2.5">
+                    <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/85 py-1.5 backdrop-blur">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[oklch(var(--co-brand-300)/0.3)] bg-[oklch(var(--co-brand-500)/0.1)] font-mono text-xs font-semibold text-[oklch(var(--co-brand-300))]">
+                        {letter}
+                      </span>
+                      <span className="h-px flex-1 bg-border" />
+                      <span className="co-mono-numeric text-xs text-muted-foreground">{members.length}</span>
+                    </div>
+                    <div className={cn(layout === "grid" ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3" : "space-y-2.5")}>
+                      {members.map((person) =>
+                        layout === "grid" ? (
+                          <PersonGridCard key={person.person_id} person={person} />
+                        ) : (
+                          <PersonCard key={person.person_id} person={person} />
+                        )
+                      )}
+                    </div>
+                  </section>
+                ))}
               </div>
-              {items.length >= 50 ? (
-                <p className="pt-2 text-center text-xs text-muted-foreground">
-                  Showing the first 50 — refine your search to narrow results.
-                </p>
-              ) : null}
-            </>
+
+              {/* A→Z jump rail */}
+              <nav
+                aria-label="Jump to letter"
+                className="sticky top-20 hidden h-fit shrink-0 flex-col items-center gap-px self-start md:flex"
+              >
+                {ALPHABET.map((letter) => {
+                  const has = presentLetters.has(letter);
+                  return (
+                    <button
+                      key={letter}
+                      type="button"
+                      disabled={!has}
+                      onClick={() => jumpTo(letter)}
+                      className={cn(
+                        "focus-ring h-4 w-5 rounded text-[10px] font-medium leading-4 transition-colors",
+                        has
+                          ? "text-muted-foreground hover:bg-[oklch(var(--co-brand-500)/0.12)] hover:text-[oklch(var(--co-brand-300))]"
+                          : "cursor-default text-muted-foreground/25"
+                      )}
+                      aria-label={`Jump to ${letter}`}
+                    >
+                      {letter}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
           ) : (
             <EmptyPeople filtered={filtered} onAdd={() => setOpen(true)} />
           )}

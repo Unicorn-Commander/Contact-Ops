@@ -18,10 +18,11 @@ export function GraphRoute() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hopLimit, setHopLimit] = useState(2);
   const [confidenceFloor, setConfidenceFloor] = useState(0);
-  // Default to the explicit 2D layout: it positions every node as SVG (no
-  // WebGL, no camera to mis-aim), so the network is reliably visible on open.
-  // Users can switch to 3D/auto in the controls.
-  const [renderMode, setRenderMode] = useState<GraphRenderMode>("2d");
+  // Default to 3D — the relationship graph is most legible as an orbitable 3D
+  // network, and it's what the owner expects. The 3D node renderer falls back
+  // to a default sphere if a custom avatar sprite ever fails (never blank), and
+  // users can switch to 2D/Auto in the controls.
+  const [renderMode, setRenderMode] = useState<GraphRenderMode>("3d");
   const [snapshotAt, setSnapshotAt] = useState<Date | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
@@ -79,6 +80,7 @@ export function GraphRoute() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold leading-7 tracking-tight">Graph</h1>
+              {renderMode === "3d" ? <Badge variant="secondary">3D</Badge> : null}
               {renderMode === "2d" ? <Badge variant="secondary">2D</Badge> : null}
               {renderMode === "auto" ? <Badge variant="outline">Auto</Badge> : null}
             </div>

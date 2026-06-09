@@ -813,7 +813,16 @@ async def search_people(ctx: MCPContext, args: BaseModel) -> SearchPeopleOutput:
             )
         )
     total = await ctx.db.scalar(select(func.count()).select_from(stmt.subquery()))
-    stmt = stmt.order_by(Person.display_name.asc()).limit(data.limit)
+    # Offset pagination via the cursor (a stringified offset). search_people was
+    # previously single-page (next_cursor always None), so the directory could
+    # only ever show one page; this lets the UI walk the whole tenant A→Z.
+    offset = 0
+    if data.cursor:
+        try:
+            offset = max(0, int(data.cursor))
+        except (TypeError, ValueError):
+            offset = 0
+    stmt = stmt.order_by(Person.display_name.asc()).offset(offset).limit(data.limit)
     result = await ctx.db.execute(stmt)
     rows = result.scalars().all()
     items = [
@@ -824,7 +833,11 @@ async def search_people(ctx: MCPContext, args: BaseModel) -> SearchPeopleOutput:
         )
         for person in rows
     ]
-    return SearchPeopleOutput(items=items, count=len(items), total_count=int(total or 0), next_cursor=None)
+    next_offset = offset + len(rows)
+    next_cursor = str(next_offset) if total and next_offset < int(total) else None
+    return SearchPeopleOutput(
+        items=items, count=len(items), total_count=int(total or 0), next_cursor=next_cursor
+    )
 
 
 async def find_person_by_identifier(
