@@ -183,14 +183,6 @@ export function GraphCanvas({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    const instance = graphRef.current;
-    if (!instance) return;
-    instance.d3Force("charge")?.strength(effectiveMode === "2d" ? -300 : forceConfig.chargeStrength);
-    instance.d3Force("link")?.distance(effectiveMode === "2d" ? 150 : forceConfig.linkDistance);
-    instance.d3Force("center")?.strength(forceConfig.centerStrength);
-    instance.d3ReheatSimulation();
-  }, [effectiveMode, graph]);
 
   useEffect(() => {
     const controls = graphRef.current?.controls?.() as
@@ -224,7 +216,27 @@ export function GraphCanvas({
     };
   }, [colorVersion]);
 
-  const data = useMemo(() => graph ?? { nodes: [], links: [] }, [graph]);
+  // react-force-graph MUTATES graphData in place: it rewrites each link's
+  // string source/target into the actual node OBJECT and stamps x/y/z onto
+  // nodes. Reusing those already-mutated React-Query-cached objects on a later
+  // mount feeds the layout links whose source/target are stale node objects,
+  // the force layout fails to build, its `layout` stays undefined, and the
+  // animation loop crashes with "reading 'tick'" → blank 3D. The working
+  // sibling app (customer-ops) sidesteps this by handing the graph FRESH copies
+  // every render. Do the same: deep-copy nodes, rebuild links with plain string
+  // ids, and drop any dangling link (endpoint not in nodes).
+  const data = useMemo(() => {
+    const g = graph ?? { nodes: [], links: [] };
+    const ids = new Set((g.nodes ?? []).map((n) => n.id));
+    const links = (g.links ?? [])
+      .map((l) => {
+        const s = typeof l.source === "object" ? (l.source as GraphNode).id : (l.source as string);
+        const t = typeof l.target === "object" ? (l.target as GraphNode).id : (l.target as string);
+        return { ...l, source: s, target: t };
+      })
+      .filter((l) => ids.has(l.source) && ids.has(l.target));
+    return { nodes: (g.nodes ?? []).map((n) => ({ ...n })), links };
+  }, [graph]);
 
   // Belt-and-suspenders framing: also fit a moment after the data loads, in
   // case the force engine settled before this mounted (onEngineStop also fits).
@@ -612,8 +624,6 @@ export function GraphCanvas({
         showNavInfo={false}
         enableNavigationControls
         enablePointerInteraction
-        cooldownTicks={forceConfig.cooldownTicks}
-        warmupTicks={forceConfig.warmupTicks}
         onEngineTick={handleEngineTick}
         onEngineStop={handleEngineStop}
         onNodeClick={handleNodeClick}
