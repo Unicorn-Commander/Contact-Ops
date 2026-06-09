@@ -1,4 +1,5 @@
-import { Network, ArrowRight, ChevronRight } from "lucide-react";
+import { useEffect } from "react";
+import { Network, ArrowRight, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ActionAttribution, AgentBadge, ConfidenceIndicator, HumanBadge, MonoNumeric } from "@/design-system";
@@ -27,14 +28,26 @@ export function NodeDetailDrawer({
   graph,
   rootPersonId,
   snapshotAt,
-  onExpand
+  onExpand,
+  onClose
 }: {
   node: GraphNode | null;
   graph?: EgoGraph;
   rootPersonId?: string;
   snapshotAt: Date | null;
   onExpand: () => void;
+  onClose: () => void;
 }) {
+  // Esc closes the drawer (standard for an overlay panel).
+  useEffect(() => {
+    if (!node) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [node, onClose]);
+
   const incidentLinks = node
     ? graph?.links.filter((link) => {
         const { source, target } = resolveLinkNodes(link as GraphLinkWithEndpoints);
@@ -56,9 +69,16 @@ export function NodeDetailDrawer({
                 </div>
                 <p className="text-sm text-muted-foreground">{node.kind} · tenant-scoped projection</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
-                <Network className="h-5 w-5" />
-              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                aria-label="Close details"
+                title="Close (Esc)"
+                className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </Button>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

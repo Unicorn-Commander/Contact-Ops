@@ -56,6 +56,7 @@ _PHASE_3_MODULES = (
     "calibration_admin",
     "consumer_webhooks",
     "data_quality",
+    "enrichment",
 )
 
 

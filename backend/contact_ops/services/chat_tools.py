@@ -42,6 +42,14 @@ CURATED_MCP_TOOLS: tuple[str, ...] = (
     "run_quality_filter_now",
     "run_confidence_approver_now",
     "get_brigade_registration_status",
+    # Graph reasoning — let the analyst answer questions about the relationship
+    # network. These return small, answer-shaped rows (not the whole graph), so
+    # they fit the chat context. The agent resolves names→ids via the people/org
+    # tools above, then calls these. Reads only (CLIENT + person:read).
+    "who_knows",
+    "shortest_path",
+    "mutual_connections",
+    "suggest_intro",
 )
 
 AI_CONTACTS_ANALYST_AGENT_SLUG = "ai-contacts-analyst"

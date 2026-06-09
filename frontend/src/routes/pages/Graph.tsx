@@ -236,6 +236,7 @@ export function GraphRoute() {
         hiddenEdgeTypes={hiddenEdgeTypes}
         loading={graph.isLoading}
         onNodeClick={(node: GraphNode) => setSelectedNodeId(node.id)}
+        onBackgroundClick={() => setSelectedNodeId(null)}
       />
 
       {selectedNode ? (
@@ -245,6 +246,7 @@ export function GraphRoute() {
           rootPersonId={personId}
           snapshotAt={snapshotAt}
           onExpand={() => setHopLimit(2)}
+          onClose={() => setSelectedNodeId(null)}
         />
       ) : null}
     </div>

@@ -136,7 +136,8 @@ export function GraphCanvas({
   rootPersonId,
   hiddenEdgeTypes,
   loading = false,
-  onNodeClick
+  onNodeClick,
+  onBackgroundClick
 }: {
   graph?: EgoGraph;
   selectedNodeId: string | null;
@@ -146,6 +147,8 @@ export function GraphCanvas({
   hiddenEdgeTypes?: Set<string>;
   loading?: boolean;
   onNodeClick: (node: GraphNode) => void;
+  /** Clicking empty canvas — used to dismiss the node detail drawer. */
+  onBackgroundClick?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
@@ -427,7 +430,10 @@ export function GraphCanvas({
   const linkLabelAccessor = useCallback((link: GraphLink) => linkLabel(link), []);
   const handleNodeClick = useCallback((node: GraphNode) => onNodeClick(node), [onNodeClick]);
   const handleNodeHover = useCallback((node: GraphNode | null) => setHoveredNodeId(node ? node.id : null), []);
-  const handleBackgroundClick = useCallback(() => setHoveredNodeId(null), []);
+  const handleBackgroundClick = useCallback(() => {
+    setHoveredNodeId(null);
+    onBackgroundClick?.();
+  }, [onBackgroundClick]);
   const handleEngineTick = useCallback(() => setEngineTick((value) => value + 1), []);
   // Frame the whole graph once the force simulation settles. Without this a
   // large, root-less overview can lay out off-camera and look blank (ego
