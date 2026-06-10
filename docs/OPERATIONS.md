@@ -111,10 +111,22 @@ exercises the predicate. Flip via the backend `.env` + `up -d` (not restart).
   + bootstrap; in any batch loop, create ONE shared client and pass it down
   (see `bulk_approve`).
 
+## Backups
+
+- **DB backup is wired:** `scripts/backup.sh` runs a superuser `pg_dump`
+  (bypasses RLS — the `contact_ops_runtime` user is RLS-subject and CANNOT dump
+  full tables), gzips it to `/home/muut/contact-ops-backups/` with 14-deep
+  retention, and refuses to keep a suspiciously small (RLS-failed) dump. Run it
+  manually, or enable the daily cron in the script header:
+  `15 3 * * * /home/muut/contact-ops/scripts/backup.sh >> /home/muut/contact-ops-backups/backup.log 2>&1`.
+- **Restore** procedure is documented in the script header (zcat | psql as the
+  superuser into a fresh `contact_ops_db`).
+
 ## Not yet wired (backlog)
 
-- **Backups:** no automated `pg_dump` / FalkorDB / `.env` backup yet. Add a daily
-  dump + a restore drill. (Highest-priority ops gap.)
+- **FalkorDB + `.env` backup:** the graph is rebuildable from Postgres (the
+  backfill script), and `.env` holds the secrets — both should still be added to
+  the backup routine. Off-box copy of the backups is also TODO.
 - **Connector scheduling:** pulls are manual (`pull_connector_now`) / owner-
   triggered; there is no scheduler. OAuth tokens now refresh-before-pull.
 - **Metrics surface:** `audit_write_failures_total` is wired; alerting on it
