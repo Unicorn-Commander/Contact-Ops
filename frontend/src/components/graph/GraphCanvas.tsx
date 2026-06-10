@@ -136,6 +136,7 @@ export function GraphCanvas({
   rootPersonId,
   hiddenEdgeTypes,
   loading = false,
+  fitNonce = 0,
   onNodeClick,
   onBackgroundClick
 }: {
@@ -146,6 +147,8 @@ export function GraphCanvas({
   /** Relationship types the user has toggled OFF in the controls. */
   hiddenEdgeTypes?: Set<string>;
   loading?: boolean;
+  /** Bump this from the controls to imperatively re-fit ("Recenter") on demand. */
+  fitNonce?: number;
   onNodeClick: (node: GraphNode) => void;
   /** Clicking empty canvas — used to dismiss the node detail drawer. */
   onBackgroundClick?: () => void;
@@ -251,21 +254,79 @@ export function GraphCanvas({
     return { nodes: (g.nodes ?? []).map((n) => ({ ...n })), links };
   }, [graph, hiddenEdgeTypes]);
 
-  // Belt-and-suspenders framing: also fit a moment after the data loads, in
-  // case the force engine settled before this mounted (onEngineStop also fits).
-  // Without a fit, a large root-less graph lays out beyond the default camera
-  // and the canvas looks empty even though the nodes are there.
+  // Camera framing: auto-fit the whole graph as the force layout settles, but
+  // ONLY until the user takes the camera (a wheel-zoom, drag, or pan). The
+  // moment they do, we stop re-framing — so a manual zoom is never yanked back
+  // out ("keeps zooming out after I zoom in"). A genuinely new graph (new
+  // focused person / new node count) re-enables auto-fit. Before, a 1.5s timer
+  // AND every onEngineStop re-fit on every react-query refetch + engine
+  // re-settle, fighting the user; a later one-shot variant fit too EARLY (while
+  // the layout was still clustered near origin) and then never re-framed.
+  const fitGraph = useCallback((ms = 600, pad = 40) => {
+    // Only one renderer is mounted at a time, so the other ref is undefined and
+    // its `?.` call is a no-op — calling both keeps each call typed to its own
+    // ForceGraph methods (a union call can fail to typecheck).
+    try {
+      graphRef.current?.zoomToFit(ms, pad);
+      graph2dRef.current?.zoomToFit(ms, pad);
+    } catch {
+      /* ref not ready yet — onEngineStop / the settle timer will catch it */
+    }
+  }, []);
+  const userTookCameraRef = useRef(false);
+  const fitKey = `${effectiveMode}:${rootPersonId ?? "overview"}:${data.nodes.length}`;
+  const lastFitKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastFitKeyRef.current === fitKey) return;
+    lastFitKeyRef.current = fitKey;
+    userTookCameraRef.current = false; // a new graph frames itself again
+  }, [fitKey]);
+  // Re-frame as the layout settles, unless the user already grabbed the camera.
+  const autoFit = useCallback((ms = 600) => {
+    if (userTookCameraRef.current) return;
+    fitGraph(ms);
+  }, [fitGraph]);
+  // The moment the user wheels/drags on the canvas, hand them the camera so we
+  // stop re-framing. Bound in the CAPTURE phase so the WebGL canvas can't
+  // swallow the event first; re-bound whenever the canvas (re)mounts or the
+  // render mode flips. (autoRotate is programmatic and fires neither event.)
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const mark = () => {
+      userTookCameraRef.current = true;
+    };
+    const opts = { capture: true, passive: true } as const;
+    el.addEventListener("wheel", mark, opts);
+    el.addEventListener("pointerdown", mark, opts);
+    return () => {
+      el.removeEventListener("wheel", mark, opts);
+      el.removeEventListener("pointerdown", mark, opts);
+    };
+  }, [effectiveMode, FG3D, data.nodes.length]);
+  // Track the expanding force layout to a framed view across the settle window
+  // (warmup 80 + cooldown 120 ticks ≈ a couple seconds). onEngineStop alone can
+  // fire while a large graph is still mid-expansion — it then frames too tight
+  // and never re-frames — so poll a few times. Each autoFit no-ops the instant
+  // the user grabs the camera, and the poll self-clears then too.
   useEffect(() => {
     if (!graph || data.nodes.length === 0) return;
-    const id = setTimeout(() => {
-      try {
-        graphRef.current?.zoomToFit(600, 40);
-      } catch {
-        /* ref not ready / 2D mode — ignore */
-      }
-    }, 1500);
-    return () => clearTimeout(id);
-  }, [graph, data.nodes.length]);
+    let elapsed = 0;
+    const step = 500;
+    const id = setInterval(() => {
+      elapsed += step;
+      autoFit(300);
+      if (elapsed >= 6000 || userTookCameraRef.current) clearInterval(id);
+    }, step);
+    return () => clearInterval(id);
+  }, [fitKey, graph, data.nodes.length, autoFit]);
+  // Manual "Recenter" from the controls — always re-fits, even after the user
+  // has taken the camera over (they explicitly asked for it).
+  const firstFitNonce = useRef(fitNonce);
+  useEffect(() => {
+    if (fitNonce === firstFitNonce.current) return;
+    fitGraph(700, 50);
+  }, [fitNonce, fitGraph]);
   const incidentNodeIds = useMemo(() => {
     const selected = selectedNodeId ? [selectedNodeId] : [];
     const hovered = hoveredNodeId && hoveredNodeId !== selectedNodeId ? [hoveredNodeId] : [];
@@ -435,15 +496,12 @@ export function GraphCanvas({
     onBackgroundClick?.();
   }, [onBackgroundClick]);
   const handleEngineTick = useCallback(() => setEngineTick((value) => value + 1), []);
-  // Frame the whole graph once the force simulation settles. Without this a
-  // large, root-less overview can lay out off-camera and look blank (ego
-  // graphs are tiny + centered, so they always showed).
-  const handleEngineStop = useCallback(() => {
-    graphRef.current?.zoomToFit(600, 40);
-  }, []);
-  const handleEngineStop2d = useCallback(() => {
-    graph2dRef.current?.zoomToFit(600, 40);
-  }, []);
+  // Frame the whole graph as the simulation settles (see autoFit above) — a
+  // large root-less overview would otherwise lay out off-camera; ego graphs are
+  // tiny + centered so they always showed. autoFit no-ops once the user has
+  // grabbed the camera, so this never fights a manual zoom.
+  const handleEngineStop = useCallback(() => autoFit(), [autoFit]);
+  const handleEngineStop2d = useCallback(() => autoFit(), [autoFit]);
 
   const svgNodes = useMemo<SvgLayoutNode[]>(() => {
     if (!graph || data.nodes.length === 0) return [];

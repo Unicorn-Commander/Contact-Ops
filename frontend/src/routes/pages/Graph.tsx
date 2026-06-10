@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Crosshair, PanelRightClose, SlidersHorizontal } from "lucide-react";
 import { GraphCanvas, type GraphRenderMode } from "@/components/graph/GraphCanvas";
 import { GraphFilterPanel } from "@/components/graph/GraphFilterPanel";
 import { NodeDetailDrawer } from "@/components/graph/NodeDetailDrawer";
@@ -24,7 +25,10 @@ export function GraphRoute() {
   // users can switch to 2D/Auto in the controls.
   const [renderMode, setRenderMode] = useState<GraphRenderMode>("3d");
   const [snapshotAt, setSnapshotAt] = useState<Date | null>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Controls live in a collapsible right-hand sidebar (default open). Bump
+  // fitNonce to imperatively re-fit the camera ("Recenter") from the controls.
+  const [controlsOpen, setControlsOpen] = useState(true);
+  const [fitNonce, setFitNonce] = useState(0);
   // Relationship types the user has toggled OFF in the controls. Persisted across
   // overview ↔ ego switches; a hidden type that isn't present is simply a no-op.
   const [hiddenEdgeTypes, setHiddenEdgeTypes] = useState<Set<string>>(() => new Set());
@@ -95,18 +99,37 @@ export function GraphRoute() {
     setSelectedNodeId(null);
   }
 
+  // The controls sidebar and the node-detail drawer both occupy the right edge,
+  // so keep them mutually exclusive: opening one dismisses the other.
+  function openControls() {
+    setSelectedNodeId(null);
+    setControlsOpen(true);
+  }
+  function handleNodeSelect(node: GraphNode) {
+    setSelectedNodeId(node.id);
+    setControlsOpen(false);
+  }
+  function recenter() {
+    setFitNonce((value) => value + 1);
+  }
+
   return (
     <div className="relative isolate -m-4 min-h-[calc(100svh-4rem)] overflow-hidden bg-background text-foreground lg:-m-6">
       <div className="absolute inset-0 bg-background" aria-hidden="true" />
 
-      <div className="co-scrollbar absolute left-3 top-3 z-20 max-h-[46svh] w-[min(23rem,calc(100vw-1.5rem))] space-y-3 overflow-y-auto rounded-lg border border-border bg-card/90 p-4 shadow-[var(--shadow-3)] backdrop-blur-xl md:left-4 md:top-4 md:max-h-none md:w-[min(22rem,calc(100vw-2rem))] md:overflow-visible">
+      {/* Context header — always visible, compact. Title, live counts, the
+          focus-reset, and (when the sidebar is collapsed) the button that
+          reopens it. Top-left so it never sits under the right-side controls
+          or node-detail panels. */}
+      <div className="absolute left-3 top-3 z-20 w-[min(20rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-card/90 p-3 shadow-[var(--shadow-3)] backdrop-blur-xl md:left-4 md:top-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold leading-7 tracking-tight">Graph</h1>
+              <h1 className="text-lg font-semibold leading-7 tracking-tight">Graph</h1>
               {renderMode === "3d" ? <Badge variant="secondary">3D</Badge> : null}
               {renderMode === "2d" ? <Badge variant="secondary">2D</Badge> : null}
               {renderMode === "auto" ? <Badge variant="outline">Auto</Badge> : null}
+              {graph.isLoading ? <Spinner size="sm" label="Loading graph" /> : null}
             </div>
             <p className="text-sm text-muted-foreground">
               {hasGraph ? (
@@ -122,87 +145,112 @@ export function GraphRoute() {
                 "Ego network"
               )}
             </p>
+            {selectedPersonId ? (
+              <Button variant="outline" size="sm" className="mt-2" onClick={backToOverview}>
+                Whole network
+              </Button>
+            ) : null}
           </div>
-          <div className="flex items-center gap-2">
-            {graph.isLoading ? <Spinner size="sm" label="Loading graph" /> : null}
+          {!controlsOpen ? (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setPanelOpen((open) => !open)}
-              aria-expanded={panelOpen}
-              title={panelOpen ? "Hide controls" : "Show controls"}
+              onClick={openControls}
+              aria-expanded={controlsOpen}
+              title="Show controls"
+              className="shrink-0 gap-1.5"
             >
-              {panelOpen ? "Hide" : "Controls"}
+              <SlidersHorizontal className="h-4 w-4" />
+              Controls
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Right-hand collapsible controls sidebar (a bottom sheet on mobile).
+          Person picker + filters + render mode + Recenter live here; collapse
+          it to give the canvas the full width. Mutually exclusive with the
+          node-detail drawer, which shares the right edge. */}
+      {controlsOpen ? (
+        <aside className="co-scrollbar absolute inset-x-3 bottom-3 z-30 max-h-[60svh] space-y-4 overflow-y-auto rounded-lg border border-border bg-card/95 p-4 shadow-[var(--shadow-3)] backdrop-blur-xl md:inset-x-auto md:inset-y-4 md:right-4 md:bottom-auto md:max-h-none md:w-[min(22rem,calc(100vw-2rem))]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold tracking-tight">Controls</h2>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setControlsOpen(false)}
+              title="Collapse controls"
+              aria-label="Collapse controls"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            >
+              <PanelRightClose className="h-4 w-4" />
             </Button>
           </div>
-        </div>
 
-        {panelOpen ? (
-          <>
-        {/* Person picker — type a name to center the graph on one contact; a
-            /graph/:id deep link pins it and hides the picker. */}
-        {!params.id ? (
-          <div className="space-y-2">
-            <div className="flex items-end justify-between gap-2">
+          {/* Person picker — type a name to center the graph on one contact; a
+              /graph/:id deep link pins it and hides the picker. */}
+          {!params.id ? (
+            <div className="space-y-2">
               <label
                 className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 htmlFor="graph-person-search"
               >
                 {selectedPersonId ? "Focused on a contact" : "Search a contact to focus"}
               </label>
-              {selectedPersonId ? (
-                <Button variant="outline" size="sm" onClick={backToOverview}>
-                  Whole network
-                </Button>
+              <Input
+                id="graph-person-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search people by name…"
+                className="bg-background"
+              />
+              {results.length > 0 ? (
+                <ul className="co-scrollbar max-h-56 overflow-y-auto rounded-md border border-border bg-card">
+                  {results.map((person) => (
+                    <li key={person.person_id}>
+                      <button
+                        type="button"
+                        onClick={() => pickPerson(person.person_id)}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                      >
+                        <span className="truncate font-medium text-foreground">
+                          {person.display_name}
+                        </span>
+                        {person.current_org ? (
+                          <span className="truncate text-xs text-muted-foreground">
+                            {person.current_org}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
             </div>
-            <Input
-              id="graph-person-search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search people by name…"
-              className="bg-background"
-            />
-            {results.length > 0 ? (
-              <ul className="co-scrollbar max-h-56 overflow-y-auto rounded-md border border-border bg-card">
-                {results.map((person) => (
-                  <li key={person.person_id}>
-                    <button
-                      type="button"
-                      onClick={() => pickPerson(person.person_id)}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                    >
-                      <span className="truncate font-medium text-foreground">
-                        {person.display_name}
-                      </span>
-                      {person.current_org ? (
-                        <span className="truncate text-xs text-muted-foreground">
-                          {person.current_org}
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+          ) : null}
 
-        <GraphFilterPanel
-          hopLimit={hopLimit}
-          confidenceFloor={confidenceFloor}
-          renderMode={renderMode}
-          edgeTypes={edgeTypes}
-          hiddenEdgeTypes={hiddenEdgeTypes}
-          onHopLimitChange={setHopLimit}
-          onConfidenceFloorChange={setConfidenceFloor}
-          onRenderModeChange={setRenderMode}
-          onToggleEdgeType={toggleEdgeType}
-          onShowAllEdgeTypes={showAllEdgeTypes}
-        />
-          </>
-        ) : null}
-      </div>
+          <GraphFilterPanel
+            hopLimit={hopLimit}
+            confidenceFloor={confidenceFloor}
+            renderMode={renderMode}
+            edgeTypes={edgeTypes}
+            hiddenEdgeTypes={hiddenEdgeTypes}
+            onHopLimitChange={setHopLimit}
+            onConfidenceFloorChange={setConfidenceFloor}
+            onRenderModeChange={setRenderMode}
+            onToggleEdgeType={toggleEdgeType}
+            onShowAllEdgeTypes={showAllEdgeTypes}
+          />
+
+          <Button variant="outline" size="sm" className="w-full gap-2" onClick={recenter}>
+            <Crosshair className="h-4 w-4" />
+            Recenter view
+          </Button>
+        </aside>
+      ) : null}
 
       {graph.isLoading ? (
         <div className="absolute inset-0 flex items-center justify-center px-4">
@@ -235,7 +283,8 @@ export function GraphRoute() {
         rootPersonId={personId}
         hiddenEdgeTypes={hiddenEdgeTypes}
         loading={graph.isLoading}
-        onNodeClick={(node: GraphNode) => setSelectedNodeId(node.id)}
+        fitNonce={fitNonce}
+        onNodeClick={handleNodeSelect}
         onBackgroundClick={() => setSelectedNodeId(null)}
       />
 
