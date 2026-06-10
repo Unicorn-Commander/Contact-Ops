@@ -119,18 +119,31 @@ exercises the predicate. Flip via the backend `.env` + `up -d` (not restart).
   pg_dump as it fails "query would be affected by row-level security policy" with
   only schema/0 rows), gzipped to `~/backups/contact-ops/` (30-day local
   retention) AND **uploaded off-host to Lambda S3**. Log: `~/logs/contact-ops-backup.log`.
-- **Restore:** `zcat ~/backups/contact-ops/contact_ops_db_YYYYMMDD.sql.gz | docker
+- **DB restore:** `zcat ~/backups/contact-ops/contact_ops_db_YYYYMMDD.sql.gz | docker
   run --rm -i --network unicorn-network -e PGPASSWORD=$(docker exec
   contact-ops-postgres printenv POSTGRES_PASSWORD) postgres:16 psql -h
   contact-ops-postgres -U contact_ops_admin -d contact_ops_db` (into a fresh DB).
+- **`.env` (server secrets) backup — age public-key encrypted, off-host.** The
+  same backup also uploads `contact_ops_env_YYYYMMDD.env.age`. **Key model: ONE
+  keypair per DEPLOYMENT, held by the operator (NOT per end-user — users back up
+  their contacts via the app; `.env` is server secrets).** Asymmetric on purpose:
+  - **Public key (recipient)** lives on the box at
+    `~/.config/contact-ops/backup-age-recipient.txt` — it only *encrypts*, so it
+    is safe and open-source-friendly (ship it / let each operator drop in their own).
+  - **Private key (identity)** at `~/.config/contact-ops/backup-age-identity.txt`
+    (chmod 600) — it *decrypts*, and its authoritative copy lives **off-box in the
+    operator's password manager (Vaultwarden)** so a box loss is recoverable.
+  - **`.env` restore:** `age -d -i <identity-from-Vaultwarden> contact_ops_env_YYYYMMDD.env.age > .env`.
 
-## Not yet wired (backlog)
+## Open-source readiness (before publishing the repo)
 
-- **`.env` backup:** `contact-ops-backup.sh` does not snapshot `.env` (secrets
-  needed for a from-scratch restore). Adding it should be done carefully —
-  off-host secrets need encryption.
-- **FalkorDB:** intentionally not backed up — the graph is rebuildable from
-  Postgres via `backend/scripts/graph_backfill.py`.
+- **⚠️ `scripts/contact-ops-backup.sh` has the Lambda S3 access key/secret
+  hard-coded and committed** (and they are in git history). Before open-sourcing:
+  rotate those S3 credentials, move them to an un-committed config the script
+  sources (or `.env`), and scrub history (`git filter-repo`) — the new repo
+  should pull in cleaned files, not the history with the secret.
+- FalkorDB is intentionally not backed up — the graph rebuilds from Postgres via
+  `backend/scripts/graph_backfill.py`.
 - **Connector scheduling:** pulls are manual (`pull_connector_now`) / owner-
   triggered; there is no scheduler. OAuth tokens now refresh-before-pull.
 - **Metrics surface:** `audit_write_failures_total` is wired; alerting on it

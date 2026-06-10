@@ -60,9 +60,11 @@ log "Uploading to Lambda S3..."
 export AWS_ACCESS_KEY_ID=7U0ST6S7Q86BUWWDX0CD
 export AWS_SECRET_ACCESS_KEY="rl6nuYtyiyActOM0HX58mQAJCYqt/xkv9TSCpg3R"  # gitleaks:allow
 export AWS_DEFAULT_REGION=us-east-3
+S3_BUCKET="s3://9eb54b95-1ad1-4db4-8311-a6ae979b44da/contact-ops-backups"
+S3_ENDPOINT="https://files.us-east-3.lambda.ai"
 /home/muut/.local/bin/aws s3 cp "$DUMP_FILE" \
-  "s3://9eb54b95-1ad1-4db4-8311-a6ae979b44da/contact-ops-backups/contact_ops_db_${DATE_TODAY}.sql.gz" \
-  --endpoint-url https://files.us-east-3.lambda.ai \
+  "${S3_BUCKET}/contact_ops_db_${DATE_TODAY}.sql.gz" \
+  --endpoint-url "$S3_ENDPOINT" \
   2>>"$LOG"
 
 if [ $? -eq 0 ]; then
@@ -71,8 +73,34 @@ else
   log "WARN: upload failed; local copy preserved"
 fi
 
-# 5. Prune local backups older than 30 days
+# 4b. Encrypt + back up the deploy .env (the server secrets needed for a
+# from-scratch restore). age PUBLIC-KEY encryption: only the recipient (public
+# key) lives on this box, so the encrypted .env can ride to S3 safely; DECRYPTING
+# requires the matching private key, which is held OFF-box in the operator's
+# password manager (Vaultwarden) — see docs/OPERATIONS.md. One key per deployment.
+ENV_SRC="/home/muut/contact-ops/.env"
+AGE_REC_FILE="${HOME}/.config/contact-ops/backup-age-recipient.txt"
+if [ -f "$ENV_SRC" ] && [ -f "$AGE_REC_FILE" ] && command -v age >/dev/null 2>&1; then
+  ENV_AGE="${BACKUP_DIR}/contact_ops_env_${DATE_TODAY}.env.age"
+  if age -r "$(cat "$AGE_REC_FILE")" -o "$ENV_AGE" "$ENV_SRC" 2>>"$LOG"; then
+    cp "$ENV_AGE" "$LOCAL_KEEP_DIR/"
+    if /home/muut/.local/bin/aws s3 cp "$ENV_AGE" \
+        "${S3_BUCKET}/contact_ops_env_${DATE_TODAY}.env.age" \
+        --endpoint-url "$S3_ENDPOINT" 2>>"$LOG"; then
+      log "Encrypted .env uploaded to S3"
+    else
+      log "WARN: encrypted .env upload failed; local copy preserved"
+    fi
+  else
+    log "WARN: age encryption of .env failed"
+  fi
+else
+  log "WARN: skipping .env backup (missing .env, age recipient, or age binary)"
+fi
+
+# 5. Prune local backups older than 30 days (DB dumps + encrypted env snapshots)
 log "Pruning local backups older than 30 days..."
 find "$LOCAL_KEEP_DIR" -name 'contact_ops_db_*.sql.gz' -mtime +30 -delete -print 2>>"$LOG"
+find "$LOCAL_KEEP_DIR" -name 'contact_ops_env_*.env.age' -mtime +30 -delete -print 2>>"$LOG"
 
 log "=== Contact-Ops backup complete ==="
