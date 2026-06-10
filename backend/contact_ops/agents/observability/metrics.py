@@ -99,6 +99,13 @@ AGENT_DLQ_DEPTH = Gauge(
     registry=REGISTRY,
 )
 
+AUDIT_WRITE_FAILURES_TOTAL = Counter(
+    "contactops_audit_write_failures_total",
+    "HTTP audit middleware writes that failed",
+    labelnames=("tenant",),
+    registry=REGISTRY,
+)
+
 
 async def metrics_endpoint() -> Response:
     """FastAPI handler exposing the metrics in Prometheus text exposition format."""
@@ -133,6 +140,7 @@ __all__ = [
     "AGENT_SUCCESS_TOTAL",
     "AGENT_TOKENS_TOTAL",
     "AGENT_TRUST_BETA",
+    "AUDIT_WRITE_FAILURES_TOTAL",
     "REGISTRY",
     "metrics_endpoint",
     "set_trust_beta",

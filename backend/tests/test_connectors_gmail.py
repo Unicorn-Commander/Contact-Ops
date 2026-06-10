@@ -3,6 +3,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import httpx
+import pytest
+
+from contact_ops.connectors.base import Connector, ConnectorRunResult, run_connector_pull
+from contact_ops.importers.base import CanonicalImportRecord
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.connectors import OAuthStartInput, get_oauth_start_url
 
@@ -129,3 +134,64 @@ async def test_gmail_ensure_fresh_token_noop_without_refresh_token() -> None:
 
     connector = GmailConnector({"access_token": "stale", "expires_at": _expiry_iso(-60)})
     assert await connector.ensure_fresh_token() is False
+
+
+class _RetryConnector(Connector):
+    provider = "gmail"
+
+    def __init__(self) -> None:
+        super().__init__({"access_token": "stale", "refresh_token": "refresh"})
+        self.pull_calls = 0
+        self.refresh_calls = 0
+
+    async def refresh_access_token(self) -> bool:
+        self.refresh_calls += 1
+        self.payload["access_token"] = "fresh"
+        self.payload["expires_at"] = _expiry_iso(3600)
+        return True
+
+    async def pull(self, ctx: MCPContext, since: datetime | None) -> list[CanonicalImportRecord]:
+        self.pull_calls += 1
+        if self.pull_calls == 1:
+            request = httpx.Request("GET", "https://people.googleapis.test")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
+        return [CanonicalImportRecord(source_record_id="1", display_name="Ada Lovelace")]
+
+
+class _FakeDb:
+    async def execute(self, *_args, **_kwargs):
+        class Result:
+            @staticmethod
+            def scalar_one() -> uuid.UUID:
+                return uuid.UUID("00000000-0000-0000-0000-000000000099")
+
+        return Result()
+
+
+@pytest.mark.asyncio
+async def test_run_connector_pull_refreshes_persists_and_retries_after_401(monkeypatch) -> None:
+    persisted: list[dict[str, object]] = []
+
+    async def fake_persist(_tenant_id, _connector_id, payload):
+        persisted.append(dict(payload))
+
+    monkeypatch.setattr("contact_ops.connectors.base._persist_connector_payload", fake_persist)
+    monkeypatch.setattr("contact_ops.connectors.base._run_post_pull_agent_pipeline", lambda *_: None)
+
+    connector = _RetryConnector()
+    ctx = _ctx()
+    ctx.db = _FakeDb()  # type: ignore[assignment]
+    run_id, result = await run_connector_pull(
+        ctx=ctx,
+        connector_id=uuid.UUID("00000000-0000-0000-0000-000000000010"),
+        connector=connector,
+        dry_run=True,
+    )
+
+    assert run_id == uuid.UUID("00000000-0000-0000-0000-000000000099")
+    assert isinstance(result, ConnectorRunResult)
+    assert result.parsed_count == 1
+    assert connector.pull_calls == 2
+    assert connector.refresh_calls == 1
+    assert persisted[-1]["access_token"] == "fresh"

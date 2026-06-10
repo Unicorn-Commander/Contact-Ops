@@ -35,8 +35,13 @@ class M365Connector(Connector):
     provider = "m365"
 
     async def ensure_fresh_token(self) -> bool:
+        if not token_needs_refresh(self.payload):
+            return False
+        return await self.refresh_access_token()
+
+    async def refresh_access_token(self) -> bool:
         refresh_token = self.payload.get("refresh_token")
-        if not refresh_token or not token_needs_refresh(self.payload):
+        if not refresh_token:
             return False
         apply_refreshed_token(self.payload, await refresh_m365_token(str(refresh_token)))
         return True

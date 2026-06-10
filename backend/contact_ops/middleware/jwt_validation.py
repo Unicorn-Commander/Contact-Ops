@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,6 +24,7 @@ import structlog
 from fastapi import Request, Response, status
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from contact_ops.core.config import Settings
 from contact_ops.core.database import _user_is_active_member, async_session_maker
@@ -105,7 +107,9 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             request.state.jwt_claims = self._standalone_claims()
             request.state.actor_chain = request.state.jwt_claims
             request.state.human_authority = self.settings.STANDALONE_USER_ID
-            return await call_next(request)
+            return await self._call_with_log_context(
+                request, call_next, request.state.jwt_claims
+            )
 
         token = self._extract_bearer(request)
         if not token:
@@ -128,7 +132,25 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         request.state.jwt_claims = claims
         request.state.actor_chain = _build_actor_chain(claims)
         request.state.human_authority = _root_subject(claims)
-        return await call_next(request)
+        return await self._call_with_log_context(request, call_next, claims)
+
+    async def _call_with_log_context(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+        claims: dict[str, Any],
+    ) -> Response:
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        request.state.request_id = request_id
+        bind_contextvars(
+            request_id=request_id,
+            tenant_id=str(claims.get("tenant_id") or ""),
+            uc_uid=str(claims.get("uc_uid") or claims.get("sub") or ""),
+        )
+        try:
+            return await call_next(request)
+        finally:
+            clear_contextvars()
 
     # ---------- token extraction + validation ----------
 

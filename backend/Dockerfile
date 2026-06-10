@@ -48,4 +48,4 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/health || exit 1
 
-CMD ["uvicorn", "contact_ops.main:app", "--host", "0.0.0.0", "--port", "8501"]
+CMD ["python", "-m", "contact_ops.ops.prestart"]
