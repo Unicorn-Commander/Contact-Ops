@@ -9,7 +9,6 @@
  * a separate, per-group human decision in the merge cockpit.
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
   ArrowRight,
@@ -33,6 +32,7 @@ import {
   useCleanOrgNamesMutation,
   useDataQualityReport,
   useMergeOrganizationsMutation,
+  useMergePeopleMutation,
 } from "@/hooks/useDataQuality";
 import type { DataQualityReport, DqDuplicateGroup, DqPersonDuplicateGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -486,6 +486,10 @@ function DuplicatePeopleSection({ data }: { data: DataQualityReport }) {
 }
 
 function PersonDuplicateGroupRow({ group }: { group: DqPersonDuplicateGroup }) {
+  const merge = useMergePeopleMutation();
+  const [survivorId, setSurvivorId] = useState(group.suggested_survivor_id);
+  const loserIds = group.members.map((m) => m.person_id).filter((id) => id !== survivorId);
+
   return (
     <li className="flex flex-wrap items-center gap-co-6 rounded-md border border-border/60 bg-muted/20 px-co-8 py-co-6 text-13">
       <span className="inline-flex items-center gap-co-4 font-mono text-12 text-muted-foreground" title={group.shared_email}>
@@ -494,13 +498,13 @@ function PersonDuplicateGroupRow({ group }: { group: DqPersonDuplicateGroup }) {
       </span>
       <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       {group.members.map((m) => {
-        const survivor = m.person_id === group.suggested_survivor_id;
+        const survivor = m.person_id === survivorId;
         return (
-          <Link
+          <button
+            type="button"
             key={m.person_id}
-            to="/people/$id"
-            params={{ id: m.person_id }}
-            title={survivor ? "Suggested record to keep — open it" : "Open this duplicate"}
+            onClick={() => setSurvivorId(m.person_id)}
+            title={survivor ? "Survivor — kept" : "Click to keep this one instead"}
             className={cn(
               "focus-ring inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] px-co-6 py-0.5 text-12 transition-colors",
               survivor
@@ -510,9 +514,18 @@ function PersonDuplicateGroupRow({ group }: { group: DqPersonDuplicateGroup }) {
           >
             {survivor ? <Check className="h-3 w-3 shrink-0 text-success" /> : null}
             {m.name}
-          </Link>
+          </button>
         );
       })}
+      <span className="ml-auto">
+        <ApplyButton
+          idleLabel={`Merge ${loserIds.length}`}
+          confirmLabel="Confirm merge"
+          busy={merge.isPending}
+          disabled={loserIds.length === 0}
+          onApply={() => merge.mutate({ survivorId, loserIds })}
+        />
+      </span>
     </li>
   );
 }

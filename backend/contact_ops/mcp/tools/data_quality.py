@@ -30,7 +30,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text, update
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import ORG_NOT_FOUND, VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import (
+    ORG_NOT_FOUND,
+    PERSON_NOT_FOUND,
+    VALIDATION_FAILED,
+    ToolError,
+)
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, register
@@ -779,6 +784,399 @@ async def unmerge_organizations(
 # ---- registration -------------------------------------------------------------
 
 
+# ---- merge_people / unmerge_people -------------------------------------------
+#
+# A reversible, audited one-click person merge (parity with merge_organizations),
+# surfaced from the Data Quality "Duplicate people" section. It deliberately does
+# NOT use the dedup merge_executor (apply_merge): that code targets a phantom
+# schema — it UPDATEs merge_history.merge_activity_id / can_unmerge and INSERTs
+# facts.prov_activity_id / was_revision_of, NONE of which exist in the deployed
+# DB — so it errors on the first write. Like the org tool, the action_event is
+# the durable, tenant-scoped audit + Undo ledger (no merge_history / person_alias
+# row, which keeps us clear of the dead executor and the HIPAA-merge trigger).
+#
+# v1 moves the contact data a user sees on the profile: emails + phones (with
+# shared-value + single-primary collision handling), postal_addresses + photos
+# (single-primary), and re-points person_org_role / urls / interactions / facts.
+# Deliberately DEFERRED to a fast-follow (left on the tombstoned loser, fully
+# reversible): identifiers, im_handles, person_person_relation (self-loop risk),
+# person_tenant_membership (tags/semantics), consent_records + voice_* (consent /
+# biometric data must not migrate across identities without explicit handling).
+
+# (table, value_expr | None, primary_pred) for the "move with collision handling"
+# pass. value_expr de-dups a per-person value unique index; primary_pred is the
+# table's one-primary-per-person partial-unique predicate.
+_PERSON_PRIMARY_MOVES: tuple[tuple[str, str | None, str], ...] = (
+    ("emails", "lower(address::text)", "is_primary"),
+    ("phones", "e164", "is_primary"),
+    ("postal_addresses", None, "is_primary"),
+    ("photos", None, "is_primary"),
+    ("person_org_role", None, "is_primary AND ended_at IS NULL"),
+)
+# (table, person_column, extra_where) for the plain re-point pass (no per-person
+# unique index that a move could violate).
+_PERSON_SIMPLE_MOVES: tuple[tuple[str, str, str], ...] = (
+    ("urls", "person_id", ""),
+    ("interactions", "person_id", ""),
+    ("facts", "subject_id", "subject_kind = 'person'"),
+)
+
+
+async def _load_person(ctx: MCPContext, person_id: uuid.UUID) -> Person:
+    person = await ctx.db.get(Person, person_id)
+    if person is None or person.canonical_owner_tenant_id != ctx.tenant_id:
+        raise ToolError(PERSON_NOT_FOUND, f"no person with id {person_id}", retryable=False)
+    return person
+
+
+async def _enqueue_person_graph_sync(
+    ctx: MCPContext, survivor_id: uuid.UUID, loser_id: uuid.UUID, op: str
+) -> None:
+    """Best-effort FalkorDB sync. Never fails the merge if the outbox is absent."""
+    import json
+
+    try:
+        await ctx.db.execute(
+            text(
+                "INSERT INTO event_outbox (channel, tenant_id, payload) "
+                "VALUES (:channel, CAST(:tenant_id AS uuid), CAST(:payload AS jsonb))"
+            ),
+            {
+                "channel": "falkordb.edge.create",
+                "tenant_id": str(ctx.tenant_id),
+                "payload": json.dumps(
+                    {
+                        "type": op,
+                        "entity": "person",
+                        "survivor_id": str(survivor_id),
+                        "alias_id": str(loser_id),
+                        "edge_label": "dedup:alias_of",
+                    }
+                ),
+            },
+        )
+    except Exception:  # noqa: BLE001 — graph sync is advisory, not load-bearing
+        pass
+
+
+async def _move_primary_aware(
+    ctx: MCPContext,
+    *,
+    table: str,
+    value_expr: str | None,
+    primary_pred: str,
+    loser_id: uuid.UUID,
+    survivor_id: uuid.UUID,
+) -> dict[str, list[str]]:
+    """Re-point a loser's child rows onto the survivor, avoiding every per-person
+    unique index. A row whose value the survivor already has is LEFT on the
+    tombstoned loser (a reversible no-op — never deleted). A moved row that is the
+    loser's primary is demoted (is_primary=false) when the survivor already holds
+    a primary. ``table``/``value_expr``/``primary_pred`` are code constants, never
+    request input — only ids are bound — so the f-strings carry no injection.
+    Returns {"moved": [...], "demoted_primary": [...]} for the Undo ledger."""
+    db = ctx.db
+    surv_vals: set[str] = set()
+    if value_expr:
+        surv_vals = {
+            str(v)
+            for v in (
+                await db.execute(
+                    text(f"SELECT {value_expr} AS v FROM {table} WHERE person_id = CAST(:s AS uuid)"),
+                    {"s": str(survivor_id)},
+                )
+            ).scalars().all()
+        }
+    surv_has_primary = bool(
+        (
+            await db.execute(
+                text(f"SELECT 1 FROM {table} WHERE person_id = CAST(:s AS uuid) AND ({primary_pred}) LIMIT 1"),
+                {"s": str(survivor_id)},
+            )
+        ).first()
+    )
+    select_cols = f"id, ({primary_pred}) AS is_prim" + (f", {value_expr} AS v" if value_expr else "")
+    rows = (
+        await db.execute(
+            text(f"SELECT {select_cols} FROM {table} WHERE person_id = CAST(:l AS uuid)"),
+            {"l": str(loser_id)},
+        )
+    ).mappings().all()
+
+    moved: list[str] = []
+    demoted: list[str] = []
+    for r in rows:
+        if value_expr and str(r["v"]) in surv_vals:
+            continue  # survivor already has this value — leave on the loser
+        rid = str(r["id"])
+        if r["is_prim"] and surv_has_primary:
+            await db.execute(
+                text(f"UPDATE {table} SET person_id = CAST(:s AS uuid), is_primary = false WHERE id = CAST(:i AS uuid)"),
+                {"s": str(survivor_id), "i": rid},
+            )
+            demoted.append(rid)
+        else:
+            await db.execute(
+                text(f"UPDATE {table} SET person_id = CAST(:s AS uuid) WHERE id = CAST(:i AS uuid)"),
+                {"s": str(survivor_id), "i": rid},
+            )
+            if r["is_prim"]:
+                surv_has_primary = True  # the moved primary now fills the survivor's slot
+        moved.append(rid)
+        if value_expr:
+            surv_vals.add(str(r["v"]))
+    return {"moved": moved, "demoted_primary": demoted}
+
+
+async def _move_simple(
+    ctx: MCPContext, *, table: str, column: str, extra_where: str, loser_id: uuid.UUID, survivor_id: uuid.UUID
+) -> list[str]:
+    """Plain re-point of a child table with no colliding per-person unique index.
+    Returns the moved row ids for Undo."""
+    db = ctx.db
+    where = f"{column} = CAST(:l AS uuid)" + (f" AND {extra_where}" if extra_where else "")
+    ids = [
+        str(x)
+        for x in (await db.execute(text(f"SELECT id FROM {table} WHERE {where}"), {"l": str(loser_id)})).scalars().all()
+    ]
+    if ids:
+        await db.execute(
+            text(f"UPDATE {table} SET {column} = CAST(:s AS uuid) WHERE {where}"),
+            {"l": str(loser_id), "s": str(survivor_id)},
+        )
+    return ids
+
+
+async def _count_loser_children(ctx: MCPContext, loser_id: uuid.UUID) -> dict[str, int]:
+    """Cheap COUNTs for the dry-run preview (upper bound — ignores value de-dup)."""
+    db = ctx.db
+
+    async def c(table: str, column: str, extra: str = "") -> int:
+        where = f"{column} = CAST(:l AS uuid)" + (f" AND {extra}" if extra else "")
+        return int(
+            (await db.execute(text(f"SELECT count(*) FROM {table} WHERE {where}"), {"l": str(loser_id)})).scalar() or 0
+        )
+
+    emails = await c("emails", "person_id")
+    phones = await c("phones", "person_id")
+    edges = (
+        await c("person_org_role", "person_id")
+        + await c("postal_addresses", "person_id")
+        + await c("photos", "person_id")
+        + await c("urls", "person_id")
+        + await c("interactions", "person_id")
+        + await c("facts", "subject_id", "subject_kind = 'person'")
+    )
+    return {"emails": emails, "phones": phones, "edges": edges}
+
+
+class MergePeopleInput(BaseModel):
+    survivor_id: uuid.UUID
+    loser_ids: list[uuid.UUID] = Field(min_length=1, max_length=50)
+    dry_run: bool = True
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class MergePeopleOutput(ToolOutput):
+    dry_run: bool
+    survivor_id: str
+    merged: list[str]
+    edges_repointed: int
+    emails_consolidated: int
+    phones_consolidated: int
+    merge_event_id: str | None = None
+    status: str
+
+
+async def merge_people(ctx: MCPContext, req: MergePeopleInput) -> MergePeopleOutput:
+    require_role(ctx, "STAFF")
+    require_scopes(ctx, ("person:write",))
+
+    losers = [lid for lid in req.loser_ids if lid != req.survivor_id]
+    if not losers:
+        raise ToolError(VALIDATION_FAILED, "loser_ids must differ from survivor_id", retryable=False)
+
+    survivor = await _load_person(ctx, req.survivor_id)
+    if survivor.merge_status != MergeStatus.canonical:
+        raise ToolError(VALIDATION_FAILED, "survivor is not a canonical person", retryable=False)
+
+    loser_persons: list[Person] = []
+    for lid in losers:
+        loser = await _load_person(ctx, lid)
+        if loser.merge_status != MergeStatus.canonical:
+            raise ToolError(VALIDATION_FAILED, f"person {lid} is already merged/archived", retryable=False)
+        loser_persons.append(loser)
+
+    if req.dry_run:
+        emails = phones = edges = 0
+        for loser in loser_persons:
+            counts = await _count_loser_children(ctx, loser.id)
+            emails += counts["emails"]
+            phones += counts["phones"]
+            edges += counts["edges"]
+        return MergePeopleOutput(
+            dry_run=True,
+            survivor_id=str(req.survivor_id),
+            merged=[str(lid) for lid in losers],
+            edges_repointed=edges,
+            emails_consolidated=emails,
+            phones_consolidated=phones,
+            status="planned",
+        )
+
+    per_loser: dict[str, Any] = {}
+    total_edges = 0
+    total_emails = 0
+    total_phones = 0
+    for loser in loser_persons:
+        ledger: dict[str, Any] = {}
+        for table, value_expr, primary_pred in _PERSON_PRIMARY_MOVES:
+            ledger[table] = await _move_primary_aware(
+                ctx,
+                table=table,
+                value_expr=value_expr,
+                primary_pred=primary_pred,
+                loser_id=loser.id,
+                survivor_id=req.survivor_id,
+            )
+        for table, column, extra in _PERSON_SIMPLE_MOVES:
+            ledger[table] = await _move_simple(
+                ctx, table=table, column=column, extra_where=extra, loser_id=loser.id, survivor_id=req.survivor_id
+            )
+        per_loser[str(loser.id)] = ledger
+        total_emails += len(ledger["emails"]["moved"])
+        total_phones += len(ledger["phones"]["moved"])
+        total_edges += (
+            len(ledger["person_org_role"]["moved"])
+            + len(ledger["postal_addresses"]["moved"])
+            + len(ledger["photos"]["moved"])
+            + len(ledger["urls"])
+            + len(ledger["interactions"])
+            + len(ledger["facts"])
+        )
+
+        loser.merge_status = MergeStatus.merged_into
+        loser.merged_into_id = req.survivor_id
+        loser.etag = uuid.uuid4().hex
+        await ctx.db.flush()
+        await _enqueue_person_graph_sync(ctx, req.survivor_id, loser.id, "person_merge_applied")
+
+    event_id = await emit_action_event(
+        ctx,
+        event_type="person.merge_applied",
+        aggregate_type="person",
+        aggregate_id=req.survivor_id,
+        affected_ids=losers,
+        payload_before=None,
+        payload_after={
+            "survivor_id": str(req.survivor_id),
+            "loser_ids": [str(lid) for lid in losers],
+            "edges_repointed": total_edges,
+            "emails_consolidated": total_emails,
+            "phones_consolidated": total_phones,
+        },
+        evidence={"survivor_id": str(req.survivor_id), "per_loser": per_loser},
+        confidence=req.confidence,
+    )
+
+    return MergePeopleOutput(
+        dry_run=False,
+        survivor_id=str(req.survivor_id),
+        merged=[str(lid) for lid in losers],
+        edges_repointed=total_edges,
+        emails_consolidated=total_emails,
+        phones_consolidated=total_phones,
+        merge_event_id=str(event_id),
+        status="applied",
+    )
+
+
+class UnmergePeopleInput(BaseModel):
+    merge_event_id: uuid.UUID
+
+
+class UnmergePeopleOutput(ToolOutput):
+    survivor_id: str
+    restored: list[str]
+    edges_restored: int
+    status: str
+
+
+async def unmerge_people(ctx: MCPContext, req: UnmergePeopleInput) -> UnmergePeopleOutput:
+    require_role(ctx, "STAFF")
+    require_scopes(ctx, ("person:write",))
+
+    ev = (
+        await ctx.audit_db.execute(
+            text(
+                "SELECT event_type, tenant_id, evidence FROM action_event "
+                "WHERE event_id = CAST(:eid AS uuid)"
+            ),
+            {"eid": str(req.merge_event_id)},
+        )
+    ).mappings().first()
+    if ev is None or ev["event_type"] != "person.merge_applied":
+        raise ToolError(VALIDATION_FAILED, "no person.merge_applied event with that id", retryable=False)
+    if uuid.UUID(str(ev["tenant_id"])) != ctx.tenant_id:
+        raise ToolError(VALIDATION_FAILED, "tenant mismatch", retryable=False)
+
+    evidence = ev["evidence"] or {}
+    survivor_id = uuid.UUID(str(evidence["survivor_id"]))
+    per_loser: dict[str, Any] = evidence.get("per_loser", {})
+
+    restored: list[str] = []
+    edges_restored = 0
+    for loser_str, ledger in per_loser.items():
+        # Move every re-pointed row back onto the loser, then restore demoted primaries.
+        for table, _value_expr, _pred in _PERSON_PRIMARY_MOVES:
+            led = ledger.get(table) or {}
+            for rid in led.get("moved", []):
+                await ctx.db.execute(
+                    text(f"UPDATE {table} SET person_id = CAST(:l AS uuid) WHERE id = CAST(:i AS uuid)"),
+                    {"l": loser_str, "i": rid},
+                )
+                edges_restored += 1
+            for rid in led.get("demoted_primary", []):
+                await ctx.db.execute(
+                    text(f"UPDATE {table} SET is_primary = true WHERE id = CAST(:i AS uuid)"),
+                    {"i": rid},
+                )
+        for table, column, _extra in _PERSON_SIMPLE_MOVES:
+            for rid in ledger.get(table) or []:
+                await ctx.db.execute(
+                    text(f"UPDATE {table} SET {column} = CAST(:l AS uuid) WHERE id = CAST(:i AS uuid)"),
+                    {"l": loser_str, "i": rid},
+                )
+                edges_restored += 1
+
+        loser = await ctx.db.get(Person, uuid.UUID(loser_str))
+        if loser is not None:
+            loser.merge_status = MergeStatus.canonical
+            loser.merged_into_id = None
+            loser.etag = uuid.uuid4().hex
+        restored.append(loser_str)
+        await _enqueue_person_graph_sync(ctx, survivor_id, uuid.UUID(loser_str), "person_unmerge")
+    await ctx.db.flush()
+
+    await emit_action_event(
+        ctx,
+        event_type="person.unmerge",
+        aggregate_type="person",
+        aggregate_id=survivor_id,
+        affected_ids=[uuid.UUID(s) for s in restored],
+        payload_before=None,
+        payload_after={"survivor_id": str(survivor_id), "restored": restored},
+        evidence={"supersedes_event_id": str(req.merge_event_id)},
+    )
+
+    return UnmergePeopleOutput(
+        survivor_id=str(survivor_id),
+        restored=restored,
+        edges_restored=edges_restored,
+        status="applied",
+    )
+
+
 def register_data_quality_tools() -> None:
     register(
         name="data_quality_report",
@@ -873,6 +1271,48 @@ def register_data_quality_tools() -> None:
         handler=unmerge_organizations,
         required_role="STAFF",
         required_scopes=("org:write",),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="none",
+    )
+    register(
+        name="merge_people",
+        description=(
+            "Merge duplicate people into a survivor: re-point employment/urls/"
+            "interactions/facts, consolidate emails+phones+addresses+photos "
+            "(shared values and extra primaries are resolved, not duplicated). "
+            "dry_run defaults True; fully reversible via unmerge_people. "
+            "Requires STAFF + person:write."
+        ),
+        input_model=MergePeopleInput,
+        output_model=MergePeopleOutput,
+        handler=merge_people,
+        required_role="STAFF",
+        required_scopes=("person:write",),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        idempotency="none",
+    )
+    register(
+        name="unmerge_people",
+        description=(
+            "Reverse a previous person merge by its merge_event_id — restores the "
+            "losers to canonical and moves their re-pointed/consolidated records "
+            "back. Requires STAFF + person:write."
+        ),
+        input_model=UnmergePeopleInput,
+        output_model=UnmergePeopleOutput,
+        handler=unmerge_people,
+        required_role="STAFF",
+        required_scopes=("person:write",),
         annotations={
             "readOnlyHint": False,
             "destructiveHint": False,

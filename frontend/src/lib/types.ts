@@ -424,6 +424,17 @@ export type MergeOrganizationsResult = {
   status: string;
 };
 
+export type MergePeopleResult = {
+  dry_run: boolean;
+  survivor_id: UUID;
+  merged: UUID[];
+  edges_repointed: number;
+  emails_consolidated: number;
+  phones_consolidated: number;
+  merge_event_id: UUID | null;
+  status: string;
+};
+
 // ---- Connectors (matches feat-connectors-backend MCP tools) ---------------
 //
 // The /connectors page pulls contacts from third-party sources. Each provider

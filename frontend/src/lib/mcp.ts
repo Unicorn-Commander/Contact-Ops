@@ -12,6 +12,7 @@ import type {
   ListPendingProposalsResult,
   ListResult,
   MergeOrganizationsResult,
+  MergePeopleResult,
   Note,
   NoteTargetType,
   Organization,
@@ -391,6 +392,16 @@ export const tools = {
   unmergeOrganizations: (args: { merge_event_id: UUID }, token: string) =>
     callTool<{ survivor_id: UUID; restored: UUID[]; roles_restored: number; status: string }>(
       "unmerge_organizations",
+      args,
+      token
+    ),
+  mergePeople: (
+    args: { survivor_id: UUID; loser_ids: UUID[]; dry_run?: boolean },
+    token: string
+  ) => callTool<MergePeopleResult>("merge_people", args, token),
+  unmergePeople: (args: { merge_event_id: UUID }, token: string) =>
+    callTool<{ survivor_id: UUID; restored: UUID[]; edges_restored: number; status: string }>(
+      "unmerge_people",
       args,
       token
     ),

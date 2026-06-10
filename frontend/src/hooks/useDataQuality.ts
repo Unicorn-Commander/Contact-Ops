@@ -14,6 +14,7 @@ import type {
   CanonicalizeTagsResult,
   CleanOrgNamesResult,
   MergeOrganizationsResult,
+  MergePeopleResult,
   UUID,
 } from "@/lib/types";
 
@@ -92,6 +93,47 @@ export function useMergeOrganizationsMutation() {
                     .catch((e: unknown) =>
                       toast.error(`Undo failed: ${errMessage(e)}`)
                     );
+                },
+              }
+            : undefined,
+        }
+      );
+    },
+    onError: (err) => toast.error(`Merge failed: ${errMessage(err)}`),
+  });
+}
+
+export function useMergePeopleMutation() {
+  const auth = useAuth();
+  const token = auth.user?.access_token ?? "";
+  const queryClient = useQueryClient();
+  const qk = useQueryKeys();
+  const tenantScope = qk.dataQuality.slice(0, 2);
+  return useMutation({
+    mutationFn: (args: { survivorId: UUID; loserIds: UUID[] }) =>
+      tools.mergePeople(
+        { survivor_id: args.survivorId, loser_ids: args.loserIds, dry_run: false },
+        token
+      ),
+    onSuccess: (data: MergePeopleResult) => {
+      void queryClient.invalidateQueries({ queryKey: qk.dataQuality });
+      void queryClient.invalidateQueries({ queryKey: tenantScope });
+      toast.success(
+        `Merged ${data.merged.length} ${data.merged.length === 1 ? "person" : "people"} (${data.emails_consolidated + data.phones_consolidated} contact${data.emails_consolidated + data.phones_consolidated === 1 ? "" : "s"} consolidated)`,
+        {
+          duration: 8000,
+          action: data.merge_event_id
+            ? {
+                label: "Undo",
+                onClick: () => {
+                  tools
+                    .unmergePeople({ merge_event_id: data.merge_event_id as UUID }, token)
+                    .then(() => {
+                      toast.message("Merge undone");
+                      void queryClient.invalidateQueries({ queryKey: qk.dataQuality });
+                      void queryClient.invalidateQueries({ queryKey: tenantScope });
+                    })
+                    .catch((e: unknown) => toast.error(`Undo failed: ${errMessage(e)}`));
                 },
               }
             : undefined,
