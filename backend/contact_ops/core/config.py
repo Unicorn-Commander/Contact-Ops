@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Contact-Ops"
-    APP_VERSION: str = "2.7.0"
+    APP_VERSION: str = "2.7.1"
     ENV: Literal["dev", "test", "staging", "prod"] = "dev"
     DEBUG: bool = False
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
