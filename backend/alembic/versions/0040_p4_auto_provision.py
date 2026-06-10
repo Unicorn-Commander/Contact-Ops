@@ -1,7 +1,7 @@
 """phase 4.4: provision_personal_workspace() for public self-serve onboarding
 
-Revision ID: 0038
-Revises: 0037
+Revision ID: 0040
+Revises: 0039
 Create Date: 2026-06-03
 
 A SECURITY DEFINER provisioning function the onboarding path calls on a human's
