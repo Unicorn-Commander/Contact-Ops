@@ -181,6 +181,13 @@ class Settings(BaseSettings):
     # with for THIS app; pick a stable string and never change it.
     BRIGADE_TRUSTED_ISSUER: str = "https://brigade.unicorncommander.ai"
     BRIGADE_JWKS_URL: str = "https://brigade.unicorncommander.ai/.well-known/jwks.json"
+    # Multi-broker trust (sovereign per-deployment federation): comma-separated
+    # list of trusted Brigade issuers. When set, REPLACES the singular
+    # BRIGADE_TRUSTED_ISSUER for verification; each issuer's public keys are
+    # fetched from {issuer}/.well-known/jwks.json (BRIGADE_JWKS_URL still pins
+    # the primary issuer's JWKS when both are set). Lets one CO deployment trust
+    # several brokers at once (e.g. customer + dogfood) during/after migration.
+    BRIGADE_TRUSTED_ISSUERS: str = ""
     BRIGADE_EXPECTED_AUDIENCE: str = "contact-ops"
 
     # Seed data

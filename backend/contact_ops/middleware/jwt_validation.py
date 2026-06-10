@@ -381,7 +381,9 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             "tenant_id": str(tenant["id"]),
             "tenant_slug": str(tenant["slug"]),
             "tenant_hipaa": bool(tenant["hipaa_mode"]),
-            "iss": self.settings.BRIGADE_TRUSTED_ISSUER,
+            # Reflect the issuer the token was ACTUALLY verified against (any of
+            # the trusted brokers), not just the primary singular setting.
+            "iss": str(brigade_claims.get("iss") or self.settings.BRIGADE_TRUSTED_ISSUER),
             "aud": self.settings.BRIGADE_EXPECTED_AUDIENCE,
             "preferred_username": uc_uid,
             "scope": " ".join(sorted(effective_scopes)),

@@ -30,6 +30,34 @@ BRIGADE_JWKS_TTL_SECONDS = 24 * 60 * 60
 BRIGADE_CLOCK_SKEW_SECONDS = 30
 
 
+def _trusted_issuers(settings: Settings) -> list[str]:
+    """The Brigade issuers Contact-Ops accepts. BRIGADE_TRUSTED_ISSUERS (CSV),
+    when set, trusts multiple brokers at once (e.g. customer + dogfood) during or
+    after a sovereign-federation migration; otherwise the singular
+    BRIGADE_TRUSTED_ISSUER is used. Trailing slashes are normalized so the `iss`
+    claim comparison is exact."""
+    raw = (getattr(settings, "BRIGADE_TRUSTED_ISSUERS", "") or "").strip()
+    if raw:
+        issuers = [i.strip().rstrip("/") for i in raw.split(",") if i.strip()]
+        if issuers:
+            return issuers
+    return [settings.BRIGADE_TRUSTED_ISSUER.rstrip("/")]
+
+
+def _issuer_jwks_urls(settings: Settings) -> dict[str, str]:
+    """issuer -> JWKS URL for every trusted issuer. Derives
+    {issuer}/.well-known/jwks.json; the explicit BRIGADE_JWKS_URL still pins the
+    primary (singular) issuer's JWKS when set, for back-compat."""
+    urls: dict[str, str] = {}
+    for iss in _trusted_issuers(settings):
+        urls[iss] = f"{iss}/.well-known/jwks.json"
+    primary = settings.BRIGADE_TRUSTED_ISSUER.rstrip("/")
+    pin = (getattr(settings, "BRIGADE_JWKS_URL", "") or "").strip()
+    if pin and primary in urls:
+        urls[primary] = pin
+    return urls
+
+
 @dataclass(frozen=True)
 class BrigadeJWTVerificationResult:
     valid: bool
@@ -42,7 +70,9 @@ class BrigadeJWKSCache:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._jwks: dict[str, Any] | None = None
+        # kid -> JWK, merged across every trusted issuer's JWKS (kids are unique
+        # per broker, so the merge is collision-free).
+        self._keys: dict[str, dict[str, Any]] = {}
         self._expires_at = 0.0
         self._lock = threading.Lock()
 
@@ -59,45 +89,51 @@ class BrigadeJWKSCache:
     def refresh(self, *, force: bool = False) -> None:
         with self._lock:
             now = time.time()
-            if not force and self._jwks is not None and now < self._expires_at:
+            if not force and self._keys and now < self._expires_at:
                 return
-            jwks_url = self._settings.BRIGADE_JWKS_URL
-            if not jwks_url:
+            urls = _issuer_jwks_urls(self._settings)
+            if not urls:
                 logger.warning("brigade_jwks_fetch_failed", reason="jwks-url-unconfigured")
                 return
-            try:
-                with httpx.Client(timeout=10) as client:
-                    response = client.get(jwks_url)
-                    response.raise_for_status()
-                    jwks = cast(dict[str, Any], response.json())
-            except (httpx.HTTPError, ValueError) as exc:
-                logger.warning(
-                    "brigade_jwks_fetch_failed",
-                    reason="jwks-fetch-failed",
-                    error=str(exc),
-                )
+            merged: dict[str, dict[str, Any]] = {}
+            fetched_any = False
+            for issuer, jwks_url in urls.items():
+                try:
+                    with httpx.Client(timeout=10) as client:
+                        response = client.get(jwks_url)
+                        response.raise_for_status()
+                        jwks = cast(dict[str, Any], response.json())
+                except (httpx.HTTPError, ValueError) as exc:
+                    logger.warning(
+                        "brigade_jwks_fetch_failed",
+                        reason="jwks-fetch-failed",
+                        issuer=issuer,
+                        error=str(exc),
+                    )
+                    continue
+                fetched_any = True
+                for key in jwks.get("keys", []) or []:
+                    if isinstance(key, dict) and isinstance(key.get("kid"), str):
+                        merged[cast(str, key["kid"])] = cast(dict[str, Any], key)
+            if not fetched_any:
+                # Every issuer's JWKS fetch failed (transient outage): keep the
+                # prior keys rather than blanking the cache and rejecting all
+                # tokens until the next refresh.
                 return
-            self._jwks = jwks
+            self._keys = merged
             self._expires_at = now + BRIGADE_JWKS_TTL_SECONDS
             logger.info(
                 "brigade_jwks_refreshed",
-                keys=len(jwks.get("keys", [])),
+                keys=len(merged),
+                issuers=len(urls),
                 ttl_s=BRIGADE_JWKS_TTL_SECONDS,
             )
 
     def _find(self, kid: str) -> dict[str, Any] | None:
         now = time.time()
-        if self._jwks is None or now >= self._expires_at:
+        if not self._keys or now >= self._expires_at:
             self.refresh(force=False)
-        if self._jwks is None:
-            return None
-        keys = self._jwks.get("keys", [])
-        if not isinstance(keys, list):
-            return None
-        for key in keys:
-            if isinstance(key, dict) and key.get("kid") == kid:
-                return cast(dict[str, Any], key)
-        return None
+        return self._keys.get(kid)
 
 
 _default_cache: BrigadeJWKSCache | None = None
@@ -138,6 +174,8 @@ def _verify_brigade_jwt_with_reason(
     if token.startswith("co_pat_"):
         return _reject("personal-access-token")
 
+    issuers = _trusted_issuers(settings)
+
     try:
         header = jwt.get_unverified_header(token)
     except JWTError as exc:
@@ -172,7 +210,7 @@ def _verify_brigade_jwt_with_reason(
             signing_key,
             algorithms=ALLOWED_BRIGADE_ALGORITHMS,
             audience=settings.BRIGADE_EXPECTED_AUDIENCE,
-            issuer=settings.BRIGADE_TRUSTED_ISSUER,
+            issuer=tuple(issuers),
             options={
                 "require_exp": True,
                 "require_nbf": True,
@@ -210,7 +248,7 @@ def _verify_brigade_jwt_with_reason(
 
     if claims.get("aud") != settings.BRIGADE_EXPECTED_AUDIENCE:
         return _reject("aud-mismatch", kid=kid)
-    if claims.get("iss") != settings.BRIGADE_TRUSTED_ISSUER:
+    if claims.get("iss") not in issuers:
         return _reject("iss-mismatch", kid=kid)
     if not claims.get("sub"):
         return _reject("missing-sub", kid=kid)
