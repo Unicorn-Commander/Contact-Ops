@@ -1149,30 +1149,45 @@ async def unmerge_people(ctx: MCPContext, req: UnmergePeopleInput) -> UnmergePeo
     survivor_id = uuid.UUID(str(evidence["survivor_id"]))
     per_loser: dict[str, Any] = evidence.get("per_loser", {})
 
+    survivor_s = str(survivor_id)
     restored: list[str] = []
     edges_restored = 0
     for loser_str, ledger in per_loser.items():
-        # Move every re-pointed row back onto the loser, then restore demoted primaries.
+        # Move every re-pointed row back onto the loser — but ONLY rows that are
+        # STILL on the survivor (`AND ... = survivor`). This makes replay safe: a
+        # stale/superseded merge_event_id whose rows a newer merge has since moved
+        # elsewhere is a no-op for those rows, instead of yanking them off the new
+        # legitimate owner. Then restore demoted primaries, only on rows now back
+        # on the loser. rowcount drives the honest restored count.
         for table, _value_expr, _pred in _PERSON_PRIMARY_MOVES:
             led = ledger.get(table) or {}
             for rid in led.get("moved", []):
-                await ctx.db.execute(
-                    text(f"UPDATE {table} SET person_id = CAST(:l AS uuid) WHERE id = CAST(:i AS uuid)"),
-                    {"l": loser_str, "i": rid},
+                r = await ctx.db.execute(
+                    text(
+                        f"UPDATE {table} SET person_id = CAST(:l AS uuid) "
+                        f"WHERE id = CAST(:i AS uuid) AND person_id = CAST(:s AS uuid)"
+                    ),
+                    {"l": loser_str, "i": rid, "s": survivor_s},
                 )
-                edges_restored += 1
+                edges_restored += r.rowcount or 0
             for rid in led.get("demoted_primary", []):
                 await ctx.db.execute(
-                    text(f"UPDATE {table} SET is_primary = true WHERE id = CAST(:i AS uuid)"),
-                    {"i": rid},
+                    text(
+                        f"UPDATE {table} SET is_primary = true "
+                        f"WHERE id = CAST(:i AS uuid) AND person_id = CAST(:l AS uuid)"
+                    ),
+                    {"i": rid, "l": loser_str},
                 )
         for table, column, _extra in _PERSON_SIMPLE_MOVES:
             for rid in ledger.get(table) or []:
-                await ctx.db.execute(
-                    text(f"UPDATE {table} SET {column} = CAST(:l AS uuid) WHERE id = CAST(:i AS uuid)"),
-                    {"l": loser_str, "i": rid},
+                r = await ctx.db.execute(
+                    text(
+                        f"UPDATE {table} SET {column} = CAST(:l AS uuid) "
+                        f"WHERE id = CAST(:i AS uuid) AND {column} = CAST(:s AS uuid)"
+                    ),
+                    {"l": loser_str, "i": rid, "s": survivor_s},
                 )
-                edges_restored += 1
+                edges_restored += r.rowcount or 0
 
         loser = await ctx.db.get(Person, uuid.UUID(loser_str))
         if loser is not None:
