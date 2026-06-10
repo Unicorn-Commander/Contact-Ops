@@ -351,6 +351,21 @@ export type DqDuplicateGroup = {
   suggested_survivor_id: UUID;
 };
 
+export type DqPersonDuplicateMember = {
+  person_id: UUID;
+  name: string;
+  given_name?: string | null;
+  family_name?: string | null;
+  email: string;
+};
+
+export type DqPersonDuplicateGroup = {
+  key: string;
+  shared_email: string;
+  members: DqPersonDuplicateMember[];
+  suggested_survivor_id: UUID;
+};
+
 export type DqTagVariant = { tag: string; person_count: number };
 export type DqTagVariantGroup = { canonical: string; variants: DqTagVariant[] };
 
@@ -359,17 +374,22 @@ export type DataQualityReport = {
   issues: {
     quote_wrapped: DqOrgIssue[];
     phone_as_name: DqOrgIssue[];
+    job_title_as_name?: DqOrgIssue[];
     whitespace: DqOrgIssue[];
   };
   org_duplicate_groups: DqDuplicateGroup[];
   tag_variant_groups: DqTagVariantGroup[];
+  person_duplicate_groups: DqPersonDuplicateGroup[];
   summary: {
     quote_wrapped: number;
     phone_as_name: number;
+    job_title_as_name?: number;
     whitespace: number;
     duplicate_groups: number;
     duplicate_orgs: number;
     tag_variant_groups: number;
+    person_duplicate_groups: number;
+    duplicate_people: number;
   };
 };
 

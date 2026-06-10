@@ -193,6 +193,20 @@ export function PeopleRoute() {
   );
   const visible = hasEmailOnly ? items.filter((person) => Boolean(person.primary_email)) : items;
   const tagItems = tags.data?.items ?? [];
+  // Fold case/format variants (e.g. "Friends" + "friends") so each tag appears
+  // once in the filter. The data may still hold the variants until Data Quality
+  // → Canonicalize tags is run; this just keeps the list clean. The most-used
+  // variant's label wins, and folding by slug also fixes the duplicate React key.
+  const foldedTags = useMemo(() => {
+    const byKey = new Map<string, (typeof tagItems)[number]>();
+    for (const t of tagItems) {
+      const key = (t.slug || t.display_name || "").toLowerCase();
+      if (!key) continue;
+      const prev = byKey.get(key);
+      if (!prev || (t.usage_count ?? 0) > (prev.usage_count ?? 0)) byKey.set(key, t);
+    }
+    return [...byKey.values()];
+  }, [tagItems]);
   const filtered = Boolean(query) || hasEmailOnly;
 
   const totalPeople = people.data?.pages?.[0]?.total_count ?? items.length;
@@ -283,13 +297,13 @@ export function PeopleRoute() {
 
             <div>
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tags</p>
-              {tagItems.length ? (
+              {foldedTags.length ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {tagItems.slice(0, 12).map((tag) => (
+                  {foldedTags.slice(0, 12).map((tag) => (
                     <TagChip key={tag.slug} label={tag.display_name ?? tag.slug} />
                   ))}
-                  {tagItems.length > 12 ? (
-                    <span className="text-xs text-muted-foreground">+{tagItems.length - 12} more</span>
+                  {foldedTags.length > 12 ? (
+                    <span className="text-xs text-muted-foreground">+{foldedTags.length - 12} more</span>
                   ) : null}
                 </div>
               ) : (

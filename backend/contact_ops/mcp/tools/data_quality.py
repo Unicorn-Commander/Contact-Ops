@@ -34,7 +34,8 @@ from contact_ops.mcp.errors import ORG_NOT_FOUND, VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, register
-from contact_ops.models import Organization, PersonOrgRole, PersonTenantMembership
+from contact_ops.models import Organization, Person, PersonOrgRole, PersonTenantMembership
+from contact_ops.models.email import Email
 from contact_ops.models.enums import MergeStatus
 
 # ---- normalization primitives -------------------------------------------------
@@ -109,6 +110,36 @@ def is_phone_like(name: str) -> bool:
     return len(digits) >= 7 and len(letters) == 0
 
 
+# Singular role/title nouns that almost never END a real company name — used to
+# flag a job title parsed into the org field (e.g. "GenX Dayshift Manager").
+# Companies that genuinely contain these usually pluralize ("Acme Engineers") or
+# carry a legal/company marker, both of which are excluded below.
+_TITLE_LAST_WORDS: frozenset[str] = frozenset(
+    {
+        "manager", "director", "supervisor", "coordinator", "clerk", "cashier",
+        "receptionist", "secretary", "technician", "operator", "foreman",
+        "intern", "president", "ceo", "cfo", "cto", "coo", "officer", "owner",
+        "administrator", "bookkeeper", "dispatcher", "custodian", "janitor",
+        "driver", "bartender", "server", "cook", "chef", "nurse", "teacher",
+        "professor", "assistant", "representative", "consultant", "analyst",
+        "engineer", "specialist", "agent", "associate",
+    }
+)
+
+
+def looks_like_job_title(name: str) -> bool:
+    """Conservative heuristic: a multi-word name whose LAST word is a singular
+    role noun and that carries no company marker ('&' or a legal suffix) — i.e. a
+    job title that landed in the org field. Read-only (surfaced for review)."""
+    s = clean_display(name)
+    if not s or "&" in s:
+        return False
+    tokens = re.sub(r"[^a-z0-9 ]+", " ", s.lower()).split()
+    if len(tokens) < 2 or any(t in _LEGAL_SUFFIXES for t in tokens):
+        return False
+    return tokens[-1] in _TITLE_LAST_WORDS
+
+
 def dedup_key(name: str) -> str:
     """Aggressive canonical key for grouping duplicate-candidate org names.
 
@@ -162,6 +193,52 @@ async def _org_edge_counts(ctx: MCPContext) -> dict[uuid.UUID, int]:
     return {row[0]: int(row[1]) for row in rows if row[0] is not None}
 
 
+# Role / shared inboxes legitimately attach to many distinct people, so a shared
+# one is NOT a duplicate signal — skipped when grouping people by email.
+_ROLE_LOCALPARTS: frozenset[str] = frozenset(
+    {
+        "info", "sales", "support", "admin", "contact", "hello", "office",
+        "team", "no-reply", "noreply", "help", "billing", "accounts",
+        "accounting", "hr", "careers", "jobs", "webmaster", "postmaster",
+        "mail", "email", "service", "marketing", "press", "enquiries",
+    }
+)
+
+
+def _suggest_person_survivor(members: list[dict[str, Any]]) -> uuid.UUID:
+    """Best survivor: a full given+family name, then the longest display name."""
+
+    def score(m: dict[str, Any]) -> tuple[int, int]:
+        has_full = 1 if (m.get("given_name") and m.get("family_name")) else 0
+        return (has_full, len(m.get("name") or ""))
+
+    return max(members, key=score)["person_id"]
+
+
+async def _person_email_rows(ctx: MCPContext) -> list[dict[str, Any]]:
+    """Canonical persons joined to their (lowercased) emails for dup grouping.
+
+    RLS + the explicit ``canonical_owner_tenant_id`` filter keep this to the
+    caller's tenant; the join to ``persons`` scopes the otherwise tenant-less
+    ``emails`` rows. Read-only — no merge is performed here.
+    """
+    rows = await ctx.db.execute(
+        select(
+            Person.id,
+            Person.display_name,
+            Person.given_name,
+            Person.family_name,
+            func.lower(Email.address).label("email"),
+        )
+        .join(Email, Email.person_id == Person.id)
+        .where(
+            Person.canonical_owner_tenant_id == ctx.tenant_id,
+            Person.merge_status == MergeStatus.canonical,
+        )
+    )
+    return [dict(r._mapping) for r in rows]
+
+
 # ---- data_quality_report ------------------------------------------------------
 
 
@@ -175,6 +252,7 @@ class DataQualityReportOutput(ToolOutput):
     issues: dict[str, list[dict[str, Any]]]
     org_duplicate_groups: list[dict[str, Any]]
     tag_variant_groups: list[dict[str, Any]]
+    person_duplicate_groups: list[dict[str, Any]] = []
     summary: dict[str, int]
 
 
@@ -191,13 +269,14 @@ async def data_quality_report(
     ctx: MCPContext, req: DataQualityReportInput
 ) -> DataQualityReportOutput:
     require_role(ctx, "CLIENT")
-    require_scopes(ctx, ("org:read", "tag:read"))
+    require_scopes(ctx, ("org:read", "tag:read", "person:read"))
 
     orgs = await _canonical_orgs(ctx)
     edge_counts = await _org_edge_counts(ctx)
 
     quote_wrapped: list[dict[str, Any]] = []
     phone_as_name: list[dict[str, Any]] = []
+    job_title_as_name: list[dict[str, Any]] = []
     whitespace: list[dict[str, Any]] = []
     by_key: dict[str, list[dict[str, Any]]] = {}
 
@@ -211,6 +290,10 @@ async def data_quality_report(
             quote_wrapped.append(entry)
         elif cleaned != name:
             whitespace.append(entry)
+        # Independent signal (a job-title name can also be unique), so check it
+        # outside the elif chain — surfaced read-only for human review on import.
+        if looks_like_job_title(name):
+            job_title_as_name.append({"org_id": org.id, "name": name})
         key = dedup_key(name)
         if key:
             by_key.setdefault(key, []).append(entry)
@@ -263,25 +346,64 @@ async def data_quality_report(
         )
     tag_variant_groups.sort(key=lambda g: len(g["variants"]), reverse=True)
 
+    # ---- people (duplicate candidates grouped by a shared email) ----
+    # Email is the highest-precision dedup signal (two canonical people sharing
+    # a personal address are almost certainly the same person). Detection only —
+    # the merge action is deliberately NOT wired here (see notes).
+    person_rows = await _person_email_rows(ctx)
+    by_email: dict[str, dict[uuid.UUID, dict[str, Any]]] = {}
+    for r in person_rows:
+        email = (r["email"] or "").strip().lower()
+        if not email or "@" not in email:
+            continue
+        if email.split("@", 1)[0] in _ROLE_LOCALPARTS:
+            continue
+        by_email.setdefault(email, {})[r["id"]] = {
+            "person_id": r["id"],
+            "name": r["display_name"],
+            "given_name": r["given_name"],
+            "family_name": r["family_name"],
+            "email": email,
+        }
+    person_duplicate_groups: list[dict[str, Any]] = []
+    for email, members_map in by_email.items():
+        if len(members_map) < 2:
+            continue
+        members = list(members_map.values())
+        person_duplicate_groups.append(
+            {
+                "key": email,
+                "shared_email": email,
+                "members": members,
+                "suggested_survivor_id": _suggest_person_survivor(members),
+            }
+        )
+    person_duplicate_groups.sort(key=lambda g: len(g["members"]), reverse=True)
+
     lim = req.sample_limit if req.include_samples else 0
     issues = {
         "quote_wrapped": quote_wrapped[:lim],
         "phone_as_name": phone_as_name[:lim],
+        "job_title_as_name": job_title_as_name[:lim],
         "whitespace": whitespace[:lim],
     }
     summary = {
         "quote_wrapped": len(quote_wrapped),
         "phone_as_name": len(phone_as_name),
+        "job_title_as_name": len(job_title_as_name),
         "whitespace": len(whitespace),
         "duplicate_groups": len(duplicate_groups),
         "duplicate_orgs": sum(len(g["members"]) for g in duplicate_groups),
         "tag_variant_groups": len(tag_variant_groups),
+        "person_duplicate_groups": len(person_duplicate_groups),
+        "duplicate_people": sum(len(g["members"]) for g in person_duplicate_groups),
     }
     return DataQualityReportOutput(
         org_total=len(orgs),
         issues=issues,
         org_duplicate_groups=duplicate_groups[: req.sample_limit],
         tag_variant_groups=tag_variant_groups,
+        person_duplicate_groups=person_duplicate_groups[: req.sample_limit],
         summary=summary,
     )
 
@@ -661,15 +783,16 @@ def register_data_quality_tools() -> None:
     register(
         name="data_quality_report",
         description=(
-            "Read-only scan of organizations and tags for dirty data: literal "
-            "quote-wrapped names, phone-as-name, whitespace, duplicate-candidate "
-            "groups, and case/format tag variants. Requires CLIENT + org:read,tag:read."
+            "Read-only scan of organizations, tags, and people for dirty data: "
+            "literal quote-wrapped names, phone-as-name, whitespace, duplicate "
+            "org/person candidate groups, and case/format tag variants. People are "
+            "grouped by a shared email. Requires CLIENT + org:read,tag:read,person:read."
         ),
         input_model=DataQualityReportInput,
         output_model=DataQualityReportOutput,
         handler=data_quality_report,
         required_role="CLIENT",
-        required_scopes=("org:read", "tag:read"),
+        required_scopes=("org:read", "tag:read", "person:read"),
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,

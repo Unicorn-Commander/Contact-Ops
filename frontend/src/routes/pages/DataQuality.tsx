@@ -9,6 +9,7 @@
  * a separate, per-group human decision in the merge cockpit.
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
   ArrowRight,
@@ -20,6 +21,7 @@ import {
   ShieldCheck,
   Sparkles,
   Tags as TagsIcon,
+  Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -32,7 +34,7 @@ import {
   useDataQualityReport,
   useMergeOrganizationsMutation,
 } from "@/hooks/useDataQuality";
-import type { DataQualityReport, DqDuplicateGroup } from "@/lib/types";
+import type { DataQualityReport, DqDuplicateGroup, DqPersonDuplicateGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function DataQualityRoute() {
@@ -83,14 +85,20 @@ function Header({ onRefresh, refreshing }: { onRefresh: () => void; refreshing: 
 function ReportBody({ data }: { data: DataQualityReport }) {
   const s = data.summary;
   const totalIssues =
-    s.quote_wrapped + s.whitespace + s.phone_as_name + s.duplicate_groups + s.tag_variant_groups;
+    s.quote_wrapped +
+    s.whitespace +
+    s.phone_as_name +
+    s.duplicate_groups +
+    s.tag_variant_groups +
+    (s.person_duplicate_groups ?? 0);
 
   return (
     <div className="space-y-co-16">
       {/* metric strip */}
-      <div className="grid grid-cols-2 gap-co-8 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-co-8 sm:grid-cols-3 lg:grid-cols-6">
         <Metric icon={Quote} label="Quote-wrapped" value={s.quote_wrapped} tone="amber" />
         <Metric icon={Building2} label="Duplicate orgs" value={s.duplicate_orgs} tone="amber" />
+        <Metric icon={Users} label="Duplicate people" value={s.duplicate_people ?? 0} tone="amber" />
         <Metric icon={TagsIcon} label="Tag variants" value={s.tag_variant_groups} tone="amber" />
         <Metric icon={Hash} label="Phone-as-name" value={s.phone_as_name} tone="rose" />
         <Metric icon={ShieldCheck} label="Scanned orgs" value={data.org_total} tone="neutral" />
@@ -111,6 +119,8 @@ function ReportBody({ data }: { data: DataQualityReport }) {
       <OrgNamesSection data={data} />
       <TagsSection data={data} />
       <DuplicateOrgsSection data={data} />
+      <DuplicatePeopleSection data={data} />
+      <JobTitleOrgSection data={data} />
       <PhoneNameSection data={data} />
     </div>
   );
@@ -434,6 +444,98 @@ function DuplicateGroupRow({ group }: { group: DqDuplicateGroup }) {
         />
       </span>
     </li>
+  );
+}
+
+function DuplicatePeopleSection({ data }: { data: DataQualityReport }) {
+  const groups = data.person_duplicate_groups ?? [];
+  if (groups.length === 0) {
+    return (
+      <SectionCard
+        icon={Users}
+        title="Duplicate people"
+        subtitle="No people share an email address."
+        clean
+      />
+    );
+  }
+  const g = data.summary;
+  return (
+    <SectionCard
+      icon={Users}
+      title="Duplicate people"
+      subtitle={`${g.person_duplicate_groups} group${g.person_duplicate_groups === 1 ? "" : "s"} (${g.duplicate_people} people) share an email — open each to reconcile`}
+      action={
+        <Badge variant="outline" className="rounded-[var(--radius-sm)] text-12 text-muted-foreground">
+          Review
+        </Badge>
+      }
+    >
+      <ul className="space-y-co-8">
+        {groups.slice(0, 12).map((grp) => (
+          <PersonDuplicateGroupRow key={grp.key} group={grp} />
+        ))}
+      </ul>
+      {groups.length > 12 ? (
+        <p className="pt-co-8 text-12 text-muted-foreground">
+          + <MonoNumeric tone="muted">{groups.length - 12}</MonoNumeric> more groups
+        </p>
+      ) : null}
+    </SectionCard>
+  );
+}
+
+function PersonDuplicateGroupRow({ group }: { group: DqPersonDuplicateGroup }) {
+  return (
+    <li className="flex flex-wrap items-center gap-co-6 rounded-md border border-border/60 bg-muted/20 px-co-8 py-co-6 text-13">
+      <span className="inline-flex items-center gap-co-4 font-mono text-12 text-muted-foreground" title={group.shared_email}>
+        <Hash className="h-3 w-3 shrink-0" />
+        {group.shared_email}
+      </span>
+      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      {group.members.map((m) => {
+        const survivor = m.person_id === group.suggested_survivor_id;
+        return (
+          <Link
+            key={m.person_id}
+            to="/people/$id"
+            params={{ id: m.person_id }}
+            title={survivor ? "Suggested record to keep — open it" : "Open this duplicate"}
+            className={cn(
+              "focus-ring inline-flex items-center gap-co-4 rounded-[var(--radius-sm)] px-co-6 py-0.5 text-12 transition-colors",
+              survivor
+                ? "border border-success/50 bg-success/10 font-medium text-foreground"
+                : "border border-border bg-card text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground",
+            )}
+          >
+            {survivor ? <Check className="h-3 w-3 shrink-0 text-success" /> : null}
+            {m.name}
+          </Link>
+        );
+      })}
+    </li>
+  );
+}
+
+function JobTitleOrgSection({ data }: { data: DataQualityReport }) {
+  const items = data.issues.job_title_as_name ?? [];
+  if (items.length === 0) return null;
+  return (
+    <SectionCard
+      icon={AlertTriangle}
+      title="Job titles used as organizations"
+      subtitle={`${items.length} org${items.length === 1 ? "" : "s"} look like a job title parsed into the company field — review or rename`}
+    >
+      <ul className="flex flex-wrap gap-co-6">
+        {items.map((o) => (
+          <li key={o.org_id}>
+            <Badge variant="outline" className="rounded-[var(--radius-sm)] border-warning/40 bg-warning/10 text-12 text-warning">
+              {o.name}
+            </Badge>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
   );
 }
 
