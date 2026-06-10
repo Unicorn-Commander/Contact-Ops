@@ -187,8 +187,15 @@ class MCPServerInstance:
             )
             try:
                 output = await tool.handler(ctx, parsed)
-                await db.commit()
+                # Commit the audit/Undo ledger (audit_db) BEFORE the data (db). Both
+                # point at the same Postgres, so the gap is tiny, but if a crash hits
+                # between the two commits this fails in the SAFE direction: an orphan
+                # ledger row (a reversible op whose data didn't land) is harmless —
+                # unmerge_people/_organizations just no-op on already-canonical rows —
+                # whereas committing data first would strand UNRECOVERABLE changes with
+                # no Undo record (the action_event is the sole reversibility ledger).
                 await audit_db.commit()
+                await db.commit()
             except ToolError as exc:
                 await db.rollback()
                 await audit_db.rollback()

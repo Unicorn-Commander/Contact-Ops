@@ -634,6 +634,16 @@ async def merge_organizations(
     if not losers:
         raise ToolError(VALIDATION_FAILED, "loser_ids must differ from survivor_id", retryable=False)
 
+    if not req.dry_run:
+        # Serialize overlapping merges (see merge_people): lock survivor + losers
+        # FOR UPDATE in id order so the canonical check-then-merge is atomic and
+        # deadlock-safe — two concurrent merges sharing an org can't both proceed.
+        for lid in sorted({req.survivor_id, *losers}, key=str):
+            await ctx.db.execute(
+                text("SELECT id FROM organizations WHERE id = CAST(:id AS uuid) FOR UPDATE"),
+                {"id": str(lid)},
+            )
+
     survivor = await _load_org(ctx, req.survivor_id)
     if survivor.merge_status != MergeStatus.canonical:
         raise ToolError(VALIDATION_FAILED, "survivor is not a canonical organization", retryable=False)
@@ -995,6 +1005,21 @@ async def merge_people(ctx: MCPContext, req: MergePeopleInput) -> MergePeopleOut
     losers = [lid for lid in req.loser_ids if lid != req.survivor_id]
     if not losers:
         raise ToolError(VALIDATION_FAILED, "loser_ids must differ from survivor_id", retryable=False)
+
+    if not req.dry_run:
+        # Serialize overlapping merges: lock the survivor + every loser FOR UPDATE
+        # in a deterministic id order so the canonical check-then-merge below is
+        # atomic. Without this, two concurrent merges sharing a person (READ
+        # COMMITTED, no row locks) could both see it canonical and proceed, cross-
+        # wiring its child rows onto two survivors while each Undo ledger records
+        # only its own move. id-sorted locking is deadlock-safe across callers, and
+        # it also closes the same-survivor one-primary race (the surv_has_primary
+        # read-then-write becomes atomic).
+        for lid in sorted({req.survivor_id, *losers}, key=str):
+            await ctx.db.execute(
+                text("SELECT id FROM persons WHERE id = CAST(:id AS uuid) FOR UPDATE"),
+                {"id": str(lid)},
+            )
 
     survivor = await _load_person(ctx, req.survivor_id)
     if survivor.merge_status != MergeStatus.canonical:
