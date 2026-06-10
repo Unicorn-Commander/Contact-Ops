@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect } from "react";
 import { createRootRoute, createRoute, createRouteMask, createRouter, Outlet, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "react-oidc-context";
-import { Compass, Network, Sparkles } from "lucide-react";
+import { AlertTriangle, Compass, Network, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { useOnboarding } from "@/hooks/useOnboarding";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -403,6 +404,13 @@ function LazyReviewQueuePreviewRoute() {
 
 function AuthGate() {
   const auth = useAuth();
+  // First-login auto-onboarding: provisions a personal workspace for a
+  // brand-new user (token has no tenant_id), then silently re-auths so the
+  // refreshed token carries it. Strictly idempotent — see useOnboarding. The
+  // hook returns phase "idle" until auth resolves, so calling it
+  // unconditionally is safe.
+  const onboarding = useOnboarding();
+
   if (auth.isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -413,7 +421,71 @@ function AuthGate() {
   if (!auth.isAuthenticated) {
     return <LoginHero onSignIn={() => void auth.signinRedirect()} />;
   }
+
+  // Brand-new user → provisioning their workspace (POST /api/auth/onboard +
+  // silent re-auth). Brief, self-resolving state.
+  if (onboarding.isOnboarding) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Spinner label="Setting up your workspace…" size="lg" />
+      </div>
+    );
+  }
+  // Onboarding not configured (503) or it failed — surface a message instead of
+  // crashing or looping. Sign-out is the only safe action for "unavailable";
+  // "error" also offers a manual retry.
+  if (onboarding.phase === "unavailable" || onboarding.phase === "error") {
+    return (
+      <OnboardingNotice
+        title={
+          onboarding.phase === "unavailable"
+            ? "Workspace setup unavailable"
+            : "We couldn't finish setting up your workspace"
+        }
+        message={onboarding.message}
+        onRetry={onboarding.phase === "error" ? onboarding.retry : undefined}
+        onSignOut={() => void auth.signoutRedirect()}
+      />
+    );
+  }
+
   return <AppShell />;
+}
+
+function OnboardingNotice({
+  title,
+  message,
+  onRetry,
+  onSignOut
+}: {
+  title: string;
+  message?: string;
+  onRetry?: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-lg text-center">
+        <CardContent className="flex flex-col items-center gap-4 py-16">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <AlertTriangle className="h-7 w-7" strokeWidth={1.5} />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+            <p className="mx-auto max-w-sm text-sm text-muted-foreground">
+              {message ?? "Please try again or contact your administrator."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}
+            <Button variant="ghost" onClick={onSignOut}>
+              Sign out
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 /**

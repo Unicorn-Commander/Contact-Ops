@@ -32,6 +32,15 @@ from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
 
+# The ONE tenant-less-reachable route (Phase 4.4 self-serve onboarding). A valid
+# Keycloak token that has passed full signature/issuer/audience verification but
+# carries NO tenant_id yet (a brand-new user before provision_personal_workspace
+# has run) must be able to reach EXACTLY this route — and only with POST — so it
+# can mint its first workspace. Every other path still fails closed on a missing
+# tenant_id. Kept as a module constant so the route and the allowance can never
+# drift; the endpoint in api/auth.py is mounted at this exact path.
+ONBOARD_PATH = "/api/auth/onboard"
+
 
 class JWTValidationMiddleware(BaseHTTPMiddleware):
     """Validate a bearer JWT on every request and stash claims on request.state.
@@ -115,6 +124,14 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if not token:
             return _unauthorized("missing bearer token")
 
+        # Narrow tenant-less allowance (Phase 4.4 onboarding): a brand-new user's
+        # token carries no tenant_id yet. Decided HERE and ONLY for POST
+        # /api/auth/onboard; every other path still fails closed on a missing
+        # tenant_id. PAT/Brigade paths pass no flag, so they are unaffected.
+        allow_missing_tenant = (
+            request.url.path == ONBOARD_PATH and request.method == "POST"
+        )
+
         pat_error: str | None = None
         if token.startswith("co_pat_"):
             claims, pat_error, pat_id = await self._validate_pat(token)
@@ -123,7 +140,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             if pat_id is not None:
                 asyncio.create_task(self._mark_pat_used(pat_id))
         else:
-            claims = await self._validate(token)
+            claims = await self._validate(token, allow_missing_tenant=allow_missing_tenant)
             if claims is None:
                 claims = await self._validate_brigade(token)
         if claims is None:
@@ -162,7 +179,18 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         token = auth[7:].strip()
         return token or None
 
-    async def _validate(self, token: str) -> dict[str, Any] | None:
+    async def _validate(
+        self, token: str, *, allow_missing_tenant: bool = False
+    ) -> dict[str, Any] | None:
+        """Validate a Keycloak JWT.
+
+        ``allow_missing_tenant`` (set ONLY by dispatch() for POST
+        /api/auth/onboard) skips the step-4 tenant_id PRESENCE check so a
+        brand-new, not-yet-provisioned user can reach onboarding. EVERYTHING
+        ELSE still runs and still fails closed: signature, issuer, audience,
+        exp/nbf/iat, the alg-confusion guard, JWKS kid, the azp allow-list, and
+        the uc_uid=sub pin. A non-Keycloak token can never provision a workspace.
+        """
         try:
             from jose import jwt
             from jose.exceptions import ExpiredSignatureError, JWTError
@@ -218,8 +246,12 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("jwt_invalid", error=str(exc))
             return None
 
-        # 4. Required custom claim: tenant_id
-        if not claims.get("tenant_id"):
+        # 4. Required custom claim: tenant_id. FAIL-CLOSED by default — the ONLY
+        # exception is the onboarding route (allow_missing_tenant=True, set
+        # narrowly by dispatch() for POST /api/auth/onboard), because a
+        # not-yet-provisioned user legitimately has no tenant_id yet. uc_uid still
+        # resolves from `sub` below, so onboard provisions against the right user.
+        if not claims.get("tenant_id") and not allow_missing_tenant:
             logger.warning(
                 "jwt_missing_tenant_id", sub=claims.get("sub"), iss=claims.get("iss")
             )
@@ -381,9 +413,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             "tenant_id": str(tenant["id"]),
             "tenant_slug": str(tenant["slug"]),
             "tenant_hipaa": bool(tenant["hipaa_mode"]),
-            # Reflect the issuer the token was ACTUALLY verified against (any of
-            # the trusted brokers), not just the primary singular setting.
-            "iss": str(brigade_claims.get("iss") or self.settings.BRIGADE_TRUSTED_ISSUER),
+            "iss": self.settings.BRIGADE_TRUSTED_ISSUER,
             "aud": self.settings.BRIGADE_EXPECTED_AUDIENCE,
             "preferred_username": uc_uid,
             "scope": " ".join(sorted(effective_scopes)),

@@ -1,4 +1,18 @@
-"""Workspace-switch endpoint (Phase 4.3).
+"""Auth endpoints: workspace-switch (Phase 4.3) + self-serve onboarding (Phase 4.4).
+
+`POST /api/auth/onboard` (Phase 4.4) is the public self-serve entry point. On a
+human's FIRST authenticated request — before they belong to any workspace — it
+materializes their personal workspace via the `provision_personal_workspace`
+SECURITY DEFINER function (migration 0038), writes the resulting tenant_id /
+tenant_slug back onto the Keycloak user (so the next signinSilent mints a
+tenant-bearing token, exactly like switch-workspace), and returns the tenant.
+It is IDEMPOTENT: a user who already has an active membership gets their existing
+home tenant back with `provisioned: false` and no second workspace is created.
+It REUSES switch-workspace's Keycloak attribute-write helper, its
+INERT-503-without-secret posture, its 502-on-KC-error collapse (no secret ever
+logged), and its audit pattern (a `tenant.onboard` action_event). This is the
+ONE route the JWT middleware lets a verified-but-tenant-less Keycloak token reach
+(see middleware/jwt_validation.py: ONBOARD_PATH + allow_missing_tenant).
 
 `POST /api/auth/switch-workspace` changes the *active workspace* of a human
 Keycloak session. The mechanism is **silent re-auth**, NOT token-exchange:
@@ -85,6 +99,14 @@ class SwitchWorkspaceResponse(BaseModel):
     ok: bool
     tenant_id: uuid.UUID
     tenant_slug: str
+
+
+class OnboardResponse(BaseModel):
+    tenant_id: uuid.UUID
+    tenant_slug: str
+    # False when the user already had an active membership (idempotent replay);
+    # True when this call materialized a brand-new personal workspace.
+    provisioned: bool
 
 
 @router.post(
@@ -249,6 +271,277 @@ async def switch_workspace(
         tenant_id=body.target_tenant_id,
         tenant_slug=tenant_slug,
     )
+
+
+@router.post(
+    "/onboard",
+    response_model=OnboardResponse,
+    summary="Provision the caller's personal workspace on first login (self-serve)",
+)
+async def onboard(request: Request) -> OnboardResponse:
+    """Materialize the caller's first personal workspace (idempotent).
+
+    Reached by a Keycloak token that has passed FULL signature/issuer/audience
+    verification in the middleware but may lack a tenant_id (the middleware lets
+    a tenant-less verified KC token reach ONLY this route — see
+    middleware/jwt_validation.py). Flow:
+
+      1. Require a Keycloak-issued token (iss == KEYCLOAK_ISSUER). PAT / Brigade
+         / standalone identities are single-tenant by construction and have no
+         Keycloak user to provision against -> 400. This mirrors switch-workspace
+         and is a second, independent issuer check (defense in depth: even though
+         the middleware allowance is KC-only, the handler does not trust that).
+      2. uc_uid is the middleware-pinned `sub` (the membership key). Fail-closed
+         if absent.
+      3. Idempotency: if the user already has ANY active membership, return their
+         home tenant {tenant_id, tenant_slug, provisioned: false} — do NOT create
+         a second workspace. (The DB function is itself idempotent under an
+         advisory lock; this is the cheap pre-check so the happy replay path does
+         no KC write at all.)
+      4. Otherwise call provision_personal_workspace(uc_uid, preferred_username,
+         email), then set the new tenant_id / tenant_slug on the KC user via the
+         SAME confidential contact-ops-switch admin write switch-workspace uses,
+         so a subsequent signinSilent mints a tenant-bearing token. INERT-503 if
+         the switch client secret is unset; any KC failure -> 502 (secret never
+         leaks). Emit a `tenant.onboard` audit event. Return provisioned: true.
+    """
+    settings = get_settings()
+    claims = getattr(request.state, "jwt_claims", None)
+    if not isinstance(claims, dict):
+        # The middleware sets jwt_claims on every authenticated request; absence
+        # is a programming error, but fail closed.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user identity unresolved",
+        )
+
+    # (1) Keycloak-only. Onboarding provisions a *Keycloak* user's first
+    # workspace; non-KC issuers have no switchable/provisionable attribute.
+    if claims.get("iss") != settings.KEYCLOAK_ISSUER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="onboarding is only available for interactive sessions",
+        )
+
+    # (2) `uc_uid` is pinned to `sub` by the middleware and is the membership key.
+    uc_uid = str(claims.get("uc_uid") or claims.get("sub") or "")
+    if not uc_uid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user identity unresolved",
+        )
+
+    preferred_username = str(claims.get("preferred_username") or "")
+    email = str(claims.get("email") or "")
+
+    # (3) Idempotent fast path + (4) provisioning, in a single short-lived
+    # session. We bind uc_uid for attribution but DELIBERATELY leave tenant
+    # unbound at first (current_tenant_id() -> NULL): we do not yet know which
+    # workspace is the caller's home. The membership pre-check reads
+    # `user_tenant_membership` ALONE (uc_uid-keyed; readable under utm_tenant_scope
+    # RLS which keys on app.uc_uid) — it does NOT join `tenants`, because the
+    # `tenants` SELECT policy is `id = current_tenant_id()` and with no tenant
+    # bound that is NULL-over-deny (0034's noted recursion/NULL trap). The
+    # provisioning function is DEFINER and bypasses RLS regardless, so its INSERTs
+    # do not depend on a bound GUC. Only AFTER we know the tenant id (existing or
+    # freshly provisioned) do we bind to it and read its slug through RLS.
+    provisioned = False
+    async with async_session_maker() as session:
+        await bind_session_context(session, "", uc_uid, settings)
+
+        resolved_tenant_id = await _user_active_membership_tenant(session, uc_uid)
+        if resolved_tenant_id is None:
+            # No membership -> provision. The DEFINER function takes its own
+            # advisory lock and is itself idempotent, so a race that slipped past
+            # the pre-check still yields exactly one workspace and returns that
+            # tenant id (we'd then report provisioned=true for it, which is the
+            # correct semantic: this request observed no prior membership).
+            resolved_tenant_id = await _provision_personal_workspace(
+                session, uc_uid=uc_uid, username=preferred_username, email=email
+            )
+            provisioned = True
+
+        if not resolved_tenant_id:
+            # Provisioning returned no tenant (e.g. a non-uuid sub the
+            # owner_user_id NOT NULL constraint refused). Surface a clean 500
+            # rather than a half state; nothing actionable was written.
+            await session.rollback()
+            logger.error("onboard_provision_returned_no_tenant", uc_uid=uc_uid)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="workspace provisioning failed",
+            )
+
+        tenant_id_str = str(resolved_tenant_id)
+
+        # Now that we know the caller's tenant (and they are its member/owner),
+        # bind to it so the `tenants` SELECT policy admits the slug read.
+        await bind_session_context(session, tenant_id_str, uc_uid, settings)
+        new_slug = await _tenant_slug(session, tenant_id_str)
+        await session.commit()
+
+    if not new_slug:
+        # The membership/provision pointed at a tenant whose slug we cannot read
+        # back even bound to it (deleted mid-flight, or never created). Fail clean.
+        logger.error(
+            "onboard_slug_unreadable", uc_uid=uc_uid, tenant_id=tenant_id_str
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="workspace provisioning failed",
+        )
+
+    if not provisioned:
+        # Idempotent replay: the user already had an active membership. Return
+        # their home tenant; do NOT touch Keycloak and do NOT emit a provision
+        # audit event (nothing was created).
+        logger.info(
+            "onboard_idempotent_replay", uc_uid=uc_uid, tenant_id=tenant_id_str
+        )
+        return OnboardResponse(
+            tenant_id=resolved_tenant_id,
+            tenant_slug=new_slug,
+            provisioned=False,
+        )
+
+    new_tenant_id = resolved_tenant_id
+
+    # (4) Inert-until-configured guard — identical posture to switch-workspace.
+    # If the contact-ops-switch client secret is unset we must NOT attempt a KC
+    # admin write. The workspace + membership already exist (committed above), so
+    # a later retry once the secret is configured will take the idempotent path
+    # and only do the attribute write. 503 signals "try again once configured".
+    if not settings.KEYCLOAK_SWITCH_CLIENT_SECRET:
+        logger.warning("onboard_not_configured", uc_uid=uc_uid)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="onboarding not configured",
+        )
+
+    # Set tenant_id / tenant_slug on the KC user via the SAME confidential
+    # contact-ops-switch service account switch-workspace uses. Any KC failure
+    # collapses to 502 with a safe message (secret / KC internals never leak).
+    try:
+        await _set_keycloak_tenant_attributes(
+            settings,
+            uc_uid=uc_uid,
+            tenant_id=tenant_id_str,
+            tenant_slug=new_slug,
+        )
+    except _KeycloakError as exc:
+        logger.warning(
+            "onboard_keycloak_failed",
+            uc_uid=uc_uid,
+            tenant_id=tenant_id_str,
+            stage=exc.stage,
+            # exc.detail is operator-facing and never contains the secret/token.
+            detail=exc.detail,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="identity provider update failed",
+        ) from exc
+
+    # Best-effort audit AFTER the KC write succeeds (audit must never break the
+    # successful response), bound to the NEW tenant the caller now owns.
+    await _emit_onboard_audit_event(
+        request,
+        claims=claims,
+        uc_uid=uc_uid,
+        tenant_id=tenant_id_str,
+        tenant_slug=new_slug,
+    )
+
+    logger.info("onboard_provisioned", uc_uid=uc_uid, tenant_id=tenant_id_str)
+    return OnboardResponse(
+        tenant_id=new_tenant_id,
+        tenant_slug=new_slug,
+        provisioned=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding DB helpers (membership pre-check, provisioning, slug read)
+# ---------------------------------------------------------------------------
+
+
+async def _user_active_membership_tenant(
+    session: Any, uc_uid: str
+) -> uuid.UUID | None:
+    """Return the caller's home tenant id (active membership) or None.
+
+    Reads ``user_tenant_membership`` ALONE — no ``tenants`` JOIN — so it is
+    correct for a tenant-LESS session. The table's RLS (utm_tenant_scope, 0035)
+    keys on ``app.uc_uid`` (which we bound) and the WHERE filters on the caller's
+    own uc_uid, so a caller can only ever observe their OWN memberships. We do
+    NOT join ``tenants`` here because that table's SELECT policy is
+    ``id = current_tenant_id()``; with no tenant bound that is NULL and would
+    deny every row (0034's NULL-over-deny trap). The slug is read separately,
+    AFTER binding to the resolved tenant.
+
+    "Home" uses the SAME ordering provision_personal_workspace's idempotent fast
+    path uses (``is_default DESC, added_at ASC``) so the onboard pre-check and the
+    DB function agree on which membership is canonical. This is only the cheap
+    idempotent pre-check; the DEFINER function remains the authoritative
+    race-safe path.
+    """
+    row = await session.execute(
+        text(
+            """
+            SELECT tenant_id
+            FROM user_tenant_membership
+            WHERE user_uc_uid = :uc
+              AND status = 'active'
+            ORDER BY is_default DESC, added_at ASC
+            LIMIT 1
+            """
+        ),
+        {"uc": uc_uid},
+    )
+    return row.scalar()
+
+
+async def _provision_personal_workspace(
+    session: Any, *, uc_uid: str, username: str, email: str
+) -> uuid.UUID | None:
+    """Call the migration-0038 SECURITY DEFINER provisioning function.
+
+    Returns the (new or race-resolved existing) tenant id. The function is
+    DEFINER + advisory-locked + idempotent: it creates exactly one
+    kind='personal', standard-isolation, non-HIPAA workspace owned by ``uc_uid``
+    plus a single self admin membership, or returns the existing tenant if one
+    already exists. Free-text ``username`` / ``email`` are passed as bound
+    parameters and consumed only as plpgsql values (no dynamic SQL).
+    """
+    row = await session.execute(
+        text(
+            "SELECT provision_personal_workspace(:uc, :uname, :email) AS tenant_id"
+        ),
+        {"uc": uc_uid, "uname": username, "email": email},
+    )
+    return row.scalar()
+
+
+async def _tenant_slug(session: Any, tenant_id: uuid.UUID | str) -> str | None:
+    """Read a tenant's slug by id (post-provision read-back).
+
+    No membership re-gate is needed: the caller was just provisioned as this
+    tenant's admin (or it is their existing home tenant), and the id came from
+    the DEFINER function in this same transaction.
+    """
+    row = await session.execute(
+        text(
+            """
+            SELECT slug
+            FROM tenants
+            WHERE id = CAST(:tid AS uuid)
+              AND deprecated_at IS NULL
+            """
+        ),
+        {"tid": str(tenant_id)},
+    )
+    value = row.scalar()
+    return str(value) if value is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -544,4 +837,93 @@ async def _emit_switch_audit_event(
             error=str(exc),
             from_tenant_id=from_tenant_id,
             to_tenant_id=to_tenant_id,
+        )
+
+
+async def _emit_onboard_audit_event(
+    request: Request,
+    *,
+    claims: dict[str, Any],
+    uc_uid: str,
+    tenant_id: str,
+    tenant_slug: str,
+) -> None:
+    """Write a `tenant.onboard` action_event via the audit role.
+
+    Mirrors `_emit_switch_audit_event` / `middleware/audit.py`: a direct INSERT
+    into `action_event` under a tenant-bound `contact_ops_audit` session. The
+    row's `tenant_id`, `aggregate_id`, and `human_authority` are all the NEWLY
+    provisioned workspace / its admin — the caller now owns this tenant, so the
+    audit session can satisfy the `ae_audit_insert` WITH CHECK
+    (tenant_id = current_tenant_id()). `aggregate_type` is `tenant`.
+
+    Best-effort: any failure is logged and swallowed (audit must never break the
+    successful onboard response). As with switch, AuditMiddleware also writes a
+    generic `http.POST /api/auth/onboard` event for the request; this
+    `tenant.onboard` event marks the SUCCESSFUL provision specifically.
+    """
+    try:
+        actor_chain = getattr(request.state, "actor_chain", {"sub": claims.get("sub")})
+        human_authority = (
+            getattr(request.state, "human_authority", claims.get("sub")) or uc_uid
+        )
+
+        payload: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "tenant_slug": tenant_slug,
+            "mechanism": "self-serve-onboard",
+        }
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        content_hash = hashlib.sha256(payload_json.encode("utf-8")).digest()
+
+        async with get_audit_db_context(tenant_id=tenant_id, uc_uid=uc_uid) as db:
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO action_event (
+                        event_type, event_version,
+                        tenant_id, aggregate_type, aggregate_id,
+                        payload, actor, actor_type,
+                        human_authority,
+                        evidence, status,
+                        content_hash
+                    ) VALUES (
+                        :event_type, 1,
+                        CAST(:tenant_id AS uuid), 'tenant'::entity_kind,
+                        CAST(:aggregate_id AS uuid),
+                        CAST(:payload AS jsonb), CAST(:actor AS jsonb), 'human'::actor_type,
+                        CAST(:human_authority AS uuid),
+                        CAST(:evidence AS jsonb), 'applied'::event_status,
+                        :content_hash
+                    )
+                    """
+                ),
+                {
+                    "event_type": "tenant.onboard",
+                    "tenant_id": tenant_id,
+                    "aggregate_id": tenant_id,
+                    "payload": payload_json,
+                    "actor": json.dumps(
+                        actor_chain, sort_keys=True, separators=(",", ":")
+                    ),
+                    "human_authority": (
+                        str(human_authority) if human_authority else None
+                    ),
+                    "evidence": json.dumps(
+                        {
+                            "source": "onboard",
+                            "client_id": claims.get("azp") or claims.get("aud"),
+                            "request_id": request.headers.get("x-request-id"),
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    "content_hash": content_hash,
+                },
+            )
+    except Exception as exc:  # noqa: BLE001 — audit must not break the response
+        logger.error(
+            "onboard_audit_failed",
+            error=str(exc),
+            tenant_id=tenant_id,
         )
