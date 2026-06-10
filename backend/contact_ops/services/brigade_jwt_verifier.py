@@ -70,19 +70,22 @@ class BrigadeJWKSCache:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        # kid -> JWK, merged across every trusted issuer's JWKS (kids are unique
-        # per broker, so the merge is collision-free).
-        self._keys: dict[str, dict[str, Any]] = {}
+        # kid -> (issuer, JWK). Binding each key to the issuer whose JWKS it came
+        # from lets the verifier require that a token's signing key belongs to
+        # the issuer the token CLAIMS — so trusting brokers A and B does not let
+        # A mint a token claiming iss=B (cross-broker impersonation).
+        self._keys: dict[str, tuple[str, dict[str, Any]]] = {}
         self._expires_at = 0.0
         self._lock = threading.Lock()
 
     def prime(self) -> None:
         self.refresh(force=True)
 
-    def resolve_key(self, kid: str) -> dict[str, Any] | None:
-        key = self._find(kid)
-        if key is not None:
-            return key
+    def resolve_key(self, kid: str) -> tuple[str, dict[str, Any]] | None:
+        """Return (issuer, JWK) for kid, refreshing once on a miss (key rotation)."""
+        entry = self._find(kid)
+        if entry is not None:
+            return entry
         self.refresh(force=True)
         return self._find(kid)
 
@@ -95,7 +98,7 @@ class BrigadeJWKSCache:
             if not urls:
                 logger.warning("brigade_jwks_fetch_failed", reason="jwks-url-unconfigured")
                 return
-            merged: dict[str, dict[str, Any]] = {}
+            merged: dict[str, tuple[str, dict[str, Any]]] = {}
             fetched_any = False
             for issuer, jwks_url in urls.items():
                 try:
@@ -114,7 +117,20 @@ class BrigadeJWKSCache:
                 fetched_any = True
                 for key in jwks.get("keys", []) or []:
                     if isinstance(key, dict) and isinstance(key.get("kid"), str):
-                        merged[cast(str, key["kid"])] = cast(dict[str, Any], key)
+                        kid = cast(str, key["kid"])
+                        existing = merged.get(kid)
+                        if existing is not None and existing[0] != issuer:
+                            # kids are expected unique per broker; a cross-issuer
+                            # collision means one key would shadow the other. Log
+                            # it — the shadowed issuer's tokens for this kid then
+                            # fail the signature check, never a silent mis-trust.
+                            logger.warning(
+                                "brigade_jwks_kid_collision",
+                                kid=kid,
+                                issuer=issuer,
+                                shadows_issuer=existing[0],
+                            )
+                        merged[kid] = (issuer, cast(dict[str, Any], key))
             if not fetched_any:
                 # Every issuer's JWKS fetch failed (transient outage): keep the
                 # prior keys rather than blanking the cache and rejecting all
@@ -129,7 +145,7 @@ class BrigadeJWKSCache:
                 ttl_s=BRIGADE_JWKS_TTL_SECONDS,
             )
 
-    def _find(self, kid: str) -> dict[str, Any] | None:
+    def _find(self, kid: str) -> tuple[str, dict[str, Any]] | None:
         now = time.time()
         if not self._keys or now >= self._expires_at:
             self.refresh(force=False)
@@ -189,9 +205,10 @@ def _verify_brigade_jwt_with_reason(
     if not isinstance(kid, str) or not kid:
         return _reject("missing-kid")
 
-    key = jwks_cache.resolve_key(kid)
-    if key is None:
+    entry = jwks_cache.resolve_key(kid)
+    if entry is None:
         return _reject("kid-not-found", kid=kid)
+    key_issuer, key = entry
 
     try:
         # python-jose's jwk.construct takes the JWK dict + algorithm; both
@@ -250,6 +267,18 @@ def _verify_brigade_jwt_with_reason(
         return _reject("aud-mismatch", kid=kid)
     if claims.get("iss") not in issuers:
         return _reject("iss-mismatch", kid=kid)
+    # Bind the signing key to the claimed issuer: the kid that signed this token
+    # must belong to the JWKS of the issuer the token CLAIMS. Without this, a
+    # trusted broker A could sign a token claiming iss=B (another trusted broker)
+    # and impersonate B's principals — the JWKS merge alone only proves "signed
+    # by SOME trusted broker", not "by the one it claims".
+    if claims.get("iss") != key_issuer:
+        return _reject(
+            "iss-key-mismatch",
+            kid=kid,
+            claimed_iss=str(claims.get("iss")),
+            key_iss=key_issuer,
+        )
     if not claims.get("sub"):
         return _reject("missing-sub", kid=kid)
     # Canonical tenancy claim is workspace_id (SUITE-IDENTITY 0.1; Brigade
