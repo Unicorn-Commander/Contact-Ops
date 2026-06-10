@@ -153,6 +153,7 @@ async def propose_canonical_records(
     upload_id: uuid.UUID,
     filename: str | None,
     dry_run: bool = False,
+    auto_approve: bool = False,
     parse_errors: list[ImportRowError] | None = None,
 ) -> ImportSummary:
     """Dedup, detect existing people, and emit Review-Queue proposals.
@@ -170,6 +171,7 @@ async def propose_canonical_records(
     duplicate_count = 0
     preview: list[ImportPreview] = []
     seen: set[str] = set()
+    emitted_ids: list[uuid.UUID] = []
 
     for index, record in enumerate(records):
         parsed_count += 1
@@ -191,7 +193,7 @@ async def propose_canonical_records(
         if dry_run:
             continue
 
-        await emit_person_create_proposal(
+        eid = await emit_person_create_proposal(
             ctx=ctx,
             record=record,
             upload_id=upload_id,
@@ -204,6 +206,7 @@ async def propose_canonical_records(
                 "source_record_id": record.source_record_id,
             },
         )
+        emitted_ids.append(eid)
         proposed_count += 1
 
     if not dry_run and proposed_count > 0:
@@ -225,6 +228,39 @@ async def propose_canonical_records(
         await run_dedup_agent(ctx.db, tenant_id=ctx.tenant_id)
         await run_quality_filter(ctx.db, tenant_id=ctx.tenant_id)
         await run_confidence_approver(ctx.db, tenant_id=ctx.tenant_id)
+
+        if auto_approve and emitted_ids:
+            # Owner chose to TRUST this import → directly effect the proposals
+            # that survived dedup/quality. We can't lean on the confidence-
+            # approver here: emit_action_event NULLs confidence for human actors
+            # (and imports are human-triggered), so a human import never clears
+            # the >=0.95 bar. Apply each surviving 'proposed' row (create person +
+            # children + graph node) and flip it to applied — reusing the approval
+            # applier with one shared FalkorDB client for the batch.
+            from contact_ops.agents.graph_sync.falkordb_client import FalkorDBGraphClient
+            from contact_ops.services.inbox_mutations import _apply_person_create_proposal
+
+            graph_client = FalkorDBGraphClient()
+            try:
+                for eid in emitted_ids:
+                    status_now = await ctx.db.scalar(
+                        text("SELECT status FROM action_event WHERE event_id = CAST(:e AS uuid)"),
+                        {"e": str(eid)},
+                    )
+                    if status_now != "proposed":
+                        continue  # archived by quality, merged by dedup, etc.
+                    await _apply_person_create_proposal(
+                        db=ctx.db, tenant_id=ctx.tenant_id, proposal_id=eid, graph_client=graph_client
+                    )
+                    await ctx.db.execute(
+                        text(
+                            "UPDATE action_event SET status='applied', applied_at=now() "
+                            "WHERE event_id = CAST(:e AS uuid)"
+                        ),
+                        {"e": str(eid)},
+                    )
+            finally:
+                await graph_client.close()
 
     return ImportSummary(
         parsed_count=parsed_count,

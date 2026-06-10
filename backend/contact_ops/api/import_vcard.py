@@ -25,6 +25,7 @@ from contact_ops.services.vcard_import import (
 router = APIRouter(tags=["Import"])
 VCARD_FILE_FIELD = File(...)
 DRY_RUN_FIELD = Form(default="false")
+AUTO_APPROVE_FIELD = Form(default="false")
 
 
 @router.post("/import/vcard")
@@ -32,6 +33,7 @@ async def import_vcard_endpoint(
     request: Request,
     file: UploadFile = VCARD_FILE_FIELD,
     dry_run: str = DRY_RUN_FIELD,
+    auto_approve: str = AUTO_APPROVE_FIELD,
 ) -> VCardImportResult:
     ctx_base = _context_from_request(request)
     body = await _read_limited(file)
@@ -59,6 +61,7 @@ async def import_vcard_endpoint(
                 ctx=ctx_base,
                 vcard_text=text_body,
                 dry_run=_parse_bool(dry_run),
+                auto_approve=_parse_bool(auto_approve),
                 filename=file.filename,
             )
             await db.commit()

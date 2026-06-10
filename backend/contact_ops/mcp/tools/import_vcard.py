@@ -17,6 +17,9 @@ from contact_ops.services.vcard_import import (
 class ProposeVCardRecordsInput(BaseModel):
     vcard_text: str = Field(min_length=1, max_length=50 * 1024 * 1024)
     dry_run: bool = False
+    # Trust this import → auto-approve high-confidence rows (land + graph now)
+    # instead of queuing them for review. Duplicates are still skipped.
+    auto_approve: bool = False
 
 
 async def propose_vcard_records(
@@ -30,6 +33,7 @@ async def propose_vcard_records(
             ctx=ctx,
             vcard_text=req.vcard_text,
             dry_run=req.dry_run,
+            auto_approve=req.auto_approve,
             filename="mcp-pasted.vcf",
         )
     except VCardImportError as exc:

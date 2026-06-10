@@ -20,6 +20,10 @@ from contact_ops.services.import_propose import ImportSummary
 class ProposeCSVRecordsInput(BaseModel):
     csv_text: str = Field(min_length=1, max_length=50 * 1024 * 1024)
     dry_run: bool = False
+    # Trust this import → auto-approve high-confidence rows (they land + graph
+    # immediately) instead of waiting in the Review Queue. Duplicates are still
+    # skipped; only genuinely new, reversible person.create rows auto-apply.
+    auto_approve: bool = False
 
 
 async def propose_csv_records(
@@ -33,6 +37,7 @@ async def propose_csv_records(
             ctx=ctx,
             csv_text=req.csv_text,
             dry_run=req.dry_run,
+            auto_approve=req.auto_approve,
             filename="mcp-pasted.csv",
         )
     except CSVImportError as exc:

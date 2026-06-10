@@ -51,6 +51,7 @@ async def propose_vcard_import(
     ctx: MCPContext,
     vcard_text: str,
     dry_run: bool = False,
+    auto_approve: bool = False,
     filename: str | None = None,
     upload_id: uuid.UUID | None = None,
 ) -> ImportSummary:
@@ -85,6 +86,7 @@ async def propose_vcard_import(
         upload_id=resolved_upload_id,
         filename=source_filename,
         dry_run=dry_run,
+        auto_approve=auto_approve,
         parse_errors=parse_errors,
     )
     logger.info(

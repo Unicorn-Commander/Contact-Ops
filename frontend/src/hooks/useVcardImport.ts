@@ -111,6 +111,8 @@ function endpointForFile(file: File): string {
 export interface UseVcardImportArgs {
   file: File;
   dryRun: boolean;
+  /** Trust this import → auto-approve high-confidence rows (skip the queue). */
+  autoApprove?: boolean;
 }
 
 // ---- Hook ------------------------------------------------------------------
@@ -125,7 +127,7 @@ export function useVcardImport() {
   const token = useAccessToken();
 
   return useMutation<VcardImportResult, Error, UseVcardImportArgs>({
-    mutationFn: async ({ file, dryRun }) => {
+    mutationFn: async ({ file, dryRun, autoApprove }) => {
       if (file.size > MAX_IMPORT_BYTES) {
         throw new FileTooLargeError();
       }
@@ -133,6 +135,7 @@ export function useVcardImport() {
       const form = new FormData();
       form.append("file", file);
       form.append("dry_run", dryRun ? "true" : "false");
+      form.append("auto_approve", autoApprove ? "true" : "false");
 
       let response: Response;
       try {

@@ -24,8 +24,13 @@ async def emit_person_create_proposal(
     record: CanonicalImportRecord,
     upload_id: uuid.UUID,
     source: dict[str, object],
+    confidence: float = 0.9,
 ) -> uuid.UUID:
-    """Emit a Review Queue proposal without inserting a Person row."""
+    """Emit a Review Queue proposal without inserting a Person row.
+
+    ``confidence`` defaults to 0.9 (below the confidence-approver's 0.95 bar, so
+    the proposal waits for human review). An owner-trusted import can pass a
+    value >=0.95 so the post-import pipeline auto-approves it."""
 
     idempotency_key = _idempotency_key(ctx.tenant_id, upload_id, record)
     existing = await ctx.audit_db.scalar(
@@ -61,7 +66,7 @@ async def emit_person_create_proposal(
         payload_before=None,
         payload_after=payload_after,
         status="proposed",
-        confidence=0.9,
+        confidence=confidence,
         rationale="Proposed person creation from contact import. No contact row was applied.",
         evidence=dict(source),
     )

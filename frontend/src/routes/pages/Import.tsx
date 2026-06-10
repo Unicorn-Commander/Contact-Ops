@@ -32,7 +32,8 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  XCircle
+  XCircle,
+  Zap
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -121,6 +122,67 @@ function DryRunToggle({ checked, onChange, disabled }: DryRunToggleProps) {
           checked
             ? "border-primary bg-primary"
             : "border-border bg-muted"
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-background shadow-[var(--shadow-1)] transition-transform",
+            checked ? "translate-x-[18px]" : "translate-x-[2px]"
+          )}
+        />
+      </span>
+      <input
+        id={id}
+        type="checkbox"
+        role="switch"
+        aria-checked={checked}
+        className="sr-only"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
+  );
+}
+
+// Trust-this-import toggle: high-confidence new rows are created + graphed
+// immediately instead of queuing for review. Mirrors DryRunToggle's affordance.
+function AutoApproveToggle({ checked, onChange, disabled }: DryRunToggleProps) {
+  const id = useId();
+  return (
+    <label
+      htmlFor={id}
+      className={cn(
+        "focus-within:ring-ring/40 group inline-flex w-full max-w-md cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 text-sm transition-colors",
+        checked ? "border-primary/40 bg-primary/5" : "hover:bg-muted",
+        disabled && "cursor-not-allowed opacity-60"
+      )}
+    >
+      <span className="flex min-w-0 items-start gap-3">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
+            checked ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+          )}
+        >
+          <Zap className="h-3 w-3" strokeWidth={2} />
+        </span>
+        <span className="min-w-0 leading-snug">
+          <span className="block font-medium text-foreground">
+            Trust this import — approve automatically
+          </span>
+          <span className="block text-xs text-muted-foreground">
+            New contacts are created and added to your graph immediately instead of
+            waiting in the Review Queue. Duplicates are still skipped.
+          </span>
+        </span>
+      </span>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors",
+          checked ? "border-primary bg-primary" : "border-border bg-muted"
         )}
       >
         <span
@@ -540,6 +602,7 @@ function ErrorBanner({
 export function ImportRoute() {
   const [file, setFile] = useState<File | null>(null);
   const [dryRun, setDryRun] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
   const [dragging, setDragging] = useState(false);
   // Drag enter/leave on a parent element fires for every child too; the level
   // counter dedupes that so the styled state doesn't flicker mid-drag.
@@ -568,14 +631,14 @@ export function ImportRoute() {
     if (err instanceof ImportTransportError) {
       return {
         message: `We couldn't reach the import service: ${err.message}`,
-        retry: file ? () => importMutation.mutate({ file, dryRun }) : undefined
+        retry: file ? () => importMutation.mutate({ file, dryRun, autoApprove: autoApprove && !dryRun }) : undefined
       };
     }
     return {
       message: err.message || "Something went wrong uploading your file.",
-      retry: file ? () => importMutation.mutate({ file, dryRun }) : undefined
+      retry: file ? () => importMutation.mutate({ file, dryRun, autoApprove: autoApprove && !dryRun }) : undefined
     };
-  }, [importMutation, file, dryRun]);
+  }, [importMutation, file, dryRun, autoApprove]);
 
   const handleFileChosen = useCallback(
     (next: File) => {
@@ -592,8 +655,8 @@ export function ImportRoute() {
 
   const handleUpload = useCallback(() => {
     if (!file || isUploading) return;
-    importMutation.mutate({ file, dryRun });
-  }, [file, dryRun, isUploading, importMutation]);
+    importMutation.mutate({ file, dryRun, autoApprove: autoApprove && !dryRun });
+  }, [file, dryRun, autoApprove, isUploading, importMutation]);
 
   const handleDragEnter = useCallback(() => {
     dragDepth.current += 1;
@@ -672,6 +735,11 @@ export function ImportRoute() {
       {oversizedHint ? <ErrorBanner message={oversizedHint} /> : null}
 
       <DryRunToggle checked={dryRun} onChange={setDryRun} disabled={isUploading} />
+      <AutoApproveToggle
+        checked={autoApprove && !dryRun}
+        onChange={setAutoApprove}
+        disabled={isUploading || dryRun}
+      />
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         {isUploading ? (
