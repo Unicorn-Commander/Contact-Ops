@@ -19,6 +19,7 @@ from fastapi import APIRouter, Response, status
 
 from contact_ops.core.config import get_settings
 from contact_ops.core.database import engine
+from contact_ops.ops.schema_guard import get_schema_version
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +60,7 @@ async def readiness_check(response: Response) -> dict[str, Any]:
 
     # Database — use shared engine, not a fresh one per call.
     checks["database"] = await _check_postgres(engine)
+    checks["schema"] = await _check_schema(engine)
 
     # Redis
     checks["redis"] = await _check_redis(settings.REDIS_URL)
@@ -122,6 +124,31 @@ async def _check_postgres(db_engine) -> dict[str, Any]:
     except Exception as exc:
         latency_ms = round((_time.monotonic() - start) * 1000, 1)
         logger.error("database_health_check_failed", error=str(exc))
+        return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
+
+
+async def _check_schema(db_engine) -> dict[str, Any]:
+    start = _time.monotonic()
+    try:
+        version = await get_schema_version(db_engine)
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        if version.matches:
+            return {
+                "status": "healthy",
+                "expected": version.expected,
+                "actual": version.actual,
+                "latency_ms": latency_ms,
+            }
+        return {
+            "status": "unhealthy",
+            "expected": version.expected,
+            "actual": version.actual,
+            "error": "alembic revision mismatch",
+            "latency_ms": latency_ms,
+        }
+    except Exception as exc:
+        latency_ms = round((_time.monotonic() - start) * 1000, 1)
+        logger.error("schema_health_check_failed", error=str(exc))
         return {"status": "unhealthy", "error": str(exc), "latency_ms": latency_ms}
 
 

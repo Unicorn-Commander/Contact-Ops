@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
+import httpx
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -58,6 +59,14 @@ class Connector(ABC):
         expiring token (e.g. iCloud app-specific passwords).
         """
         return False
+
+    async def refresh_access_token(self) -> bool:
+        """Force-refresh the provider access token, if supported."""
+        return False
+
+
+class ConnectorReconnectRequiredError(RuntimeError):
+    """Raised when stored OAuth consent is no longer refreshable."""
 
 
 def token_needs_refresh(payload: dict[str, Any], *, skew_seconds: int = 300) -> bool:
@@ -117,9 +126,26 @@ async def run_connector_pull(
         # Refresh the upstream OAuth token if it has expired, BEFORE pulling.
         # Persisted in its own committed session so a freshly minted token is
         # not lost when the request transaction rolls back on a later error.
-        if await connector.ensure_fresh_token():
-            await _persist_connector_payload(ctx.tenant_id, connector_id, connector.payload)
-        records = await connector.pull(ctx, since=None)
+        await _refresh_and_persist_if_needed(
+            tenant_id=ctx.tenant_id,
+            connector_id=connector_id,
+            connector=connector,
+            force=False,
+        )
+        try:
+            records = await connector.pull(ctx, since=None)
+        except Exception as exc:
+            if not _is_provider_unauthorized(exc):
+                raise
+            refreshed = await _refresh_and_persist_if_needed(
+                tenant_id=ctx.tenant_id,
+                connector_id=connector_id,
+                connector=connector,
+                force=True,
+            )
+            if not refreshed:
+                raise
+            records = await connector.pull(ctx, since=None)
         seen: set[str] = set()
         upload_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
@@ -157,6 +183,53 @@ async def run_connector_pull(
         await _persist_run_failure(ctx, connector_id, triggered_by, result, str(exc))
         raise
     return run_id, result
+
+
+async def _refresh_and_persist_if_needed(
+    *,
+    tenant_id: uuid.UUID,
+    connector_id: uuid.UUID,
+    connector: Connector,
+    force: bool,
+) -> bool:
+    try:
+        changed = (
+            await connector.refresh_access_token()
+            if force
+            else await connector.ensure_fresh_token()
+        )
+    except Exception as exc:
+        if _is_invalid_grant(exc):
+            message = (
+                "reconnect_required: OAuth refresh failed with invalid_grant; "
+                "the account revoked consent or the refresh token expired"
+            )
+            await _mark_connector_error(
+                tenant_id=tenant_id,
+                connector_id=connector_id,
+                message=message,
+            )
+            raise ConnectorReconnectRequiredError(message) from exc
+        raise
+    if changed:
+        await _persist_connector_payload(tenant_id, connector_id, connector.payload)
+    return changed
+
+
+def _is_provider_unauthorized(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401
+
+
+def _is_invalid_grant(exc: Exception) -> bool:
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    try:
+        body = exc.response.json()
+    except ValueError:
+        body = {}
+    if isinstance(body, dict) and body.get("error") == "invalid_grant":
+        return True
+    return "invalid_grant" in exc.response.text
 
 
 async def _start_run(
@@ -272,6 +345,36 @@ async def _persist_connector_payload(
             ),
             {
                 "payload": encrypt_payload(payload),
+                "connector_id": str(connector_id),
+                "tenant_id": str(tenant_id),
+            },
+        )
+        await db.commit()
+
+
+async def _mark_connector_error(
+    *,
+    tenant_id: uuid.UUID,
+    connector_id: uuid.UUID,
+    message: str,
+) -> None:
+    settings = get_settings()
+    async with async_session_maker() as db:
+        await bind_session_context(
+            db, str(tenant_id), "service:connector-token-refresh", settings
+        )
+        await db.execute(
+            text(
+                """
+                UPDATE connector_configs
+                SET status = 'error',
+                    last_error = :message
+                WHERE id = CAST(:connector_id AS uuid)
+                  AND tenant_id = CAST(:tenant_id AS uuid)
+                """
+            ),
+            {
+                "message": message,
                 "connector_id": str(connector_id),
                 "tenant_id": str(tenant_id),
             },

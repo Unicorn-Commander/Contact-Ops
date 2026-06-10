@@ -29,6 +29,7 @@ from fastapi import Request, Response
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from contact_ops.agents.observability.metrics import AUDIT_WRITE_FAILURES_TOTAL
 from contact_ops.core.database import get_audit_db_context
 
 logger = structlog.get_logger(__name__)
@@ -106,7 +107,11 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 "duration_ms": elapsed_ms,
                 "client_host": request.client.host if request.client else None,
                 "user_agent": request.headers.get("user-agent"),
-                "request_id": request.headers.get("x-request-id"),
+                "request_id": str(
+                    getattr(request.state, "request_id", "")
+                    or request.headers.get("x-request-id")
+                    or ""
+                ),
             }
             payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
             content_hash = hashlib.sha256(payload_json.encode("utf-8")).digest()
@@ -158,9 +163,11 @@ class AuditMiddleware(BaseHTTPMiddleware):
                     },
                 )
         except Exception as exc:
-            # Audit must not break the response, but we want to see this in logs
-            # and metrics. Once Prometheus is wired (Phase 1), increment a
-            # counter here so we alert on persistent audit failure.
+            # Audit must not break the response, but this must page: a failed
+            # audit write breaks the product's provenance contract.
+            AUDIT_WRITE_FAILURES_TOTAL.labels(
+                tenant=str(claims.get("tenant_id") or "unknown")
+            ).inc()
             logger.error(
                 "audit_write_failed",
                 error=str(exc),
