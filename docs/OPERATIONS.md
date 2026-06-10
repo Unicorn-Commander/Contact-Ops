@@ -8,8 +8,9 @@ migrations, the membership gate, and the gotchas that have actually bitten.
 
 - **Host:** bigboy (Tailscale `100.126.207.157`, `ssh magicunicorn`, user `muut`).
   Code at `/home/muut/contact-ops` (git clone of
-  `git.unicorncommander.ai/aaron/Contact-Ops.git`, deployed branch
-  `feat/csv-import-gui`).
+  `git.unicorncommander.ai/aaron/Contact-Ops.git`, deployed branch **`main`**
+  — repointed from `feat/brigade-multi-issuer-verifier` at the v2.7.0 publish;
+  commit + deploy directly on `main` now).
 - **Services (`docker-compose.prod.yml`):** `contact-ops-backend` (uvicorn,
   internal :8501; hosts both the MCP server at `mcp.contacts.magicunicorn.dev`
   and CardDAV at `carddav.contacts.magicunicorn.dev`) and
@@ -148,3 +149,29 @@ exercises the predicate. Flip via the backend `.env` + `up -d` (not restart).
   triggered; there is no scheduler. OAuth tokens now refresh-before-pull.
 - **Metrics surface:** `audit_write_failures_total` is wired; alerting on it
   (and on schema-version drift) still needs a Prometheus scrape + alert rule.
+
+## Known follow-ups (tracked, non-blocking — flagged by adversarial review)
+
+Surfaced during the v2.7.0/v2.7.1 reviews; all latent / fail-closed, deferred
+deliberately rather than rushed (the security-adjacent ones want their own
+careful change + re-review):
+
+- **Brigade verifier — EdDSA capability gap.** `requirements.txt` pins
+  `python-jose[cryptography]==3.5.0`, which has **no EdDSA/OKP support**, while
+  `ALLOWED_BRIGADE_ALGORITHMS` lists `EdDSA` and `brigade_registration` declares
+  `signing_algorithm: ed25519`. Today this is inert: Brigade's live JWKS is
+  **RSA/RS256** (verify: `curl https://brigade.unicorncommander.ai/.well-known/jwks.json`),
+  which jose handles. The existing brigade test passes only because it ENCODES
+  with PyJWT but the verifier DECODES with python-jose (the recurring jwt-import
+  trap) — so the EdDSA decode path is untested. Fix WHEN/IF Brigade migrates to
+  EdDSA: upgrade jose (or verify with PyJWT) **and** add a real EdDSA decode test.
+- **Brigade verifier — trailing-slash issuer.** `_trusted_issuers` rstrips `/`
+  on config but compares the raw `claims.iss`, so a broker whose issuer URL ends
+  in `/` is false-rejected (availability, fails closed). No current broker does.
+  Fix = normalize `claims.iss` consistently (interacts with `jwt.decode`'s own
+  issuer check — re-run the kid→issuer adversarial test after).
+- **merge_people / unmerge_people nice-to-haves.** (a) Map a commit-time
+  `IntegrityError` to a *retryable* `ToolError` rather than opaque JSON-RPC
+  `-32603` (the FOR UPDATE lock makes the unique-violation rare, so low value).
+  (b) `unmerge` regenerates `loser.etag` rather than restoring the pre-merge
+  value — cosmetic (etag is an opaque concurrency token, no business data).
