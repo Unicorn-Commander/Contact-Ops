@@ -113,20 +113,24 @@ exercises the predicate. Flip via the backend `.env` + `up -d` (not restart).
 
 ## Backups
 
-- **DB backup is wired:** `scripts/backup.sh` runs a superuser `pg_dump`
-  (bypasses RLS — the `contact_ops_runtime` user is RLS-subject and CANNOT dump
-  full tables), gzips it to `/home/muut/contact-ops-backups/` with 14-deep
-  retention, and refuses to keep a suspiciously small (RLS-failed) dump. Run it
-  manually, or enable the daily cron in the script header:
-  `15 3 * * * /home/muut/contact-ops/scripts/backup.sh >> /home/muut/contact-ops-backups/backup.log 2>&1`.
-- **Restore** procedure is documented in the script header (zcat | psql as the
-  superuser into a fresh `contact_ops_db`).
+- **DB backup is wired and off-host** via `scripts/contact-ops-backup.sh` (cron
+  `10 3 * * *`): a superuser `pg_dump` of `contact_ops_db` (the `contact_ops_admin`
+  superuser bypasses RLS — the `contact_ops_runtime` user is RLS-subject and a
+  pg_dump as it fails "query would be affected by row-level security policy" with
+  only schema/0 rows), gzipped to `~/backups/contact-ops/` (30-day local
+  retention) AND **uploaded off-host to Lambda S3**. Log: `~/logs/contact-ops-backup.log`.
+- **Restore:** `zcat ~/backups/contact-ops/contact_ops_db_YYYYMMDD.sql.gz | docker
+  run --rm -i --network unicorn-network -e PGPASSWORD=$(docker exec
+  contact-ops-postgres printenv POSTGRES_PASSWORD) postgres:16 psql -h
+  contact-ops-postgres -U contact_ops_admin -d contact_ops_db` (into a fresh DB).
 
 ## Not yet wired (backlog)
 
-- **FalkorDB + `.env` backup:** the graph is rebuildable from Postgres (the
-  backfill script), and `.env` holds the secrets — both should still be added to
-  the backup routine. Off-box copy of the backups is also TODO.
+- **`.env` backup:** `contact-ops-backup.sh` does not snapshot `.env` (secrets
+  needed for a from-scratch restore). Adding it should be done carefully —
+  off-host secrets need encryption.
+- **FalkorDB:** intentionally not backed up — the graph is rebuildable from
+  Postgres via `backend/scripts/graph_backfill.py`.
 - **Connector scheduling:** pulls are manual (`pull_connector_now`) / owner-
   triggered; there is no scheduler. OAuth tokens now refresh-before-pull.
 - **Metrics surface:** `audit_write_failures_total` is wired; alerting on it
