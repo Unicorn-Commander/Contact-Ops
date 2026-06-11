@@ -103,10 +103,46 @@ deployment, confirm YOUR real Keycloak `sub` has an `active` membership row**
 out. Codex's `tests/test_membership_gate_smoke.py` exercises the predicate. Flip
 via the backend `.env` + `up -d` (not restart).
 
+## Entitlement gate (plan-tier enforcement — owner action)
+
+Per-tool plan-tier gating at MCP dispatch (P-00075 §4). The free/paid line is
+**"gate on compute cost"**: free = reads + MCP/UI CRUD + deterministic dedup +
+graph + CSV/vCard import (cheap, their compute); **pro** = our-GPU autonomous
+agents (ML dedup `propose_merge`, enrichment, voice fingerprint/match);
+**enterprise** = compliance/SSO/federation (no tools yet). The policy is the
+single source of truth in `contact_ops/mcp/entitlement.py` (`_PRO_TOOLS` /
+`_ENTERPRISE_TOOLS`); the Brigade manifest reads the same `tier_for_tool()` so
+they can't drift. Per-tenant plan lives in `tenants.plan_tier` (migration 0041;
+existing tenants grandfathered to `enterprise`, new self-served tenants default
+`free`).
+
+Two flags, both in the backend `.env`:
+- `ENTITLEMENT_ENFORCED` (default **false** = shadow): the gate only **logs**
+  what it would deny (`entitlement_would_deny`) and allows the call. Flip `true`
+  to actually deny (`ENTITLEMENT_REQUIRED`). **Shadow-first like the membership
+  gate** — review `entitlement_would_deny` logs for any *free* tenant hitting a
+  tool you didn't mean to gate BEFORE flipping, or a mis-tag hard-locks a paying
+  tenant out of work they expect.
+- `DEPLOYMENT_MODE` (default `hosted`): set `self_host` to **bypass gating
+  entirely** — an open-source operator on their own cell gets everything.
+
+Currently **shadow** in prod (flag unset). Enforced + verified in-process
+2026-06-11 (free tenant → pro tool denied, free tool allowed, import allowed,
+self_host bypasses). Flip via `.env` + `up -d` (not restart).
+
 ## Known gotchas (hard-won)
 
 - **Deploy from the right place:** the project root has symlinks; the live source
-  is the bigboy clone. Don't let a stale mirror rsync over merged code.
+  is the bigboy clone (a git repo); the Mac mirror `_co-bigboy` is NOT a git repo.
+  Don't let a stale mirror rsync over merged code.
+- **`rsync --delete` from a stale mirror clobbers committed files:** the mirror
+  drifts from the bigboy clone (tests added on bigboy, Dockerfile changed there).
+  A `--delete` sync deleted two test files and reverted `backend/Dockerfile`
+  (committed = `CMD prestart` which auto-migrates; the mirror still had the old
+  `CMD uvicorn` → no auto-migration, DB stuck a rev behind). ALWAYS `git status`
+  on bigboy after an rsync and `git checkout --` the collateral, then
+  **re-baseline the mirror FROM bigboy** (`rsync bigboy:…/backend/ → mirror`)
+  after committing so it stops drifting.
 - **rsync `..` paths:** `…/mcp/tools/../services/` resolves to `mcp/services/`,
   not `contact_ops/services/` — a bad `..` once created a stray dupe dir. Use
   explicit destination paths.

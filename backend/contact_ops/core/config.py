@@ -96,6 +96,23 @@ class Settings(BaseSettings):
     # refused. MUST stay False until memberships are seeded, else it locks
     # everyone out; flipped on at activation alongside the seed.
     MEMBERSHIP_GATE_ENFORCED: bool = False
+    # Entitlement gate (P-00075 §4 monetization): per-tool plan-tier enforcement
+    # at MCP dispatch. The free/paid line is "gate on compute" — cheap work
+    # (reads, MCP/UI CRUD, deterministic dedup) is free; our-GPU autonomous
+    # agents (ML dedup, enrichment, voice-match, bulk import, connectors) are
+    # pro; compliance/SSO/federation are enterprise. The policy lives in
+    # contact_ops.mcp.entitlement (single source of truth, also feeds the
+    # Brigade manifest). Shadow-first: with this False the gate only LOGS what
+    # it WOULD deny (entitlement_would_deny) and allows the call — flip True to
+    # enforce. Mirrors the MEMBERSHIP_GATE_ENFORCED rollout caution: a mis-tagged
+    # free tool would otherwise hard-lock a paying tenant out of work they expect.
+    ENTITLEMENT_ENFORCED: bool = False
+    # Deployment mode. "self_host" = an open-source operator running their own
+    # cell on their own hardware; entitlement gating is BYPASSED entirely (their
+    # server, their data — gating it is pointless and user-hostile). "hosted" =
+    # our multi-tenant SaaS where tiers are enforced. Self-host sovereignty is
+    # the suite's offline-license story, not a per-tool paywall.
+    DEPLOYMENT_MODE: Literal["hosted", "self_host"] = "hosted"
     # Boot RLS self-test probe tenants. Under the runtime role the self-test
     # cannot enumerate tenants (RLS hides them with no GUC bound), so it skips.
     # Provide >=2 known tenant ids here so it can actively assert cross-tenant

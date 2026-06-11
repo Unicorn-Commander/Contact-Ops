@@ -37,6 +37,7 @@ from contact_ops.core.database import (
     audit_session_maker,
     bind_session_context,
 )
+from contact_ops.mcp.entitlement import check_entitlement
 from contact_ops.mcp.errors import ToolError, error_result
 from contact_ops.mcp.registry import MCPContext, get_tool, list_tools
 from contact_ops.mcp.tools import register_all_tools
@@ -175,6 +176,20 @@ class MCPServerInstance:
                             retryable=False,
                         )
                     )
+            # Entitlement gate (P-00075 §4): per-tool plan-tier enforcement.
+            # Runs AFTER the membership gate (so the GUC is bound for the plan
+            # read) and BEFORE the handler — free tools short-circuit with no DB
+            # I/O. Shadow-first + self-host bypass live inside check_entitlement.
+            entitlement_error = await check_entitlement(
+                tool_name=tool.name,
+                tenant_id=self.tenant_id,
+                db=db,
+                settings=settings,
+            )
+            if entitlement_error is not None:
+                await db.rollback()
+                await audit_db.rollback()
+                return error_result(entitlement_error)
             ctx = MCPContext(
                 tenant_id=self.tenant_id,
                 user_id=self.user_id,

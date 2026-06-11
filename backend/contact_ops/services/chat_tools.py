@@ -15,6 +15,7 @@ from contact_ops.core.database import (
     audit_session_maker,
     bind_session_context,
 )
+from contact_ops.mcp.entitlement import check_entitlement
 from contact_ops.mcp.errors import ToolError
 from contact_ops.mcp.registry import MCPContext, ToolDef, get_tool
 from contact_ops.mcp.tools import register_all_tools
@@ -145,6 +146,16 @@ class ChatToolExecutor:
             )
             try:
                 enforce_tool_rbac(mcp_ctx, tool)
+                # Entitlement gate (P-00075 §4) — the in-app AI assistant honors
+                # plan tiers too; shadow-first + self-host bypass live inside.
+                entitlement_error = await check_entitlement(
+                    tool_name=tool.name,
+                    tenant_id=ctx.tenant_id,
+                    db=db,
+                    settings=settings,
+                )
+                if entitlement_error is not None:
+                    raise entitlement_error
                 output = await tool.handler(mcp_ctx, parsed)
                 await db.commit()
                 await audit_db.commit()

@@ -42,6 +42,11 @@ class Tenant(Base):
     )
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     owner_user_id: Mapped[uuid_module.UUID] = mapped_column(PGUUID, nullable=False)
+    # Subscription plan tier (P-00075 §4 entitlement). free < pro < enterprise;
+    # the policy + ladder live in contact_ops.mcp.entitlement. Existing tenants
+    # were grandfathered to 'enterprise' in migration 0041; new self-served
+    # tenants default to 'free'.
+    plan_tier: Mapped[str] = mapped_column(Text, nullable=False, server_default=sa.text("'free'"))
     parent_tenant_id: Mapped[uuid_module.UUID | None] = mapped_column(ForeignKey("tenants.id"))
     branding: Mapped[dict] = mapped_column(JSONB, default=dict)
     retention_policy: Mapped[dict] = mapped_column(JSONB, default=dict)

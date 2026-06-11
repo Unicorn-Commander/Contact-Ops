@@ -7,6 +7,7 @@ import httpx
 import structlog
 
 from contact_ops.core.config import Settings, get_settings
+from contact_ops.mcp.entitlement import tier_for_tool
 from contact_ops.mcp.registry import list_tools
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +59,11 @@ def build_brigade_descriptor(settings: Settings | None = None) -> dict[str, Any]
                 "description": tool.description,
                 "input_schema": tool.input_model.model_json_schema(),
                 "scopes_required": list(tool.required_scopes),
-                "tier_required": "free" if _is_read_only(tool.name) else "pro",
+                # Real entitlement tier from the central policy (single source of
+                # truth shared with the dispatch gate), NOT the old read-only
+                # heuristic — so Brigade pre-filters by the tier we actually
+                # enforce.
+                "tier_required": tier_for_tool(tool.name),
                 "read_only": _is_read_only(tool.name),
                 "expected_latency_ms": 250 if _is_read_only(tool.name) else 800,
             }
