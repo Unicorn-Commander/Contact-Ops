@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Contact-Ops"
-    APP_VERSION: str = "2.7.1"
+    APP_VERSION: str = "2.7.2"
     ENV: Literal["dev", "test", "staging", "prod"] = "dev"
     DEBUG: bool = False
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -180,6 +180,14 @@ class Settings(BaseSettings):
     # prompt ships). expected_audience MUST match what Brigade signs tokens
     # with for THIS app; pick a stable string and never change it.
     BRIGADE_TRUSTED_ISSUER: str = "https://brigade.unicorncommander.ai"
+    # Multi-issuer trust (CSV). When set, Contact-Ops accepts Brigade JWTs from
+    # ANY listed issuer (e.g. a customer broker + the dogfood broker during a
+    # sovereign-federation migration) — each verified against its OWN JWKS and
+    # bound to its own keys, so a token's signing key MUST belong to the issuer
+    # it claims (see brigade_jwt_verifier: the iss-key-mismatch guard blocks one
+    # trusted broker from impersonating another). Empty -> falls back to the
+    # singular BRIGADE_TRUSTED_ISSUER. Inert unless set: backward compatible.
+    BRIGADE_TRUSTED_ISSUERS: str = ""
     BRIGADE_JWKS_URL: str = "https://brigade.unicorncommander.ai/.well-known/jwks.json"
     BRIGADE_EXPECTED_AUDIENCE: str = "contact-ops"
 

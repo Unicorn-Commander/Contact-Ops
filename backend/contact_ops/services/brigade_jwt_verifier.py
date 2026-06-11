@@ -25,7 +25,15 @@ from contact_ops.core.config import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
 
-ALLOWED_BRIGADE_ALGORITHMS = ["EdDSA", "RS256"]
+# Brigade signs with RS256 (its live JWKS is RSA). We pin RS256 ONLY: the
+# pinned python-jose has no EdDSA/OKP support, so listing "EdDSA" would advertise
+# a capability we cannot actually verify (an EdDSA token fails closed at key
+# construction, never validates) — a latent lie, and a needless JWT
+# alg-confusion surface. Keeping the allow-list to exactly the algorithm in use
+# is the defensive posture. If Brigade ever migrates to EdDSA, switch THIS
+# module's decode path to PyJWT (already a dependency — it does EdDSA) and add a
+# real EdDSA round-trip test; python-jose will not gain EdDSA support.
+ALLOWED_BRIGADE_ALGORITHMS = ["RS256"]
 BRIGADE_JWKS_TTL_SECONDS = 24 * 60 * 60
 BRIGADE_CLOCK_SKEW_SECONDS = 30
 
@@ -211,8 +219,8 @@ def _verify_brigade_jwt_with_reason(
     key_issuer, key = entry
 
     try:
-        # python-jose's jwk.construct takes the JWK dict + algorithm; both
-        # EdDSA (ed25519) and RS256 are supported.
+        # Build the RSA verification key from the JWK dict. alg is RS256 (the
+        # only algorithm we accept — see ALLOWED_BRIGADE_ALGORITHMS).
         signing_key = jwk.construct(key, algorithm=alg)
     except (JWKError, ValueError, TypeError) as exc:
         return _reject("invalid-jwks-key", kid=kid, error=str(exc))

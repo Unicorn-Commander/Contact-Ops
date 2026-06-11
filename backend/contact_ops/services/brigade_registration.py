@@ -49,7 +49,7 @@ def build_brigade_descriptor(settings: Settings | None = None) -> dict[str, Any]
                 "trusted_issuer": settings.BRIGADE_TRUSTED_ISSUER,
                 "jwks_url": settings.BRIGADE_JWKS_URL,
                 "expected_audience": settings.BRIGADE_EXPECTED_AUDIENCE,
-                "signing_algorithm": "ed25519",
+                "signing_algorithm": "RS256",
             },
         },
         "tools": [

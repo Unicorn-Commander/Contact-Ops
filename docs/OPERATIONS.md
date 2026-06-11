@@ -156,15 +156,27 @@ Surfaced during the v2.7.0/v2.7.1 reviews; all latent / fail-closed, deferred
 deliberately rather than rushed (the security-adjacent ones want their own
 careful change + re-review):
 
-- **Brigade verifier — EdDSA capability gap.** `requirements.txt` pins
-  `python-jose[cryptography]==3.5.0`, which has **no EdDSA/OKP support**, while
-  `ALLOWED_BRIGADE_ALGORITHMS` lists `EdDSA` and `brigade_registration` declares
-  `signing_algorithm: ed25519`. Today this is inert: Brigade's live JWKS is
-  **RSA/RS256** (verify: `curl https://brigade.unicorncommander.ai/.well-known/jwks.json`),
-  which jose handles. The existing brigade test passes only because it ENCODES
-  with PyJWT but the verifier DECODES with python-jose (the recurring jwt-import
-  trap) — so the EdDSA decode path is untested. Fix WHEN/IF Brigade migrates to
-  EdDSA: upgrade jose (or verify with PyJWT) **and** add a real EdDSA decode test.
+- **Brigade verifier — RS256 pinned + multi-issuer trust now live** (was the
+  "EdDSA capability gap"). **RESOLVED in v2.7.2.** python-jose has no EdDSA/OKP
+  support (verified live: `jwk.construct(okp, "EdDSA")` raises `JWKError`), so the
+  old `ALLOWED_BRIGADE_ALGORITHMS = ["EdDSA", "RS256"]` advertised a capability
+  the verifier could not deliver, and the test signed EdDSA tokens with PyJWT
+  that the jose decode path can never validate (the jwt-import trap) — meaning the
+  REAL algorithm Brigade signs with (RS256) was untested. Now: `ALLOWED_BRIGADE_ALGORITHMS`
+  and `brigade_registration.signing_algorithm` are **RS256 only**; the rewritten
+  `tests/test_brigade_jwt_verifier.py` exercises the real RS256 path, asserts an
+  EdDSA token is refused (`alg-rejected`), and covers the cross-broker
+  `iss-key-mismatch` guard. **Also un-broke multi-issuer trust:** `config.py` now
+  DECLARES `BRIGADE_TRUSTED_ISSUERS` — it was read via `getattr` but never a
+  declared field, so pydantic's `extra="ignore"` dropped the operator's `.env`
+  value and only the singular issuer was ever trusted. Contact-Ops now trusts
+  BOTH `brigade.unicorncommander.ai` (customer) and `brigade.magicunicorn.dev`
+  (dogfood/sovereign), each verified against its OWN JWKS (both serve RS256), with
+  the impersonation guard preventing one broker from signing as the other.
+  Smoke without pytest: `docker exec -i contact-ops-backend python - < scripts/verify_brigade_rs256.py`.
+  **Forward item:** python-jose will NOT gain EdDSA; if Brigade ever migrates off
+  RS256, switch this module's decode path to PyJWT (already a dependency) and add
+  a real EdDSA round-trip test — do NOT just re-add "EdDSA" to the allow-list.
 - **Brigade verifier — trailing-slash issuer.** `_trusted_issuers` rstrips `/`
   on config but compares the raw `claims.iss`, so a broker whose issuer URL ends
   in `/` is false-rejected (availability, fails closed). No current broker does.
