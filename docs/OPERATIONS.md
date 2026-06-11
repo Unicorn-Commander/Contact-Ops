@@ -87,14 +87,21 @@ In app code: re-bind both sessions after any mid-operation commit.
 
 ## Membership gate (owner action — flip with care)
 
-`MEMBERSHIP_GATE_ENFORCED` is currently **false**. When `true`, every request's
-authenticated `uc_uid` must have an *active* row in `user_tenant_membership` for
-its tenant, or it is rejected (at the JWT middleware, the MCP server, and
-`get_tenant_db`). Migration 0039 seeded the tenant's `owner_user_id`, but that
-may be a placeholder id — **before flipping, confirm YOUR real Keycloak `sub`
-has an `active` membership row** (`SELECT * FROM user_tenant_membership WHERE
-tenant_id=…`), or you lock yourself out. Codex's `tests/test_membership_gate_smoke.py`
-exercises the predicate. Flip via the backend `.env` + `up -d` (not restart).
+`MEMBERSHIP_GATE_ENFORCED` is currently **true** (enforced in prod). When `true`,
+every request's authenticated `uc_uid` must have an *active* row in
+`user_tenant_membership` for its tenant, or it is rejected (at the JWT
+middleware, the MCP server, and `get_tenant_db`). Memberships are seeded for
+existing tenants and **new users self-provision a personal workspace + admin
+membership on first login** via `POST /api/auth/onboard` (migration 0040's
+`provision_personal_workspace`), so a fresh interactive login is NOT locked out —
+verified end-to-end 2026-06-11 (fresh KC token → onboard → re-minted
+tenant-bearing token → authenticated call passes the gate). The PAT and Brigade
+paths also honor the gate (a revoked membership disables a user's PATs/federated
+access for that tenant immediately). **Before flipping the flag on a NEW
+deployment, confirm YOUR real Keycloak `sub` has an `active` membership row**
+(`SELECT * FROM user_tenant_membership WHERE tenant_id=…`), or you lock yourself
+out. Codex's `tests/test_membership_gate_smoke.py` exercises the predicate. Flip
+via the backend `.env` + `up -d` (not restart).
 
 ## Known gotchas (hard-won)
 
