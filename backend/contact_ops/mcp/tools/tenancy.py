@@ -24,15 +24,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_, select, text
 
+from contact_ops.core.config import get_settings
 from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.errors import (
+    INSUFFICIENT_ROLE,
     PERSON_NOT_FOUND,
     TENANT_MISMATCH,
     VALIDATION_FAILED,
     ToolError,
 )
 from contact_ops.mcp.idempotency import check_or_register, store_result
-from contact_ops.mcp.rbac import require_role, require_scopes
+from contact_ops.mcp.rbac import get_role, require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, register, stable_hash
 from contact_ops.models import (
@@ -43,6 +45,7 @@ from contact_ops.models import (
     Tenant,
 )
 from contact_ops.models.enums import ConsentBasis, TenantKind
+from contact_ops.services import keycloak_admin
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
 TENANT_NOT_FOUND = "TENANT_NOT_FOUND"
@@ -627,6 +630,432 @@ async def grant_workspace_access(
     )
 
 
+# ---------------------------------------------------------------------------
+# Workspace members (user_tenant_membership management — the Team surface)
+# ---------------------------------------------------------------------------
+#
+# These four tools are the human-facing team management surface (the Settings →
+# Members UI) over the same user_tenant_membership table grant_workspace_access
+# writes. They differ from grant_workspace_access in two deliberate ways:
+#   1. Authority is the caller's WORKSPACE membership role (an active 'admin' row
+#      for the current workspace), not the Keycloak realm ADMIN role — a self-serve
+#      owner has membership role='admin' but only the default realm role, so realm
+#      gating would lock every owner out of their own team. A realm ADMIN is also
+#      allowed (platform/operator override).
+#   2. invite_workspace_member resolves an *email* to a Keycloak sub (via the
+#      contact-ops-switch service account) so an admin invites by email, never by
+#      an opaque uc_uid. A not-yet-registered email is rejected with a clear,
+#      actionable error (pending email-invitations for brand-new users land with
+#      the [Email]/[Signup] milestones).
+# All four run under utm_tenant_scope RLS (tenant_id = current_tenant_id()), so
+# they can only ever read/write the caller's CURRENT workspace.
+
+USER_NOT_REGISTERED = "USER_NOT_REGISTERED"
+MEMBER_NOT_FOUND = "MEMBER_NOT_FOUND"
+LAST_ADMIN = "LAST_ADMIN"
+CANNOT_TARGET_SELF = "CANNOT_TARGET_SELF"
+DIRECTORY_UNAVAILABLE = "DIRECTORY_UNAVAILABLE"
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+async def _require_workspace_admin(ctx: MCPContext) -> None:
+    """Authorize a member-management action on the caller's CURRENT workspace.
+
+    Authority is the caller's workspace membership role (active 'admin' for
+    ctx.tenant_id), with a Keycloak realm ADMIN allowed as a platform override.
+    Runs under utm_tenant_scope RLS so it only ever sees the current workspace.
+    """
+    if get_role(ctx.claims) == "ADMIN":
+        return
+    row = await ctx.db.execute(
+        text(
+            """
+            SELECT 1 FROM user_tenant_membership
+            WHERE user_uc_uid = :u AND tenant_id = :t
+              AND role = 'admin' AND status = 'active'
+            """
+        ),
+        {"u": str(ctx.user_id), "t": str(ctx.tenant_id)},
+    )
+    if row.first() is None:
+        raise ToolError(
+            INSUFFICIENT_ROLE,
+            "workspace admin role required to manage members",
+            retryable=False,
+        )
+
+
+async def _count_active_admins(ctx: MCPContext) -> int:
+    row = await ctx.db.execute(
+        text(
+            "SELECT count(*) FROM user_tenant_membership "
+            "WHERE tenant_id = :t AND role = 'admin' AND status = 'active'"
+        ),
+        {"t": str(ctx.tenant_id)},
+    )
+    return int(row.scalar() or 0)
+
+
+async def _load_member(
+    ctx: MCPContext, user_uc_uid: str
+) -> dict[str, Any] | None:
+    row = await ctx.db.execute(
+        text(
+            "SELECT user_uc_uid, role, status FROM user_tenant_membership "
+            "WHERE user_uc_uid = :u AND tenant_id = :t"
+        ),
+        {"u": user_uc_uid, "t": str(ctx.tenant_id)},
+    )
+    return row.mappings().first()
+
+
+class WorkspaceMember(BaseModel):
+    user_uc_uid: str
+    role: str
+    status: str
+    is_default: bool
+    added_at: datetime | None = None
+    updated_at: datetime | None = None
+    added_by: str | None = None
+    # Directory-enriched label fields (best-effort via Keycloak; null if the
+    # directory is unconfigured or the user can't be read back).
+    email: str | None = None
+    username: str | None = None
+    full_name: str | None = None
+    is_self: bool = False
+
+
+class ListWorkspaceMembersInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    include_inactive: bool = False
+
+
+class ListWorkspaceMembersOutput(ToolOutput):
+    items: list[WorkspaceMember]
+    count: int
+    tenant_id: uuid.UUID
+    directory_enriched: bool
+
+
+async def list_workspace_members(
+    ctx: MCPContext, req: ListWorkspaceMembersInput
+) -> ListWorkspaceMembersOutput:
+    """List the members of the caller's current workspace (admin-only)."""
+    require_scopes(ctx, ["tenant:read"])
+    await _require_workspace_admin(ctx)
+
+    where_status = "" if req.include_inactive else "AND status = 'active'"
+    rows = (
+        await ctx.db.execute(
+            text(
+                f"""
+                SELECT user_uc_uid, role, status, is_default,
+                       added_at, updated_at, added_by
+                FROM user_tenant_membership
+                WHERE tenant_id = :t {where_status}
+                ORDER BY (role = 'admin') DESC, added_at ASC
+                """
+            ),
+            {"t": str(ctx.tenant_id)},
+        )
+    ).mappings().all()
+
+    settings = get_settings()
+    directory = await keycloak_admin.get_users_by_ids(
+        settings, [str(r["user_uc_uid"]) for r in rows]
+    )
+    enriched = bool(directory)
+
+    items: list[WorkspaceMember] = []
+    for r in rows:
+        uid = str(r["user_uc_uid"])
+        label = directory.get(uid, {})
+        items.append(
+            WorkspaceMember(
+                user_uc_uid=uid,
+                role=r["role"],
+                status=r["status"],
+                is_default=r["is_default"],
+                added_at=r["added_at"],
+                updated_at=r["updated_at"],
+                added_by=r["added_by"],
+                email=label.get("email"),
+                username=label.get("username"),
+                full_name=label.get("full_name"),
+                is_self=(uid == str(ctx.user_id)),
+            )
+        )
+    return ListWorkspaceMembersOutput(
+        items=items,
+        count=len(items),
+        tenant_id=ctx.tenant_id,
+        directory_enriched=enriched,
+    )
+
+
+class InviteWorkspaceMemberInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal[WORKSPACE_ROLES] = "member"  # type: ignore[valid-type]
+    is_default: bool = False
+    consent_basis: Literal[CONSENT_BASES] | None = None  # type: ignore[valid-type]
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = value.strip()
+        if not _EMAIL_RE.match(value):
+            raise ValueError("invalid email address")
+        return value
+
+
+class InviteWorkspaceMemberOutput(ToolOutput):
+    user_uc_uid: str
+    email: str
+    role: str
+    status: str
+    created: bool
+    event_id: uuid.UUID | None = None
+
+
+async def invite_workspace_member(
+    ctx: MCPContext, req: InviteWorkspaceMemberInput
+) -> InviteWorkspaceMemberOutput:
+    """Invite a teammate by email into the caller's workspace (admin-only).
+
+    Resolves the email to an existing Keycloak account and grants an active
+    membership. A not-yet-registered email is rejected with USER_NOT_REGISTERED
+    (the teammate must sign in once to create their account, then be re-invited).
+    Idempotent on (user, workspace): re-inviting updates the role.
+    """
+    require_scopes(ctx, ["tenant:write", "membership:write"])
+    await _require_workspace_admin(ctx)
+
+    tenant = await _load_tenant(ctx, ctx.tenant_id)
+    if tenant.hipaa_mode and req.consent_basis is None:
+        raise ToolError(
+            HIPAA_TENANT_REQUIRES_CONSENT_BASIS,
+            "consent_basis is required when the workspace has hipaa_mode",
+        )
+
+    settings = get_settings()
+    if not keycloak_admin.is_configured(settings):
+        raise ToolError(
+            DIRECTORY_UNAVAILABLE,
+            "member directory is not configured on this deployment",
+            hint="set KEYCLOAK_SWITCH_CLIENT_SECRET to enable email invites",
+            retryable=False,
+        )
+
+    user = await keycloak_admin.find_user_by_email(settings, req.email)
+    if user is None or not user.get("uc_uid"):
+        raise ToolError(
+            USER_NOT_REGISTERED,
+            f"no Unicorn Commander account found for {req.email}",
+            hint=(
+                "ask them to sign in once at the app to create their account, "
+                "then invite again"
+            ),
+            retryable=False,
+        )
+    user_uc_uid = str(user["uc_uid"])
+
+    existing = await _load_member(ctx, user_uc_uid)
+    created = existing is None or existing["status"] != "active"
+
+    await ctx.db.execute(
+        text(
+            """
+            INSERT INTO user_tenant_membership
+                (user_uc_uid, tenant_id, role, status, is_default, consent_basis, added_by)
+            VALUES (:u, :t, :r, 'active', :d, CAST(:cb AS consent_basis), :by)
+            ON CONFLICT (user_uc_uid, tenant_id) DO UPDATE
+              SET role = EXCLUDED.role,
+                  status = 'active',
+                  is_default = EXCLUDED.is_default,
+                  consent_basis = EXCLUDED.consent_basis,
+                  updated_at = now()
+            """
+        ),
+        {
+            "u": user_uc_uid,
+            "t": str(ctx.tenant_id),
+            "r": req.role,
+            "d": req.is_default,
+            "cb": req.consent_basis,
+            "by": str(ctx.user_id),
+        },
+    )
+    await ctx.db.flush()
+
+    event_id = await emit_action_event(
+        ctx,
+        event_type="workspace_access.grant",
+        aggregate_type="tenant",
+        aggregate_id=ctx.tenant_id,
+        payload_before=None,
+        payload_after={
+            "user_uc_uid": user_uc_uid,
+            "email": req.email,
+            "tenant_id": str(ctx.tenant_id),
+            "role": req.role,
+            "is_default": req.is_default,
+            "via": "invite_by_email",
+        },
+        confidence=req.confidence,
+    )
+    return InviteWorkspaceMemberOutput(
+        user_uc_uid=user_uc_uid,
+        email=req.email,
+        role=req.role,
+        status="active",
+        created=created,
+        event_id=event_id,
+    )
+
+
+class UpdateMemberRoleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_uc_uid: str = Field(min_length=1, max_length=255)
+    role: Literal[WORKSPACE_ROLES] = "member"  # type: ignore[valid-type]
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class UpdateMemberRoleOutput(ToolOutput):
+    user_uc_uid: str
+    role: str
+    status: str
+    event_id: uuid.UUID | None = None
+
+
+async def update_workspace_member_role(
+    ctx: MCPContext, req: UpdateMemberRoleInput
+) -> UpdateMemberRoleOutput:
+    """Change a member's role in the caller's workspace (admin-only).
+
+    Refuses to demote the last active admin (anti-lockout).
+    """
+    require_scopes(ctx, ["tenant:write", "membership:write"])
+    await _require_workspace_admin(ctx)
+
+    member = await _load_member(ctx, req.user_uc_uid)
+    if member is None or member["status"] != "active":
+        raise ToolError(MEMBER_NOT_FOUND, "active member not found in this workspace")
+
+    demoting_admin = member["role"] == "admin" and req.role != "admin"
+    if demoting_admin and await _count_active_admins(ctx) <= 1:
+        raise ToolError(
+            LAST_ADMIN,
+            "cannot demote the last admin of the workspace",
+            hint="promote another member to admin first",
+            retryable=False,
+        )
+
+    if member["role"] == req.role:
+        return UpdateMemberRoleOutput(
+            user_uc_uid=req.user_uc_uid, role=req.role, status="active"
+        )
+
+    await ctx.db.execute(
+        text(
+            "UPDATE user_tenant_membership SET role = :r, updated_at = now() "
+            "WHERE user_uc_uid = :u AND tenant_id = :t"
+        ),
+        {"r": req.role, "u": req.user_uc_uid, "t": str(ctx.tenant_id)},
+    )
+    await ctx.db.flush()
+
+    event_id = await emit_action_event(
+        ctx,
+        event_type="workspace_access.role_change",
+        aggregate_type="tenant",
+        aggregate_id=ctx.tenant_id,
+        payload_before={"user_uc_uid": req.user_uc_uid, "role": member["role"]},
+        payload_after={"user_uc_uid": req.user_uc_uid, "role": req.role},
+        confidence=req.confidence,
+    )
+    return UpdateMemberRoleOutput(
+        user_uc_uid=req.user_uc_uid,
+        role=req.role,
+        status="active",
+        event_id=event_id,
+    )
+
+
+class RevokeWorkspaceMemberInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_uc_uid: str = Field(min_length=1, max_length=255)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class RevokeWorkspaceMemberOutput(ToolOutput):
+    user_uc_uid: str
+    status: str
+    event_id: uuid.UUID | None = None
+
+
+async def revoke_workspace_member(
+    ctx: MCPContext, req: RevokeWorkspaceMemberInput
+) -> RevokeWorkspaceMemberOutput:
+    """Revoke a member's access to the caller's workspace (admin-only).
+
+    With the membership gate enforced, revocation cuts the user's access (and
+    their PATs/federated tokens for this workspace) immediately. Refuses to
+    revoke yourself or the last active admin (anti-lockout).
+    """
+    require_scopes(ctx, ["tenant:write", "membership:write"])
+    await _require_workspace_admin(ctx)
+
+    if str(req.user_uc_uid) == str(ctx.user_id):
+        raise ToolError(
+            CANNOT_TARGET_SELF,
+            "you cannot revoke your own access",
+            hint="ask another workspace admin to remove you",
+            retryable=False,
+        )
+
+    member = await _load_member(ctx, req.user_uc_uid)
+    if member is None or member["status"] != "active":
+        raise ToolError(MEMBER_NOT_FOUND, "active member not found in this workspace")
+
+    if member["role"] == "admin" and await _count_active_admins(ctx) <= 1:
+        raise ToolError(
+            LAST_ADMIN,
+            "cannot revoke the last admin of the workspace",
+            retryable=False,
+        )
+
+    await ctx.db.execute(
+        text(
+            "UPDATE user_tenant_membership SET status = 'revoked', updated_at = now() "
+            "WHERE user_uc_uid = :u AND tenant_id = :t"
+        ),
+        {"u": req.user_uc_uid, "t": str(ctx.tenant_id)},
+    )
+    await ctx.db.flush()
+
+    event_id = await emit_action_event(
+        ctx,
+        event_type="workspace_access.revoke",
+        aggregate_type="tenant",
+        aggregate_id=ctx.tenant_id,
+        payload_before={"user_uc_uid": req.user_uc_uid, "role": member["role"]},
+        payload_after={"user_uc_uid": req.user_uc_uid, "status": "revoked"},
+        confidence=req.confidence,
+    )
+    return RevokeWorkspaceMemberOutput(
+        user_uc_uid=req.user_uc_uid,
+        status="revoked",
+        event_id=event_id,
+    )
+
+
 def _membership_summary(membership: PersonTenantMembership) -> dict[str, Any]:
     return {
         "person_id": str(membership.person_id),
@@ -913,6 +1342,89 @@ def register_tenancy_tools() -> None:
             "openWorldHint": False,
         },
         idempotency="natural-key",
+    )
+    register(
+        name="list_workspace_members",
+        description=(
+            "List the members of the caller's current workspace (uc_uid, role, "
+            "status, joined-at), directory-enriched with email/name. Workspace "
+            "admin only. Requires tenant:read."
+        ),
+        input_model=ListWorkspaceMembersInput,
+        output_model=ListWorkspaceMembersOutput,
+        handler=list_workspace_members,
+        required_role="CLIENT",
+        required_scopes=("tenant:read",),
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="none",
+    )
+    register(
+        name="invite_workspace_member",
+        description=(
+            "Invite a teammate by EMAIL into the caller's workspace and grant "
+            "them an active membership. Resolves the email to an existing "
+            "account; a not-yet-registered email is rejected (they must sign in "
+            "once first). Workspace admin only. Requires tenant:write + "
+            "membership:write."
+        ),
+        input_model=InviteWorkspaceMemberInput,
+        output_model=InviteWorkspaceMemberOutput,
+        handler=invite_workspace_member,
+        required_role="CLIENT",
+        required_scopes=("tenant:write", "membership:write"),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="natural-key",
+    )
+    register(
+        name="update_workspace_member_role",
+        description=(
+            "Change a member's role (viewer/member/manager/admin) in the "
+            "caller's workspace. Refuses to demote the last admin. Workspace "
+            "admin only. Requires tenant:write + membership:write."
+        ),
+        input_model=UpdateMemberRoleInput,
+        output_model=UpdateMemberRoleOutput,
+        handler=update_workspace_member_role,
+        required_role="CLIENT",
+        required_scopes=("tenant:write", "membership:write"),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="none",
+    )
+    register(
+        name="revoke_workspace_member",
+        description=(
+            "Revoke a member's access to the caller's workspace (sets status "
+            "revoked; cuts access immediately under the membership gate). "
+            "Refuses to revoke yourself or the last admin. Workspace admin "
+            "only. Requires tenant:write + membership:write."
+        ),
+        input_model=RevokeWorkspaceMemberInput,
+        output_model=RevokeWorkspaceMemberOutput,
+        handler=revoke_workspace_member,
+        required_role="CLIENT",
+        required_scopes=("tenant:write", "membership:write"),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="none",
     )
     register(
         name="end_tenant_membership",

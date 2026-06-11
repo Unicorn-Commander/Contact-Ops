@@ -26,7 +26,9 @@ import type {
   Tag,
   Tenant,
   Tier,
-  UUID
+  UUID,
+  ListWorkspaceMembersResult,
+  WorkspaceRole
 } from "@/lib/types";
 
 type MCPRequest<P = unknown> = {
@@ -343,6 +345,35 @@ export const tools = {
   listTenants: (token: string) => callTool<ListResult<Tenant>>("list_tenants", { limit: 100 }, token),
   createTenant: (args: Record<string, unknown>, token: string) => callTool("create_tenant", args, token),
   updateTenantSettings: (args: Record<string, unknown>, token: string) => callTool("update_tenant_settings", args, token),
+
+  // ---- Workspace members (Team — backend mcp/tools/tenancy.py) ----
+  // Admin-only management of the current workspace's user_tenant_membership.
+  listWorkspaceMembers: (token: string, args: { include_inactive?: boolean } = {}) =>
+    callTool<ListWorkspaceMembersResult>("list_workspace_members", args, token),
+  inviteWorkspaceMember: (
+    args: { email: string; role?: WorkspaceRole; is_default?: boolean },
+    token: string
+  ) =>
+    callTool<{ user_uc_uid: string; email: string; role: WorkspaceRole; status: string; created: boolean }>(
+      "invite_workspace_member",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  updateWorkspaceMemberRole: (
+    args: { user_uc_uid: string; role: WorkspaceRole },
+    token: string
+  ) =>
+    callTool<{ user_uc_uid: string; role: WorkspaceRole; status: string }>(
+      "update_workspace_member_role",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  revokeWorkspaceMember: (args: { user_uc_uid: string }, token: string) =>
+    callTool<{ user_uc_uid: string; status: string }>(
+      "revoke_workspace_member",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
   uploadPhoto: (args: Record<string, unknown>, token: string) => callTool("upload_photo", args, token),
   confirmPhotoUpload: (args: Record<string, unknown>, token: string) => callTool("confirm_photo_upload", args, token),
   listPhotos: (person_id: UUID, token: string) => callTool<ListResult<Photo>>("list_photos", { person_id }, token),

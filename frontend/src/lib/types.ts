@@ -167,6 +167,41 @@ export type PersonalAccessTokenIssued = PersonalAccessToken & {
   plaintext_token: string;
 };
 
+// ---- Workspace members (Team surface — user_tenant_membership) ----
+//
+// A workspace's people-with-access, managed from Settings → Members by a
+// workspace admin. Distinct from `Person` (a contact) — this is who can sign in
+// to the workspace. `invite_workspace_member` resolves an email to an existing
+// account; list/role/revoke operate on the membership row.
+
+export type WorkspaceRole = "viewer" | "member" | "manager" | "admin";
+export type WorkspaceMemberStatus = "active" | "suspended" | "revoked";
+
+/** Row shape returned by `list_workspace_members`. */
+export type WorkspaceMember = {
+  user_uc_uid: string;
+  role: WorkspaceRole;
+  status: WorkspaceMemberStatus;
+  is_default: boolean;
+  added_at?: string | null;
+  updated_at?: string | null;
+  added_by?: string | null;
+  /** Directory-enriched label fields (null if the directory is unconfigured). */
+  email?: string | null;
+  username?: string | null;
+  full_name?: string | null;
+  /** True for the calling user's own membership row. */
+  is_self?: boolean;
+};
+
+export type ListWorkspaceMembersResult = ToolEnvelope & {
+  items: WorkspaceMember[];
+  count: number;
+  tenant_id: UUID;
+  /** True when Keycloak labels were attached; false = raw uc_uids only. */
+  directory_enriched: boolean;
+};
+
 // ---- Notes / Log (Settings + future profile-page surface) ----
 // Matches the backend MCP `list_notes` / `append_note` shape on `feat-notes-backend`.
 

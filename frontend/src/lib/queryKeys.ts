@@ -52,6 +52,7 @@ export function tenantKey(tenantId: TenantId) {
     dataQuality: [...base, "data-quality"] as const,
     photos: (personId: string) => [...base, "photos", personId] as const,
     carddavPasswords: [...base, "carddav-passwords"] as const,
+    workspaceMembers: [...base, "workspace-members"] as const,
 
     // --- inbox (useInbox.ts) ---
     inboxRoot: [...base, "inbox"] as const,
