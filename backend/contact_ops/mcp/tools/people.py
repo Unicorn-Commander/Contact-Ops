@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Literal, cast
 
 import sqlalchemy as sa
@@ -34,7 +34,14 @@ from contact_ops.mcp.tools.common import (
     register,
     stable_hash,
 )
-from contact_ops.models import ActionEvent, Email, Person, PersonTenantMembership, Phone
+from contact_ops.models import (
+    ActionEvent,
+    Email,
+    MergeCandidate,
+    Person,
+    PersonTenantMembership,
+    Phone,
+)
 from contact_ops.models.enums import (
     EmailType,
     MergeStatus,
@@ -225,10 +232,14 @@ class DeletePersonInput(BaseModel):
 
 class DeletePersonOutput(ToolOutput):
     person_id: uuid.UUID
-    tombstoned_at: datetime
-    hard_purge_at: datetime
+    # `deleted_at` is the moment the row was HARD-deleted. There is no tombstone
+    # and no future purge job today, so the old `tombstoned_at`/`hard_purge_at`
+    # fields were fictions — removed. `undo_until` is None because an immediate
+    # hard delete cannot be undone; a real undo window only exists under the
+    # (dormant) two-phase compliance engine, which will repopulate it.
+    deleted_at: datetime
     event_id: uuid.UUID
-    undo_until: datetime
+    undo_until: datetime | None = None
     status: Literal["applied"]
     cascade_summary: dict[str, int]
 
@@ -755,13 +766,33 @@ async def delete_person(ctx: MCPContext, args: BaseModel) -> DeletePersonOutput:
         raise ToolError(DEPENDENCY_VIOLATION, "person is under legal hold")
     if person.merge_status != MergeStatus.archived:
         raise ToolError(DEPENDENCY_VIOLATION, "delete_person requires an archived person first")
-    tombstoned_at = now_utc()
-    hard_purge_at = tombstoned_at + timedelta(days=90)
-    await ctx.db.execute(sa.delete(Email).where(Email.person_id == person.id))
-    await ctx.db.execute(sa.delete(Phone).where(Phone.person_id == person.id))
-    await ctx.db.execute(
+    deleted_at = now_utc()
+    # Count what we actually remove so cascade_summary reports the TRUTH
+    # (it was hardcoded to zeros). rowcount is reliable for these DELETEs.
+    emails_res = await ctx.db.execute(sa.delete(Email).where(Email.person_id == person.id))
+    phones_res = await ctx.db.execute(sa.delete(Phone).where(Phone.person_id == person.id))
+    memberships_res = await ctx.db.execute(
         sa.delete(PersonTenantMembership).where(PersonTenantMembership.person_id == person.id)
     )
+    # dedup_pair_candidates.person_a_id / person_b_id are FKs to persons.id with
+    # NO ondelete (RESTRICT) — a pending dedup candidate makes the person delete
+    # ERROR. Clear them first, or this tool throws on any contact that has one.
+    candidates_res = await ctx.db.execute(
+        sa.delete(MergeCandidate).where(
+            sa.or_(
+                MergeCandidate.person_a_id == person.id,
+                MergeCandidate.person_b_id == person.id,
+            )
+        )
+    )
+    # NOTE: ondelete=CASCADE tables (addresses, identifiers, im_handles, urls,
+    # photos, person_org_role, relations, aliases, voice_consent/fingerprint) are
+    # cleaned by the DB on the person delete below. The no-FK orphan tables
+    # (facts.subject_id, notes.target_id, merge_history, field_provenance) and the
+    # external stores (Garage bytes, Qdrant vectors, FalkorDB nodes) are NOT
+    # purged here — that full Art.17 erasure lands with the dormant compliance
+    # engine (services/compliance_erasure.py). This tool stays honest about what
+    # it does: the cascade_summary below reflects ONLY the rows it removed.
     await ctx.db.delete(person)
     await ctx.db.flush()
     event_id = await emit_action_event(
@@ -778,12 +809,16 @@ async def delete_person(ctx: MCPContext, args: BaseModel) -> DeletePersonOutput:
     )
     return DeletePersonOutput(
         person_id=data.person_id,
-        tombstoned_at=tombstoned_at,
-        hard_purge_at=hard_purge_at,
+        deleted_at=deleted_at,
         event_id=event_id,
-        undo_until=hard_purge_at,
+        undo_until=None,  # immediate hard delete — there is no undo window
         status="applied",
-        cascade_summary={"emails": 0, "phones": 0, "memberships": 0},
+        cascade_summary={
+            "emails": emails_res.rowcount or 0,
+            "phones": phones_res.rowcount or 0,
+            "memberships": memberships_res.rowcount or 0,
+            "merge_candidates": candidates_res.rowcount or 0,
+        },
     )
 
 
