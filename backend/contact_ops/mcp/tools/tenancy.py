@@ -908,6 +908,21 @@ async def invite_workspace_member(
         },
         confidence=req.confidence,
     )
+
+    # Best-effort invite email AFTER the grant is durable. Dormant (Noop logs
+    # `email_would_send`) until Postmark is configured + EMAIL_SENDING_ENABLED.
+    # send_member_invite never raises — it swallows any failure to a warning — so
+    # a flaky/unconfigured mailer can never undo the membership grant.
+    from contact_ops.services import notifications
+
+    await notifications.send_member_invite(
+        to_email=req.email,
+        workspace_name=tenant.display_name,
+        role=req.role,
+        inviter=str(ctx.user_id),
+        settings=settings,
+    )
+
     return InviteWorkspaceMemberOutput(
         user_uc_uid=user_uc_uid,
         email=req.email,

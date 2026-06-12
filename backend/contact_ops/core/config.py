@@ -211,6 +211,21 @@ class Settings(BaseSettings):
     # mints a dedicated key per tenant (needs a secret store + the 0042
     # garage_access_key_id column — not wired in v1).
     GARAGE_PROVISION_MODE: Literal["shared_key", "per_tenant_key"] = "shared_key"
+    # Transactional email (P-00075). DORMANT by default: with POSTMARK_SERVER_TOKEN
+    # unset OR EMAIL_SENDING_ENABLED false, the provider is a Noop that logs
+    # `email_would_send` and never calls out (mirrors keycloak_admin.is_configured
+    # + the entitlement shadow-first posture). Scope is APP-generated mail (member
+    # invites, GDPR/DSR notices) — account verify/reset are Keycloak's job. EMAIL_FROM
+    # MUST be a confirmed Postmark Sender Signature before flipping sending on, or
+    # every send 422s. Reuse the suite's ONE shared Postmark server token.
+    POSTMARK_SERVER_TOKEN: str = ""
+    EMAIL_FROM: str = "REMOVED"
+    EMAIL_SENDING_ENABLED: bool = False
+    EMAIL_MESSAGE_STREAM: str = "outbound"
+    # When false (default) invite_workspace_member keeps the USER_NOT_REGISTERED
+    # hard-reject for brand-new emails; true enables pending-invite emails (the
+    # pending-invitations table lands with the Signup milestone).
+    EMAIL_INVITES_ALLOW_PENDING: bool = False
 
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""
