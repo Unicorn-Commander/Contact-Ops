@@ -113,6 +113,18 @@ class Settings(BaseSettings):
     # our multi-tenant SaaS where tiers are enforced. Self-host sovereignty is
     # the suite's offline-license story, not a per-tool paywall.
     DEPLOYMENT_MODE: Literal["hosted", "self_host"] = "hosted"
+    # Observability (P-00075 ops). Sentry is DORMANT until SENTRY_DSN is set —
+    # the entire error-tracking path no-ops with an empty DSN (mirrors the OTLP
+    # gating in agents/observability/otel.py). send_default_pii is hardcoded
+    # False in init_sentry (NOT a flag): this is multi-tenant contact PII under
+    # RLS, so it must never leave the box. APM/profiling default OFF (0.0 sample)
+    # until deliberately raised. HTTP request metrics are cheap + safe so they're
+    # ON by default; they label by route TEMPLATE (never raw path) to bound
+    # cardinality and never carry tenant ids.
+    SENTRY_DSN: str = ""
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    SENTRY_PROFILES_SAMPLE_RATE: float = 0.0
+    METRICS_HTTP_ENABLED: bool = True
     # Boot RLS self-test probe tenants. Under the runtime role the self-test
     # cannot enumerate tenants (RLS hides them with no GUC bound), so it skips.
     # Provide >=2 known tenant ids here so it can actively assert cross-tenant

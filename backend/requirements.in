@@ -32,6 +32,8 @@ bcrypt
 # Phase 3 Foundation: agent fleet substrate (Celery 5.6+ for kombu 5.6 redis>=6 support)
 celery[redis]==5.6.3
 prometheus-client==0.23.1
+# Error tracking (P-00075 ops) — dormant unless SENTRY_DSN is set.
+sentry-sdk==2.62.0
 
 # Phase 3 Foundation: OpenTelemetry tracing + GenAI semantic conventions
 opentelemetry-api==1.36.0

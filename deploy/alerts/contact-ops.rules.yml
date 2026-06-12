@@ -1,0 +1,65 @@
+# Contact-Ops Prometheus alert rules (P-00075 ops).
+#
+# These are an OPS ARTIFACT, not app code — load them into the suite Prometheus
+# (the one scraping mcp.contacts.magicunicorn.dev/metrics). They fire off the
+# metrics the backend already exposes: the new contactops_http_* request metrics
+# and the existing contactops_agent_*/contactops_audit_* fleet metrics. Tune
+# thresholds to taste once there's a real traffic baseline.
+groups:
+  - name: contact-ops-http
+    rules:
+      - alert: ContactOpsHigh5xxRate
+        expr: |
+          sum(rate(contactops_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(contactops_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical, service: contact-ops }
+        annotations:
+          summary: "Contact-Ops 5xx rate >5% (5m)"
+          description: "More than 5% of HTTP responses are 5xx over the last 5 minutes."
+
+      - alert: ContactOpsHighRequestLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(contactops_http_request_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 10m
+        labels: { severity: warning, service: contact-ops }
+        annotations:
+          summary: "Contact-Ops p99 request latency >2s (10m)"
+          description: "p99 HTTP request duration exceeded 2s for 10 minutes."
+
+      - alert: ContactOpsRequestsStalled
+        expr: sum(contactops_http_requests_in_progress) > 50
+        for: 5m
+        labels: { severity: warning, service: contact-ops }
+        annotations:
+          summary: "Contact-Ops has >50 in-flight requests (5m)"
+          description: "Sustained high in-flight request count — possible stall or saturation."
+
+  - name: contact-ops-integrity
+    rules:
+      - alert: ContactOpsAuditWriteFailures
+        expr: increase(contactops_audit_write_failures_total[15m]) > 0
+        for: 1m
+        labels: { severity: critical, service: contact-ops }
+        annotations:
+          summary: "Contact-Ops audit-ledger write failures"
+          description: "The append-only audit ledger failed a write — investigate immediately (compliance + reversibility ledger)."
+
+  - name: contact-ops-agents
+    rules:
+      - alert: ContactOpsAgentCircuitBreakerOpen
+        expr: max(contactops_agent_circuit_breaker_open) > 0
+        for: 5m
+        labels: { severity: warning, service: contact-ops }
+        annotations:
+          summary: "A Contact-Ops agent circuit breaker is open"
+          description: "An autonomous agent has tripped its circuit breaker."
+
+      - alert: ContactOpsAgentDLQBacklog
+        expr: max(contactops_agent_dlq_depth) > 0
+        for: 15m
+        labels: { severity: warning, service: contact-ops }
+        annotations:
+          summary: "Contact-Ops agent dead-letter queue is non-empty"
+          description: "Agent jobs are landing in the DLQ — drain + investigate."

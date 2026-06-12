@@ -106,6 +106,33 @@ AUDIT_WRITE_FAILURES_TOTAL = Counter(
     registry=REGISTRY,
 )
 
+# HTTP request metrics (P-00075 ops). Labelled by route TEMPLATE (path_format),
+# NEVER raw path — this app's paths are id-heavy (person/tenant UUIDs) and raw
+# labels would explode cardinality. No tenant id label either: /metrics is
+# intentionally unauthenticated, so it must not leak per-tenant volume.
+HTTP_REQUESTS_TOTAL = Counter(
+    "contactops_http_requests_total",
+    "HTTP requests handled, by method, route template, and status code",
+    labelnames=("method", "path", "status"),
+    registry=REGISTRY,
+)
+
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "contactops_http_request_duration_seconds",
+    "HTTP request duration in seconds, by method and route template",
+    labelnames=("method", "path"),
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    registry=REGISTRY,
+)
+
+HTTP_REQUESTS_IN_PROGRESS = Gauge(
+    "contactops_http_requests_in_progress",
+    "In-flight HTTP requests, by method (route template isn't known until after "
+    "routing, so this is method-only to stay correct + low-cardinality)",
+    labelnames=("method",),
+    registry=REGISTRY,
+)
+
 
 async def metrics_endpoint() -> Response:
     """FastAPI handler exposing the metrics in Prometheus text exposition format."""
@@ -141,6 +168,9 @@ __all__ = [
     "AGENT_TOKENS_TOTAL",
     "AGENT_TRUST_BETA",
     "AUDIT_WRITE_FAILURES_TOTAL",
+    "HTTP_REQUESTS_TOTAL",
+    "HTTP_REQUEST_DURATION_SECONDS",
+    "HTTP_REQUESTS_IN_PROGRESS",
     "REGISTRY",
     "metrics_endpoint",
     "set_trust_beta",

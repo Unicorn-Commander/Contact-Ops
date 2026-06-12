@@ -35,7 +35,12 @@ from contact_ops.api.well_known import router as well_known_router
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
-from contact_ops.middleware import AuditMiddleware, JWTValidationMiddleware
+from contact_ops.middleware import (
+    AuditMiddleware,
+    JWTValidationMiddleware,
+    RequestMetricsMiddleware,
+)
+from contact_ops.observability.sentry import init_sentry
 from contact_ops.routers import health_router
 from contact_ops.services.brigade_jwt_verifier import prime_brigade_jwks_cache
 from contact_ops.services.brigade_registration import register_with_brigade
@@ -200,6 +205,9 @@ async def _rls_boot_self_test(settings: Any) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    # Initialise error tracking FIRST so any boot-time failure is captured.
+    # Dormant (no-op) unless SENTRY_DSN is set.
+    init_sentry(settings)
     logger.info(
         "contact_ops_starting",
         app_name=settings.APP_NAME,
@@ -283,6 +291,11 @@ def create_application() -> FastAPI:
     app.add_middleware(JWTValidationMiddleware, settings=settings)
     # Audit — runs after JWT, records request + response with full actor chain.
     app.add_middleware(AuditMiddleware)
+    # HTTP request metrics — added LAST so it's the OUTERMOST layer and times the
+    # full request (inclusive of audit). Labels by route template only; dormant-
+    # safe (cheap) and on by default, flip METRICS_HTTP_ENABLED=false to disable.
+    if settings.METRICS_HTTP_ENABLED:
+        app.add_middleware(RequestMetricsMiddleware)
 
     # Routes
     app.include_router(health_router)
