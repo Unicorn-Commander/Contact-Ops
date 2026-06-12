@@ -254,6 +254,19 @@ class Settings(BaseSettings):
     # Suite-internal egress hosts that bypass the IP check (so federation/CardDAV
     # to private targets keeps working when the guard is enforced).
     SSRF_ALLOWED_HOSTS: list[str] = []
+    # Billing / metering (P-00075). Suite-credits + Pro-allowance model: CO's
+    # metered GPU ops (the entitlement _PRO_TOOLS) emit usage to the shared suite
+    # Lago and check a per-plan quota. DORMANT by default: BILLING_PROVIDER
+    # 'manual' is a Noop (logs billing_would_emit, zero external calls); the Lago
+    # provider also self-disables when LAGO_API_URL/KEY are blank. The quota gate
+    # is shadow-first (BILLING_QUOTA_ENFORCED false → log quota_would_deny, allow)
+    # and self_host bypasses both metering AND quota. Plan numbers live in
+    # contact_ops/billing/catalog.py (tune later); the tier model is reused from
+    # entitlement.py, never forked.
+    BILLING_PROVIDER: Literal["manual", "lago", "federated"] = "manual"
+    LAGO_API_URL: str = ""  # e.g. http://unicorn-lago-api:3000 (internal)
+    LAGO_API_KEY: str = ""  # CO-scoped suite Lago key; empty = Lago leg inert
+    BILLING_QUOTA_ENFORCED: bool = False
 
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""

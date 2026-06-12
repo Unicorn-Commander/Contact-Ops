@@ -15,7 +15,8 @@ from contact_ops.core.database import (
     audit_session_maker,
     bind_session_context,
 )
-from contact_ops.mcp.entitlement import check_entitlement
+from contact_ops.billing import AGENT_RUN_METRIC, check_quota, get_billing_provider
+from contact_ops.mcp.entitlement import DEFAULT_TIER, check_entitlement, tier_for_tool
 from contact_ops.mcp.errors import ToolError
 from contact_ops.mcp.registry import MCPContext, ToolDef, get_tool
 from contact_ops.mcp.tools import register_all_tools
@@ -156,9 +157,25 @@ class ChatToolExecutor:
                 )
                 if entitlement_error is not None:
                     raise entitlement_error
+                # Quota gate (P-00075 billing) — same allowance check as MCP
+                # dispatch; shadow-first + self-host bypass live inside.
+                quota_error = await check_quota(tool.name, ctx.tenant_id, db, settings)
+                if quota_error is not None:
+                    raise quota_error
                 output = await tool.handler(mcp_ctx, parsed)
                 await db.commit()
                 await audit_db.commit()
+                # Meter the op after commit (best-effort, never raises); only
+                # metered tools, never self-host. Dormant Manual provider logs.
+                if (
+                    settings.DEPLOYMENT_MODE != "self_host"
+                    and tier_for_tool(tool.name) != DEFAULT_TIER
+                ):
+                    await get_billing_provider(settings).emit_usage(
+                        tenant_id=str(ctx.tenant_id),
+                        code=AGENT_RUN_METRIC,
+                        properties={"tool": tool.name, "via": "chat"},
+                    )
             except ToolError as exc:
                 await db.rollback()
                 await audit_db.rollback()
