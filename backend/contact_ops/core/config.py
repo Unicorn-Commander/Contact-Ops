@@ -195,6 +195,22 @@ class Settings(BaseSettings):
     GARAGE_ADMIN_ENDPOINT: str = "http://unicorn-garage:3903"
     GARAGE_ACCESS_KEY: str = ""
     GARAGE_SECRET_KEY: str = ""
+    # Garage admin-API bearer token (v1). Promoted from a getattr in
+    # garage_lifecycle.py to a real field. Empty = the control plane cannot call
+    # the admin API, so auto-provision no-ops.
+    GARAGE_ADMIN_TOKEN: str = ""
+    # Per-tenant storage auto-provisioning (P-00075). DORMANT by default: with
+    # this False, tenant signup never touches Garage (a self-served tenant's
+    # photo/voice buckets simply aren't created until the flag is flipped + the
+    # backfill CLI is run). It also no-ops when DEPLOYMENT_MODE=self_host (the
+    # operator owns Garage), in STANDALONE/local-fs mode, when the admin token is
+    # absent, or when GARAGE_ACCESS_KEY is still the placeholder sentinel.
+    GARAGE_AUTO_PROVISION: bool = False
+    # shared_key (default, NO schema change): grant the existing shared
+    # GARAGE_ACCESS_KEY on each per-tenant bucket. per_tenant_key (dormant/future)
+    # mints a dedicated key per tenant (needs a secret store + the 0042
+    # garage_access_key_id column — not wired in v1).
+    GARAGE_PROVISION_MODE: Literal["shared_key", "per_tenant_key"] = "shared_key"
 
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""

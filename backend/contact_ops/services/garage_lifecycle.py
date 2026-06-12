@@ -168,6 +168,42 @@ class GarageAdmin:
         if resp.status_code not in (200, 201, 204):
             resp.raise_for_status()
 
+    # ----- access keys -----
+
+    async def create_key(self, *, name: str) -> dict[str, str | None]:
+        """Mint a Garage access key (POST /v1/key), idempotent by name.
+
+        If a key with this name already exists, return its id with a None secret
+        (Garage only reveals the secret once, at creation). Used only by
+        per_tenant_key mode — the default shared_key path never mints keys.
+        """
+        existing = await self._key_id_by_name(name)
+        if existing is not None:
+            return {"accessKeyId": existing, "secretAccessKey": None}
+        resp = await self._client.post(
+            f"{self.endpoint}/v1/key",
+            json={"name": name},
+            headers=self._auth_headers(),
+        )
+        if resp.status_code not in (200, 201):
+            resp.raise_for_status()
+        data = resp.json()
+        return {
+            "accessKeyId": data.get("accessKeyId") or data.get("id"),
+            "secretAccessKey": data.get("secretAccessKey"),
+        }
+
+    async def _key_id_by_name(self, name: str) -> str | None:
+        resp = await self._client.get(
+            f"{self.endpoint}/v1/key?list", headers=self._auth_headers()
+        )
+        if resp.status_code != 200:
+            return None
+        for key in resp.json() or []:
+            if isinstance(key, dict) and key.get("name") == name:
+                return key.get("id") or key.get("accessKeyId")
+        return None
+
     # ----- internals -----
 
     async def _bucket_id(self, name: str) -> str | None:
@@ -235,6 +271,84 @@ async def provision_tenant_buckets(
     return names
 
 
+# Prod ships GARAGE_ACCESS_KEY="PLACEHOLDER_NEED_GARAGE_KEY" until a real key is
+# provisioned; granting that sentinel would be meaningless, so we skip the grant.
+_PLACEHOLDER_ACCESS_KEY = "PLACEHOLDER_NEED_GARAGE_KEY"
+
+
+async def provision_tenant_storage(
+    *,
+    tenant_slug: str,
+    hipaa_mode: bool = False,
+    settings: Settings | None = None,
+    force: bool = False,
+) -> list[str]:
+    """Auto-provision a tenant's Garage buckets at signup — DORMANT by default.
+
+    No-ops (logs + returns []) when GARAGE_AUTO_PROVISION is off, in self_host
+    mode (the operator owns Garage), in STANDALONE/local-fs mode, or when the
+    admin endpoint/token is absent — so calling it from the onboard hook is
+    always safe. In shared_key mode it grants the existing shared access key on
+    each bucket (skipping the placeholder sentinel); per_tenant_key mode mints a
+    dedicated key (dormant/future). Idempotent and best-effort: ensure_bucket is
+    409-tolerant and grant_access is naturally idempotent.
+
+    ``force=True`` bypasses ONLY the GARAGE_AUTO_PROVISION dormant switch (for the
+    manual backfill CLI); the environmental guards (self_host / standalone /
+    admin-token-absent) still apply because they reflect real inability to act.
+    """
+    settings = settings or get_settings()
+
+    if not force and not settings.GARAGE_AUTO_PROVISION:
+        logger.info("garage_provision_skipped", reason="GARAGE_AUTO_PROVISION off", tenant=tenant_slug)
+        return []
+    if getattr(settings, "DEPLOYMENT_MODE", "hosted") == "self_host":
+        logger.info("garage_provision_skipped", reason="self_host (operator owns Garage)", tenant=tenant_slug)
+        return []
+    if getattr(settings, "STANDALONE_MODE", False):
+        logger.info("garage_provision_skipped", reason="standalone/local-fs backend", tenant=tenant_slug)
+        return []
+    admin_token = getattr(settings, "GARAGE_ADMIN_TOKEN", "")
+    if not settings.GARAGE_ADMIN_ENDPOINT or not admin_token:
+        logger.info("garage_provision_skipped", reason="admin endpoint/token absent", tenant=tenant_slug)
+        return []
+
+    mode = getattr(settings, "GARAGE_PROVISION_MODE", "shared_key")
+    grant_key: str | None = None
+    if mode == "per_tenant_key":
+        # Dormant/future: mint a dedicated key. NOTE: the secret is shown once and
+        # is NOT persisted in v1 (needs the 0042 garage_access_key_id column + a
+        # secret store), so per_tenant_key is not production-wired yet.
+        async with GarageAdmin(settings=settings) as admin:
+            minted = await admin.create_key(name=f"contact-ops-{_normalize_slug(tenant_slug)}")
+        grant_key = minted.get("accessKeyId")
+    else:  # shared_key (default)
+        access_key = settings.GARAGE_ACCESS_KEY
+        if access_key and access_key != _PLACEHOLDER_ACCESS_KEY:
+            grant_key = access_key
+        else:
+            logger.info(
+                "garage_provision_grant_skipped",
+                reason="shared GARAGE_ACCESS_KEY is empty/placeholder",
+                tenant=tenant_slug,
+            )
+
+    names = await provision_tenant_buckets(
+        tenant_slug=tenant_slug,
+        hipaa_mode=hipaa_mode,
+        access_key_id=grant_key,
+        settings=settings,
+    )
+    logger.info(
+        "garage_tenant_provisioned",
+        tenant=tenant_slug,
+        buckets=len(names),
+        mode=mode,
+        granted=bool(grant_key),
+    )
+    return names
+
+
 # ---------- slug normalization ----------
 
 
@@ -261,5 +375,6 @@ __all__ = [
     "all_bucket_names",
     "bucket_name",
     "provision_tenant_buckets",
+    "provision_tenant_storage",
     "retention_for_bucket",
 ]

@@ -452,6 +452,23 @@ async def onboard(request: Request) -> OnboardResponse:
         tenant_slug=new_slug,
     )
 
+    # Auto-provision the tenant's Garage buckets (photos/voice/etc) so uploads
+    # work for this self-served tenant. DORMANT by default (no-ops unless
+    # GARAGE_AUTO_PROVISION is on with a real admin token + access key), and
+    # strictly BEST-EFFORT: any failure degrades uploads (a later backfill
+    # repairs) but must NEVER fail a successful signup.
+    try:
+        from contact_ops.services.garage_lifecycle import provision_tenant_storage
+
+        await provision_tenant_storage(tenant_slug=new_slug, hipaa_mode=False, settings=settings)
+    except Exception as exc:  # noqa: BLE001 — storage provisioning is best-effort
+        logger.warning(
+            "onboard_garage_provision_failed",
+            uc_uid=uc_uid,
+            tenant_id=tenant_id_str,
+            error=str(exc),
+        )
+
     logger.info("onboard_provisioned", uc_uid=uc_uid, tenant_id=tenant_id_str)
     return OnboardResponse(
         tenant_id=new_tenant_id,
