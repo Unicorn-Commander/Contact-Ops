@@ -226,6 +226,34 @@ class Settings(BaseSettings):
     # hard-reject for brand-new emails; true enables pending-invite emails (the
     # pending-invitations table lands with the Signup milestone).
     EMAIL_INVITES_ALLOW_PENDING: bool = False
+    # Internet-exposure hardening (P-00075). Four independent middlewares/guards,
+    # ALL dormant by default (each *_ENABLED=False; main.py only mounts the ones
+    # that are on) + shadow-first where they can block, so flipping them on is a
+    # config exercise. See contact_ops/middleware/{security_headers,body_size,
+    # rate_limit}.py + contact_ops/security/ssrf.py.
+    # -- security response headers --
+    SECURITY_HEADERS_ENABLED: bool = False
+    SECURITY_HEADERS_SHADOW_MODE: bool = True  # log would-set, attach nothing
+    SECURITY_HSTS_ENABLED: bool = False  # never pin HTTPS in dev/self-host over http
+    CONTENT_SECURITY_POLICY: str = "default-src 'none'; frame-ancestors 'none'"
+    # -- request body size cap --
+    BODY_SIZE_LIMIT_ENABLED: bool = False
+    BODY_SIZE_SHADOW_MODE: bool = True  # log would-413, allow through
+    MAX_REQUEST_BODY_BYTES: int = 10485760  # 10 MiB global default
+    BODY_SIZE_PATH_OVERRIDES: dict[str, int] = {}  # path-prefix -> larger cap (bulk import)
+    # -- rate limiting (Redis-backed) --
+    RATE_LIMIT_ENABLED: bool = False
+    RATE_LIMIT_SHADOW: bool = True  # log would-block, allow
+    RATE_LIMIT_DEFAULT: str = "120/minute"
+    TRUSTED_PROXY_IPS: list[str] = []  # Traefik IP/CIDR; only then trust X-Forwarded-For
+    # -- SSRF egress guard --
+    SSRF_GUARD_ENABLED: bool = False
+    SSRF_SHADOW: bool = True  # log ssrf_would_block, allow — observe internal targets first
+    SSRF_HTTPS_ONLY: bool = False  # suite uses http:// internal URLs
+    SSRF_ALLOW_PRIVATE_NETWORKS: bool = False  # block private once enabled; allowlist re-permits
+    # Suite-internal egress hosts that bypass the IP check (so federation/CardDAV
+    # to private targets keeps working when the guard is enforced).
+    SSRF_ALLOWED_HOSTS: list[str] = []
 
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""

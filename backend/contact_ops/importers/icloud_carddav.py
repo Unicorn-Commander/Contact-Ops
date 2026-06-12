@@ -6,9 +6,11 @@ import os
 
 import httpx
 
+from contact_ops.core.config import get_settings
 from contact_ops.importers.base import CanonicalImportRecord, Importer, SourceKind
 from contact_ops.importers.nextcloud_carddav import _chunks, _extract_address_data, _extract_hrefs
 from contact_ops.importers.vcard import record_from_vcard_text
+from contact_ops.security.ssrf import validate_outbound_url
 
 DEFAULT_ICLOUD_URL = "https://contacts.icloud.com/"
 # RFC 6764 service discovery — Apple returns 404 on PROPFIND to the bare root
@@ -37,6 +39,8 @@ class ICloudCardDAVImporter(Importer):
     async def records(self) -> list[CanonicalImportRecord]:
         if not self.apple_id or not self.app_password:
             raise RuntimeError("ICLOUD_APPLE_ID and ICLOUD_APP_PASSWORD are required")
+        # SSRF guard on the (overridable) iCloud URL. Dormant/shadow by default.
+        await validate_outbound_url(self.url, get_settings())
         # follow_redirects=True is required: iCloud CardDAV discovery starts at
         # contacts.icloud.com and 301s (even on PROPFIND) to a shard URL before
         # serving the address-book response. Without follow_redirects=True,

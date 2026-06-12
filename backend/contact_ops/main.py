@@ -37,8 +37,11 @@ from contact_ops.core.config import get_settings
 from contact_ops.mcp import router as mcp_router
 from contact_ops.middleware import (
     AuditMiddleware,
+    BodySizeLimitMiddleware,
     JWTValidationMiddleware,
+    RateLimitMiddleware,
     RequestMetricsMiddleware,
+    SecurityHeadersMiddleware,
 )
 from contact_ops.observability.sentry import init_sentry
 from contact_ops.routers import health_router
@@ -291,11 +294,26 @@ def create_application() -> FastAPI:
     app.add_middleware(JWTValidationMiddleware, settings=settings)
     # Audit — runs after JWT, records request + response with full actor chain.
     app.add_middleware(AuditMiddleware)
-    # HTTP request metrics — added LAST so it's the OUTERMOST layer and times the
-    # full request (inclusive of audit). Labels by route template only; dormant-
-    # safe (cheap) and on by default, flip METRICS_HTTP_ENABLED=false to disable.
+    # HTTP request metrics — labels by route template only; dormant-safe (cheap)
+    # and on by default, flip METRICS_HTTP_ENABLED=false to disable.
     if settings.METRICS_HTTP_ENABLED:
         app.add_middleware(RequestMetricsMiddleware)
+
+    # Exposure hardening (P-00075). Each is dormant by default + shadow-first;
+    # main.py only mounts the ones turned on. Starlette runs the LAST-added
+    # middleware OUTERMOST, so the add order below yields the request flow:
+    #   SecurityHeaders -> RateLimit -> BodySize -> [RequestMetrics] -> Audit
+    #   -> JWT -> CORS -> route.
+    # RateLimit + BodySize sit OUTER of JWT so they shed abusive/oversized traffic
+    # (incl. 401-spam) before auth work; RateLimit keys by IP when there are no
+    # claims yet (degrades gracefully). SecurityHeaders is outermost so its
+    # headers attach even to JWT 401s.
+    if settings.BODY_SIZE_LIMIT_ENABLED:
+        app.add_middleware(BodySizeLimitMiddleware, settings=settings)
+    if settings.RATE_LIMIT_ENABLED:
+        app.add_middleware(RateLimitMiddleware, settings=settings)
+    if settings.SECURITY_HEADERS_ENABLED:
+        app.add_middleware(SecurityHeadersMiddleware, settings=settings)
 
     # Routes
     app.include_router(health_router)

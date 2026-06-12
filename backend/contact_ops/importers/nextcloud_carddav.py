@@ -6,8 +6,10 @@ import os
 
 import httpx
 
+from contact_ops.core.config import get_settings
 from contact_ops.importers.base import CanonicalImportRecord, Importer, SourceKind
 from contact_ops.importers.vcard import record_from_vcard_text
+from contact_ops.security.ssrf import validate_outbound_url
 
 DEFAULT_NEXTCLOUD_URL = "https://cloud.magicunicorn.dev/remote.php/dav/addressbooks/users/aaron/contacts/"
 
@@ -34,6 +36,9 @@ class NextcloudCardDAVImporter(Importer):
     async def records(self) -> list[CanonicalImportRecord]:
         if not self.username or not self.password:
             raise RuntimeError("NEXTCLOUD_CARDDAV_USER and NEXTCLOUD_CARDDAV_PASSWORD are required")
+        # SSRF guard on the user-supplied CardDAV URL. Dormant/shadow by default
+        # (returns the url + logs); raises SSRFBlocked only once enforced.
+        await validate_outbound_url(self.url, get_settings())
         async with httpx.AsyncClient(auth=(self.username, self.password), timeout=30) as client:
             hrefs = await _list_vcard_hrefs(client, self.url)
             records: list[CanonicalImportRecord] = []

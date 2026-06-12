@@ -10,7 +10,9 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from contact_ops.core.config import get_settings
 from contact_ops.federation.consumer_sdk.webhooks import canonical_json, sign_payload
+from contact_ops.security.ssrf import check_outbound
 
 PUBLISHABLE_AGGREGATES = {"person", "organization", "edge"}
 
@@ -80,12 +82,21 @@ async def publish_action_event(
     client = http or httpx.AsyncClient(timeout=5.0)
     delivered = 0
     failed = 0
+    settings = get_settings()
     try:
         for subscription in subscriptions:
+            sub_url = str(subscription["url"])
+            # SSRF guard: consumer-supplied webhook URLs are an egress vector.
+            # Dormant/shadow by default (check_outbound returns allowed=True +
+            # logs ssrf_would_block); only refuses once the guard is enforced.
+            allowed, _ssrf_reason = await check_outbound(sub_url, settings)
+            if not allowed:
+                failed += 1
+                continue
             signature = sign_payload(body, str(subscription["hmac_secret"]))
             try:
                 response = await client.post(
-                    str(subscription["url"]),
+                    sub_url,
                     content=body,
                     headers={
                         "Content-Type": "application/json",
