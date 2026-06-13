@@ -121,8 +121,15 @@ SQL
 ```
 The **NOLOGIN policy roles** (`contact_ops_app`, `contact_ops_ro`,
 `contact_ops_audit`) are NOT created here — Alembic `0001` creates them
-idempotently on first migrate (step 3) and grants `contact_ops_runtime` into
-them.
+idempotently on first migrate (step 3). Note: alembic `0001` does **not** grant
+the runtime LOGIN role membership in them. That membership is established by the
+INIT step — `bootstrap_cell.sh` here for shared-infra, or
+`deploy/selfcontained/initdb/00-init.sh` for the self-contained cell — which
+runs `CREATE ROLE <runtime> ... IN ROLE contact_ops_app` (plus a
+`GRANT contact_ops_app TO <runtime>`). This membership is **REQUIRED**: the RLS
+policies are written `... TO contact_ops_app` and table privileges are GRANTed to
+`contact_ops_app`, so the runtime role only inherits those privileges and has the
+RLS policies apply to it when it is a member of `contact_ops_app`.
 
 ### 3. Bring up the stack — prestart AUTO-MIGRATES
 ```bash
