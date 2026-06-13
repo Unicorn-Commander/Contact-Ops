@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     GMAIL_CLIENT_SECRET: str = ""
     GMAIL_REDIRECT_URI: str = ""
     FRONTEND_URL: str = "https://contacts.magicunicorn.dev"
+    # Public self-serve signup (P-00075). DORMANT by default + BACKEND-driven (the
+    # SPA fetches /api/auth/signup-config at the login screen, so flipping signup
+    # on is a backend env change, NOT a frontend rebuild). SIGNUP_MODE: "suite" =
+    # accounts + subscriptions are owned by the Unicorn Commander suite, so CO
+    # only surfaces "sign in" + a link to SUITE_SIGNUP_URL (the product cell on
+    # unicorncommander.ai); "standalone" = CO's own Keycloak self-registration
+    # (self-host / direct-CO). First-login auto-provision (POST /api/auth/onboard)
+    # already creates a free-tier personal workspace, so signup is just the
+    # surface + (Aaron-side) enabling registration on the realm.
+    SIGNUP_ENABLED: bool = False
+    SIGNUP_MODE: Literal["suite", "standalone"] = "suite"
+    SUITE_SIGNUP_URL: str = ""
 
     # Tenant resolution
     TENANT_GUC_NAME: str = "app.tenant_id"

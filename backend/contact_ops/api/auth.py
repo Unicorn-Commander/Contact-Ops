@@ -109,6 +109,28 @@ class OnboardResponse(BaseModel):
     provisioned: bool
 
 
+class SignupConfigResponse(BaseModel):
+    signup_enabled: bool
+    signup_mode: str  # "suite" | "standalone"
+    suite_signup_url: str | None = None
+
+
+@router.get("/signup-config", response_model=SignupConfigResponse)
+async def signup_config() -> SignupConfigResponse:
+    """Public (no auth): tells the login screen whether to surface a signup CTA
+    and in which mode — "suite" (sign in + link to the UC suite signup, which
+    owns accounts/subscriptions) or "standalone" (CO's own Keycloak self-
+    registration). Returns ONLY feature flags + the suite signup URL; no tenant
+    data, no secrets. Backend-driven so flipping signup on needs no SPA rebuild.
+    """
+    settings = get_settings()
+    return SignupConfigResponse(
+        signup_enabled=settings.SIGNUP_ENABLED,
+        signup_mode=settings.SIGNUP_MODE,
+        suite_signup_url=settings.SUITE_SIGNUP_URL or None,
+    )
+
+
 @router.post(
     "/switch-workspace",
     response_model=SwitchWorkspaceResponse,

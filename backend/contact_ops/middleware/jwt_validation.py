@@ -69,6 +69,10 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         # ACLs on the scrape source remain the enforcement boundary.
         "/metrics",
         "/.well-known/mcps.json",
+        # Public signup-config probe: the login screen (pre-auth) fetches it to
+        # decide whether to surface a signup CTA. Returns only feature flags +
+        # the suite signup URL — no tenant data, no secrets.
+        "/api/auth/signup-config",
     })
 
     # Prefix-based bypass. CardDAV runs HTTP Basic auth against per-device

@@ -4,6 +4,7 @@ import { useAuth } from "react-oidc-context";
 import { AlertTriangle, Compass, Network, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useOnboarding } from "@/hooks/useOnboarding";
+import { useSignupConfig, type SignupConfig } from "@/hooks/useSignupConfig";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -404,6 +405,8 @@ function LazyReviewQueuePreviewRoute() {
 
 function AuthGate() {
   const auth = useAuth();
+  // Pre-auth: whether to surface a signup CTA on the login screen (backend-driven).
+  const signupConfig = useSignupConfig();
   // First-login auto-onboarding: provisions a personal workspace for a
   // brand-new user (token has no tenant_id), then silently re-auths so the
   // refreshed token carries it. Strictly idempotent — see useOnboarding. The
@@ -419,7 +422,16 @@ function AuthGate() {
     );
   }
   if (!auth.isAuthenticated) {
-    return <LoginHero onSignIn={() => void auth.signinRedirect()} />;
+    return (
+      <LoginHero
+        onSignIn={() => void auth.signinRedirect()}
+        // Standalone mode: trigger Keycloak self-registration (KC 23+/26 maps the
+        // OIDC `prompt=create` to its registration flow). The exact param may need
+        // tuning to the realm's KC version when signup is enabled.
+        onSignUp={() => void auth.signinRedirect({ extraQueryParams: { prompt: "create" } })}
+        signupConfig={signupConfig.data}
+      />
+    );
   }
 
   // Brand-new user → provisioning their workspace (POST /api/auth/onboard +
@@ -501,7 +513,21 @@ function OnboardingNotice({
  * a single static frame in that mode. All text sits on the .co-v2-stage-content
  * layer and carries its own AA contrast over the decorative graph.
  */
-function LoginHero({ onSignIn }: { onSignIn: () => void }) {
+function LoginHero({
+  onSignIn,
+  onSignUp,
+  signupConfig
+}: {
+  onSignIn: () => void;
+  onSignUp: () => void;
+  signupConfig?: SignupConfig;
+}) {
+  // Dormant by default: the signup CTA only appears when the backend reports
+  // signup_enabled. "suite" → link out to the UC suite signup (it owns
+  // accounts/subscriptions); "standalone" → trigger CO's own KC registration.
+  const showSignup = signupConfig?.signup_enabled === true;
+  const suiteMode = signupConfig?.signup_mode === "suite";
+  const suiteUrl = signupConfig?.suite_signup_url ?? undefined;
   return (
     <div className="co-v2-ambient co-v2-vignette relative flex min-h-screen items-center overflow-hidden">
       <AmbientGraph nodeCount={30} className="opacity-90" />
@@ -551,8 +577,38 @@ function LoginHero({ onSignIn }: { onSignIn: () => void }) {
               Sign in with Magic Unicorn
             </Button>
             <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
+
+            {showSignup ? (
+              <div className="mt-6 border-t border-[oklch(var(--co-v2-glass-hairline-strong))] pt-5">
+                <p className="text-xs text-muted-foreground">New here?</p>
+                {suiteMode ? (
+                  <a
+                    href={suiteUrl ?? "#"}
+                    className="text-link hover:underline mt-1.5 inline-block text-sm font-medium"
+                    {...(suiteUrl ? {} : { "aria-disabled": true })}
+                  >
+                    Create a Unicorn Commander account →
+                  </a>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="mt-2 h-11 w-full text-sm"
+                    onClick={onSignUp}
+                  >
+                    Create your account
+                  </Button>
+                )}
+              </div>
+            ) : null}
           </div>
           <p className="mt-4 text-center text-xs text-muted-foreground">by Magic Unicorn</p>
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">
+            <a href="/legal/terms.html" className="text-link hover:underline">Terms</a>
+            {" · "}
+            <a href="/legal/privacy.html" className="text-link hover:underline">Privacy</a>
+            {" · "}
+            <a href="/legal/dpa.html" className="text-link hover:underline">DPA</a>
+          </p>
         </div>
       </div>
     </div>
