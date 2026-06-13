@@ -25,6 +25,36 @@ edit (`BRIGADE_TRUSTED_ISSUERS`), not a code change.
 
 ---
 
+
+## (b0) Pick your infra topology
+
+Two ways to stand the data stack a cell needs. **Same image, same `prestart`
+auto-migrate (asserts `schema_guard` head `0043`), same dormant-flag contract** —
+they differ ONLY in where postgres/redis/garage/qdrant/falkordb come from.
+
+| | **Shared-infra** | **Self-contained-infra** |
+|---|---|---|
+| Compose file | `docker-compose.prod.yml` | `docker-compose.selfcontained.yml` |
+| Data stack | reuses the box's shared `unicorn-*` infra (postgres/redis/qdrant/falkordb/garage) | **bundles its own** `contact-ops-*` postgres/redis/qdrant/falkordb/garage on a private `contact-ops-internal` network |
+| Networks | `unicorn-network` + `web` | `contact-ops-internal` + `web` |
+| Env template | `deploy/cell/.env.cell.template` | `deploy/selfcontained/.env.selfcontained.template` |
+| Postgres DB + roles | **hand-create** `contact-ops-postgres` + the `contact_ops_runtime` LOGIN role (step 2 above / `bootstrap_cell.sh`) | **auto**: the bundled postgres makes `contact_ops_db` + the `contact_ops_admin` superuser; `deploy/selfcontained/initdb/00-init.sh` makes `contact_ops_runtime` **and grants it into `contact_ops_app`** so RLS enforces — **skip the manual role step** |
+| Extra secrets | DSN passwords only | + compose-only `PG_ADMIN_PASSWORD`, `CO_RUNTIME_PASSWORD`, `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `QDRANT_API_KEY`, `CERT_RESOLVER` |
+| Best for | our product/dogfood cells co-located with suite infra | **self-host customers** + standalone boxes with no suite infra to borrow |
+
+**Self-host customers usually want self-contained** — one `docker compose -f
+docker-compose.selfcontained.yml up -d` brings up the whole cell (data stack +
+app) with no manual infra overlay. Bring-up then follows the SAME ordered steps
+below, except step 2 (create DB + roles) is done for you by the bundled
+postgres's init — go straight to "up".
+
+> RLS note: the bundled `initdb/00-init.sh` makes `contact_ops_runtime` a MEMBER
+> of `contact_ops_app` (the policy role the RLS policies target). That membership
+> is what makes RLS apply to the app login role; the shared-infra path relies on
+> the same grant being done out-of-band (see step 2 / the P4 RLS tests).
+
+---
+
 ## (b) Prerequisites
 
 A cell needs, reachable from the backend container:

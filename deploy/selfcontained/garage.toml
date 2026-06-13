@@ -1,0 +1,44 @@
+# Single-node Garage for a Contact-Ops SELF-CONTAINED cell.
+# Replication factor 1 — single trusted node; we accept "no replicas" for a
+# self-contained box (bumping to 3 means provisioning two more nodes).
+# rpc_secret + admin_token come from the environment (GARAGE_RPC_SECRET /
+# GARAGE_ADMIN_TOKEN, set in .env), never committed.
+#
+# After first start, provision once (the backend then makes per-tenant buckets
+# lazily via the admin API when storage auto-provision is turned on):
+#   docker exec contact-ops-garage /garage status            # copy the node id
+#   docker exec contact-ops-garage /garage layout assign -z dc1 -c 100G <node-id>
+#   docker exec contact-ops-garage /garage layout apply --version 1
+#   docker exec contact-ops-garage /garage key create contact-ops-app-key
+#       # -> put access/secret in .env as GARAGE_ACCESS_KEY / GARAGE_SECRET_KEY
+# (Leaving GARAGE_ACCESS_KEY/SECRET empty keeps the backend on its local-FS
+#  fallback, so the stack runs fine without object storage until you want it.)
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+replication_mode = "1"
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+# S3 API — internal only; the backend reaches it at http://contact-ops-garage:3900
+# over the contact-ops-internal docker network.
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "us-east-1"
+# EDIT for your domain. Only needed if you expose S3 virtual-host-style buckets
+# externally; for the internal-only default the value is cosmetic. Example:
+#   root_domain = ".s3.contacts.example.com"
+root_domain = ".s3.contacts.localhost"
+
+[s3_web]
+bind_addr = "127.0.0.1:3902"
+# EDIT for your domain if you serve static buckets over the web endpoint.
+#   root_domain = ".web.contacts.example.com"
+root_domain = ".web.contacts.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"

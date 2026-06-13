@@ -1,0 +1,200 @@
+# Contact-Ops — SELF-CONTAINED-infra cell.
+#
+# A superset of docker-compose.prod.yml: the SAME two app services
+# (contact-ops-backend :8501 + contact-ops-frontend :80, same Traefik labels,
+# same external `web` network) PLUS a bundled, dedicated data stack
+# (pgvector Postgres + Redis + FalkorDB + Qdrant + Garage) on a self-owned
+# `contact-ops-internal` network. A self-host customer or a standalone box can
+# stand a whole cell up from main with NO manual infra overlay — initdb
+# auto-creates the runtime role + RLS membership; prestart auto-migrates to head.
+#
+# Pick this file (vs docker-compose.prod.yml, which reuses shared `unicorn-*`
+# infra) when the box has no suite infra to borrow. See deploy/cell/README.md (b0).
+#
+# All host-specifics + secrets come from .env (copy
+# deploy/selfcontained/.env.selfcontained.template -> .env and fill it). Bring-up:
+#   cp deploy/selfcontained/.env.selfcontained.template .env   # then fill it in
+#   docker compose -f docker-compose.selfcontained.yml up -d
+#   # prestart runs `alembic upgrade head` + asserts schema_guard (0043), then uvicorn.
+#
+# Reuses the SAME image / container / service / volume names as
+# docker-compose.public.yml so a prebuilt contact-ops image is picked up as-is.
+name: contact-ops
+
+services:
+  # ===== bundled data stack (contact-ops-internal network only) =============
+  contact-ops-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: contact-ops-postgres
+    restart: unless-stopped
+    environment:
+      # Bootstrap superuser = main's migration/admin login role (BYPASSRLS).
+      # MIGRATION_DATABASE_URL authenticates as this; the DB is auto-created.
+      POSTGRES_USER: contact_ops_admin
+      POSTGRES_DB: contact_ops_db
+      POSTGRES_PASSWORD: ${PG_ADMIN_PASSWORD}
+      # Consumed by initdb/00-init.sh to create the runtime LOGIN role the app
+      # binds RLS through. MUST match the password in DATABASE_URL.
+      CO_RUNTIME_PASSWORD: ${CO_RUNTIME_PASSWORD}
+    volumes:
+      - contact-ops-pgdata:/var/lib/postgresql/data
+      - ./deploy/selfcontained/initdb:/docker-entrypoint-initdb.d:ro
+    networks: [contact-ops-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contact_ops_admin -d contact_ops_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  contact-ops-redis:
+    image: redis:7-alpine
+    container_name: contact-ops-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - contact-ops-redis:/data
+    networks: [contact-ops-internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  contact-ops-falkordb:
+    image: falkordb/falkordb:latest
+    container_name: contact-ops-falkordb
+    restart: unless-stopped
+    volumes:
+      - contact-ops-falkordb:/data
+    networks: [contact-ops-internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  contact-ops-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: contact-ops-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    volumes:
+      - contact-ops-qdrant:/qdrant/storage
+    networks: [contact-ops-internal]
+
+  contact-ops-garage:
+    image: dxflrs/garage:v1.0.1
+    container_name: contact-ops-garage
+    restart: unless-stopped
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+    volumes:
+      - contact-ops-garage-meta:/var/lib/garage/meta
+      - contact-ops-garage-data:/var/lib/garage/data
+      - ./deploy/selfcontained/garage.toml:/etc/garage.toml:ro
+    networks: [contact-ops-internal]
+
+  # ===== application (same as docker-compose.prod.yml) ======================
+  contact-ops-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: contact-ops-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=false
+    expose:
+      - "8501"
+    depends_on:
+      contact-ops-postgres:
+        condition: service_healthy
+      contact-ops-redis:
+        condition: service_healthy
+    networks:
+      - contact-ops-internal
+      - web
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.contact-ops-mcp.rule=Host(`${MCP_DOMAIN}`)"
+      - "traefik.http.routers.contact-ops-mcp.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-mcp.tls=true"
+      - "traefik.http.routers.contact-ops-mcp.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.services.contact-ops-mcp.loadbalancer.server.port=8501"
+      # CardDAV: same backend container, separate host. Backend's JWT middleware
+      # bypasses /carddav and /.well-known/carddav (HTTP Basic auth instead).
+      - "traefik.http.routers.contact-ops-carddav.rule=Host(`${CARDDAV_DOMAIN}`)"
+      - "traefik.http.routers.contact-ops-carddav.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-carddav.tls=true"
+      - "traefik.http.routers.contact-ops-carddav.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.contact-ops-carddav.service=contact-ops-mcp"
+
+  contact-ops-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_MCP_BASE_URL: "https://${MCP_DOMAIN}"
+        VITE_KEYCLOAK_ISSUER: "${KEYCLOAK_ISSUER}"
+        VITE_KEYCLOAK_CLIENT_ID: "${VITE_KEYCLOAK_CLIENT_ID:-contact-ops-app}"
+    container_name: contact-ops-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - contact-ops-internal
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.contact-ops-web.rule=Host(`${APP_DOMAIN}`)"
+      - "traefik.http.routers.contact-ops-web.entrypoints=websecure"
+      - "traefik.http.routers.contact-ops-web.tls=true"
+      - "traefik.http.routers.contact-ops-web.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.services.contact-ops-web.loadbalancer.server.port=80"
+
+networks:
+  contact-ops-internal:
+    name: contact-ops-internal
+  web:
+    external: true
+
+volumes:
+  contact-ops-pgdata:
+  contact-ops-redis:
+  contact-ops-falkordb:
+  contact-ops-qdrant:
+  contact-ops-garage-meta:
+  contact-ops-garage-data:
