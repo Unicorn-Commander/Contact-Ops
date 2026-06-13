@@ -76,9 +76,16 @@ _PRO_TOOLS: frozenset[str] = frozenset(
 )
 
 # --- Enterprise tools: compliance / SSO / federation -------------------------
-# Empty today — those surfaces are net-new (P-00075 compliance slab). Populate
-# when GDPR export / account-erasure / SSO-admin / federation tools ship.
-_ENTERPRISE_TOOLS: frozenset[str] = frozenset()
+# The GDPR export + Art.17 erasure admin tools (P-00075 compliance slab). They
+# gate to the enterprise rung; shadow-first while ENTITLEMENT_ENFORCED is False.
+_ENTERPRISE_TOOLS: frozenset[str] = frozenset(
+    {
+        "export_subject_data",
+        "export_tenant_data",
+        "erase_subject",
+        "erase_tenant_account",
+    }
+)
 
 
 def tier_for_tool(tool_name: str) -> str:

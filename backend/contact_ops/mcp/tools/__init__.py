@@ -57,6 +57,7 @@ _PHASE_3_MODULES = (
     "consumer_webhooks",
     "data_quality",
     "enrichment",
+    "compliance",
 )
 
 

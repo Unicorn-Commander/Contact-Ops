@@ -138,6 +138,11 @@ class Person(Base):
         server_default=sa.text("'operational_2y'"),
     )
     legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Two-phase erasure tombstone (P-00075 compliance, migration 0042). An Art.17
+    # erasure request sets these (+ redacts PII); the retention sweep hard-purges
+    # once purge_after passes. Both null on a normal live person.
+    tombstoned_at: Mapped[datetime | None] = mapped_column()
+    purge_after: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     created_by_actor_id: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)

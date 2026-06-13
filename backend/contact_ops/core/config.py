@@ -268,6 +268,43 @@ class Settings(BaseSettings):
     LAGO_API_KEY: str = ""  # CO-scoped suite Lago key; empty = Lago leg inert
     BILLING_QUOTA_ENFORCED: bool = False
 
+    # GDPR compliance engine (P-00075). DORMANT master switch for the Art.17
+    # erasure + Art.15 export tools. With COMPLIANCE_ENGINE_ENABLED False the
+    # erase tool takes the immediate glass-break path (still honest); True turns
+    # on the two-phase tombstone (mark + grace, the sweep purges later) so the
+    # returned undo window is REAL. ERASURE_GRACE_DAYS is that window;
+    # EXPORT_SIGNED_URL_TTL_SECONDS bounds the Garage download link lifetime.
+    COMPLIANCE_ENGINE_ENABLED: bool = False
+    ERASURE_GRACE_DAYS: int = 30
+    EXPORT_SIGNED_URL_TTL_SECONDS: int = 900
+    # GDPR compliance — retention sweep (Art.17 grace-purge + Art.5(1)(e)
+    # storage limitation). DORMANT by default, mirroring the entitlement/billing
+    # "present but OFF" posture. RETENTION_SWEEP_ENABLED gates the daily Celery
+    # beat task (contact_ops.agents.retention_sweep) at the top level: with it
+    # False the task logs `retention_sweep_disabled` and touches nothing.
+    # RETENTION_SWEEP_SHADOW (default True) is the second safety: even with the
+    # sweep ENABLED, shadow mode only LOGS `retention_would_purge` with counts
+    # and purges NOTHING — flip it False to actually hard-purge. This two-flag
+    # rollout matches MEMBERSHIP_GATE_ENFORCED / ENTITLEMENT_ENFORCED: observe in
+    # logs first, enforce second. The sweep enumerates tenants via the admin
+    # (BYPASSRLS) MIGRATION_DATABASE_URL then purges RLS-bound under the app role;
+    # it NEVER touches legal_hold rows or the non-expiring retention classes.
+    RETENTION_SWEEP_ENABLED: bool = False
+    RETENTION_SWEEP_SHADOW: bool = True
+    # Per-class TTL (days) for the retention-ageing path, measured from
+    # last_interaction_at (falling back to created_at). 'ephemeral_30d' → 30,
+    # 'operational_2y' → 730. 'legal_hold' / 'hipaa_6y' / 'indefinite' are
+    # NON-EXPIRING and excluded from the sweep entirely (hard invariant, not a
+    # tunable). Defaults match the class names so the numbers are self-evident;
+    # they're settings only so an operator can lengthen a grace window without a
+    # code change.
+    RETENTION_EPHEMERAL_TTL_DAYS: int = 30
+    RETENTION_OPERATIONAL_TTL_DAYS: int = 730
+    # Max persons purged per tenant per tick. Bounds blast radius + keeps each
+    # daily run cheap; the backlog drains over subsequent days. Raise for a
+    # one-off catch-up, then lower again.
+    RETENTION_SWEEP_BATCH_LIMIT: int = 500
+
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""
     DATA_INTEL_CLIENT_ID: str = "contact-ops-publisher"
