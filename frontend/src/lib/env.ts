@@ -3,7 +3,15 @@ export const env = {
     import.meta.env.VITE_MCP_BASE_URL ?? "https://mcp.contacts.magicunicorn.dev",
   keycloakIssuer:
     import.meta.env.VITE_KEYCLOAK_ISSUER ?? "https://auth.magicunicorn.dev/realms/uchub",
-  keycloakClientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? "contact-ops-app"
+  keycloakClientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? "contact-ops-app",
+  // Analytics — empty by default = DORMANT (loaders no-op). Point at the
+  // self-hosted Umami + PostHog (centerdeep/commander VPS) to enable. These bake
+  // at BUILD time, so flipping analytics on is a frontend rebuild. Consent-gated
+  // (opt-in) regardless.
+  umamiSrc: import.meta.env.VITE_UMAMI_SRC ?? "",
+  umamiWebsiteId: import.meta.env.VITE_UMAMI_WEBSITE_ID ?? "",
+  posthogKey: import.meta.env.VITE_POSTHOG_KEY ?? "",
+  posthogHost: import.meta.env.VITE_POSTHOG_HOST ?? ""
 };
 
 // Request only standard OIDC scopes. The app's permission scopes (person:*,

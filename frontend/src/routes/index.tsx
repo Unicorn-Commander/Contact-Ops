@@ -5,6 +5,8 @@ import { AlertTriangle, Compass, Network, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { useSignupConfig, type SignupConfig } from "@/hooks/useSignupConfig";
+import { useConsent } from "@/lib/consent";
+import { identifyPosthog } from "@/lib/analytics/posthog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -407,6 +409,17 @@ function AuthGate() {
   const auth = useAuth();
   // Pre-auth: whether to surface a signup CTA on the login screen (backend-driven).
   const signupConfig = useSignupConfig();
+  const { consent } = useConsent();
+
+  // Identify product analytics by the OPAQUE uc_uid (never name/email), grouped
+  // by tenant. No-op unless PostHog is configured AND product-consent is given.
+  useEffect(() => {
+    if (!auth.isAuthenticated || !consent.product) return;
+    const profile = auth.user?.profile as Record<string, unknown> | undefined;
+    const sub = typeof profile?.sub === "string" ? profile.sub : undefined;
+    const tenantId = typeof profile?.tenant_id === "string" ? profile.tenant_id : undefined;
+    if (sub) identifyPosthog(sub, tenantId);
+  }, [auth.isAuthenticated, consent.product, auth.user]);
   // First-login auto-onboarding: provisions a personal workspace for a
   // brand-new user (token has no tenant_id), then silently re-auths so the
   // refreshed token carries it. Strictly idempotent — see useOnboarding. The

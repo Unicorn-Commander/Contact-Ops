@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { NotesSection } from "@/components/profile/NotesSection";
 import { PersonalAccessTokensSection } from "@/components/profile/PersonalAccessTokensSection";
 import { WorkspaceMembersSection } from "@/components/profile/WorkspaceMembersSection";
+import { useConsent } from "@/lib/consent";
 import { useCardDavPasswords, useMcpMutation } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import { compactDate, initials } from "@/lib/utils";
@@ -32,6 +33,7 @@ function ReadonlyField({ id, label, value, mono = false }: { id: string; label: 
 export function SettingsRoute() {
   const auth = useAuth();
   const [theme, setTheme] = useState<ThemeMode>(() => getThemePreference());
+  const { consent, setConsent } = useConsent();
   const passwords = useCardDavPasswords();
   const generate = useMcpMutation(tools.generateCardDavPassword);
   const revoke = useMcpMutation(tools.revokeCardDavPassword);
@@ -105,6 +107,45 @@ export function SettingsRoute() {
 
       {/* Members — workspace team management (admins only; self-gates otherwise). */}
       <WorkspaceMembersSection />
+
+      {/* Privacy & Analytics — opt-in consent, revocable. Analytics never fire
+          until accepted, and only when the trackers are configured server-side. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Palette className="h-4 w-4 text-[oklch(var(--co-emerald-500))]" strokeWidth={1.8} />
+            Privacy &amp; Analytics
+          </CardTitle>
+          <CardDescription>
+            Privacy-friendly analytics, opt-in. We never capture your contact data.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {([
+            ["web", "Website analytics", "Anonymous page-visit stats (Umami)."],
+            ["product", "Product analytics", "Which features are used, by your opaque account id (PostHog) — never your name or email."]
+          ] as const).map(([key, label, desc]) => {
+            const on = consent[key];
+            return (
+              <div key={key} className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{label}</p>
+                  <p className="text-xs text-muted-foreground">{desc}</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-20 shrink-0"
+                  aria-pressed={on}
+                  onClick={() => setConsent({ [key]: !on })}
+                >
+                  {on ? "On" : "Off"}
+                </Button>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
 
       {/* Notes & Log — Phase 1 user-target surface; same component drops into person/org pages later. */}
       <NotesSection targetType="user" />

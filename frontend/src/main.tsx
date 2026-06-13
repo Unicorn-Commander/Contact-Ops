@@ -8,6 +8,8 @@ import { MotionConfig } from "framer-motion";
 import { Toaster } from "sonner";
 import { oidcConfig } from "@/lib/auth";
 import { routeTree } from "@/routes";
+import { ConsentProvider } from "@/lib/consent";
+import { ConsentBanner } from "@/components/ConsentBanner";
 import "@/index.css";
 
 const queryClient = new QueryClient({
@@ -35,6 +37,14 @@ declare module "@tanstack/react-router" {
   }
 }
 
+// Manual, path-only pageview tracking (Umami auto-track is off so it never fires
+// pre-consent or leaks query-string PII). No-op until Umami is configured + the
+// user has consented (the loader injects the script only then).
+import { trackPageview } from "@/lib/analytics/umami";
+router.subscribe("onResolved", () => {
+  trackPageview(window.location.pathname);
+});
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider {...oidcConfig}>
@@ -43,15 +53,18 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           {/* reducedMotion="user" makes every framer-motion animation honour the
               OS prefers-reduced-motion setting app-wide, in one place. */}
           <MotionConfig reducedMotion="user">
-            <Toaster
-              position="bottom-right"
-              richColors
-              closeButton
-              toastOptions={{
-                style: { fontFamily: "Inter, sans-serif" },
-              }}
-            />
-            <RouterProvider router={router} />
+            <ConsentProvider>
+              <Toaster
+                position="bottom-right"
+                richColors
+                closeButton
+                toastOptions={{
+                  style: { fontFamily: "Inter, sans-serif" },
+                }}
+              />
+              <RouterProvider router={router} />
+              <ConsentBanner />
+            </ConsentProvider>
           </MotionConfig>
         </HotkeysProvider>
       </QueryClientProvider>
