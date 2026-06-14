@@ -155,6 +155,11 @@ services:
         VITE_MCP_BASE_URL: "https://${MCP_DOMAIN}"
         VITE_KEYCLOAK_ISSUER: "${KEYCLOAK_ISSUER}"
         VITE_KEYCLOAK_CLIENT_ID: "${VITE_KEYCLOAK_CLIENT_ID:-contact-ops-app}"
+        # Analytics (Umami + PostHog) — empty unless set; dormant by default.
+        VITE_UMAMI_SRC: "${VITE_UMAMI_SRC:-}"
+        VITE_UMAMI_WEBSITE_ID: "${VITE_UMAMI_WEBSITE_ID:-}"
+        VITE_POSTHOG_KEY: "${VITE_POSTHOG_KEY:-}"
+        VITE_POSTHOG_HOST: "${VITE_POSTHOG_HOST:-}"
     container_name: contact-ops-frontend
     restart: unless-stopped
     expose:

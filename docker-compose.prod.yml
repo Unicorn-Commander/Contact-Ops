@@ -56,6 +56,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
+      args:
+        # Analytics (Umami + PostHog) — empty unless set; dormant by default.
+        VITE_UMAMI_SRC: "${VITE_UMAMI_SRC:-}"
+        VITE_UMAMI_WEBSITE_ID: "${VITE_UMAMI_WEBSITE_ID:-}"
+        VITE_POSTHOG_KEY: "${VITE_POSTHOG_KEY:-}"
+        VITE_POSTHOG_HOST: "${VITE_POSTHOG_HOST:-}"
     container_name: contact-ops-frontend
     restart: unless-stopped
     expose:
