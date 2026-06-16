@@ -599,7 +599,7 @@ function LoginHero({
             />
             <h2 className="co-v2-wordmark text-3xl font-bold tracking-tight">Contact-Ops</h2>
             <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
-              Sign in with Magic Unicorn to manage people, organizations, and the agents that keep
+              Sign in with Unicorn Commander to manage people, organizations, and the agents that keep
               them clean.
             </p>
             <Button
@@ -608,9 +608,9 @@ function LoginHero({
               onClick={onSignIn}
             >
               <Sparkles className="h-4 w-4" strokeWidth={2} />
-              Sign in with Magic Unicorn
+              Sign in with Unicorn Commander
             </Button>
-            <p className="mt-4 text-xs text-muted-foreground">Secured by Magic Unicorn SSO</p>
+            <p className="mt-4 text-xs text-muted-foreground">Secured by Unicorn Commander SSO</p>
 
             {showSignup ? (
               <div className="mt-6 border-t border-[oklch(var(--co-v2-glass-hairline-strong))] pt-5">
