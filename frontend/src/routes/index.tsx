@@ -545,11 +545,17 @@ function LoginHero({
     <div className="co-v2-ambient co-v2-vignette relative flex min-h-screen items-center overflow-hidden">
       <AmbientGraph nodeCount={30} className="opacity-90" />
       <div className="co-v2-stage-content mx-auto grid w-full max-w-[1400px] items-center gap-10 px-6 py-12 lg:grid-cols-2 lg:px-14 lg:py-16">
-        {/* Left — the brand promise */}
+        {/* Left, the brand promise */}
         <div className="co-animate-fade-in max-w-xl">
+          <img
+            src="/brand/officer.png"
+            alt="The Contact-Ops Connections Officer"
+            className="mb-5 h-28 w-28"
+            style={{ filter: "drop-shadow(0 0 34px rgba(25, 195, 125, 0.42))" }}
+          />
           <span className="inline-flex items-center gap-2 rounded-full border border-[oklch(var(--co-v2-glass-hairline-strong))] bg-[oklch(var(--co-v2-glass-fill))] px-3 py-1 text-xs font-medium text-foreground backdrop-blur">
             <Network className="h-3.5 w-3.5 text-[oklch(var(--co-brand-300))]" strokeWidth={2} />
-            The canonical identity graph
+            Relationship intelligence you self-host
           </span>
           <h1 className="mt-6 text-4xl font-bold leading-[1.08] tracking-tight text-foreground lg:text-5xl">
             Every person.{" "}
@@ -557,9 +563,24 @@ function LoginHero({
             One source of truth.
           </h1>
           <p className="mt-5 max-w-md text-base leading-relaxed text-muted-foreground">
-            Contact-Ops keeps your people, organizations, and the agents that maintain them clean,
-            connected, and current — so the relationship graph is always one you can trust.
+            Contact-Ops turns your people and organizations into a living knowledge graph you own,
+            with AI agents that keep it clean, connected, and current. Part of the Unicorn Commander
+            suite.
           </p>
+          <ul className="mt-6 grid max-w-md gap-2.5 text-sm text-foreground">
+            <li className="flex items-start gap-2.5">
+              <Network className="mt-0.5 h-4 w-4 shrink-0 text-[oklch(var(--co-brand-500))]" strokeWidth={2} />
+              A relationship graph, not a flat address book.
+            </li>
+            <li className="flex items-start gap-2.5">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[oklch(var(--co-brand-500))]" strokeWidth={2} />
+              An AI analyst that reasons over your contacts.
+            </li>
+            <li className="flex items-start gap-2.5">
+              <Compass className="mt-0.5 h-4 w-4 shrink-0 text-[oklch(var(--co-brand-500))]" strokeWidth={2} />
+              Self-hosted: your data, on your own infrastructure.
+            </li>
+          </ul>
         </div>
 
         {/* Right — the sign-in glass card, lifted on its own bloom */}
@@ -570,12 +591,12 @@ function LoginHero({
             aria-hidden="true"
           />
           <div className="co-v2-glass co-v2-glass-edge relative p-8 text-center">
-            <span
-              className="co-v2-glow-strong bg-gradient-brand mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl text-primary-foreground"
+            <img
+              src="/brand/app-icon.svg"
+              alt=""
+              className="co-v2-glow-strong mx-auto mb-6 h-16 w-16 rounded-2xl"
               aria-hidden="true"
-            >
-              <Network className="h-8 w-8" strokeWidth={1.6} />
-            </span>
+            />
             <h2 className="co-v2-wordmark text-3xl font-bold tracking-tight">Contact-Ops</h2>
             <p className="mx-auto mt-2.5 max-w-xs text-sm leading-relaxed text-muted-foreground">
               Sign in with Magic Unicorn to manage people, organizations, and the agents that keep

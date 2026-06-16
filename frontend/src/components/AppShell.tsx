@@ -1,7 +1,6 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
-  BookUser,
   Building2,
   Cable,
   Command,
@@ -74,9 +73,11 @@ const adminNav = [
 function BrandLockup() {
   return (
     <Link to="/" className="focus-ring flex items-center gap-3 rounded-md" aria-label="Contact-Ops home">
-      <span className="bg-gradient-brand flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-primary-foreground shadow-[var(--shadow-1)]">
-        <BookUser className="h-5 w-5" strokeWidth={1.8} />
-      </span>
+      <img
+        src="/brand/app-icon.svg"
+        alt=""
+        className="h-9 w-9 shrink-0 rounded-xl shadow-[var(--shadow-1)]"
+      />
       <span className="leading-tight">
         <span className="block text-base font-semibold tracking-tight">Contact-Ops</span>
         <span className="block text-xs text-muted-foreground">Identity hub</span>

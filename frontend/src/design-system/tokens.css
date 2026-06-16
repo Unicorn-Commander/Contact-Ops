@@ -40,17 +40,17 @@
   --co-neutral-900: 0.181 0.013 280;
   --co-neutral-950: 0.145 0.012 280;
 
-  /* Brand purple ramp (hue 304) — vivid ecosystem violet. Dark primary at the
-     600 step is AA-safe for white button text; light primary lands ~#6b3fa0. */
-  --co-brand-50: 0.972 0.031 304;
-  --co-brand-100: 0.925 0.06 304;
-  --co-brand-200: 0.841 0.105 304;
-  --co-brand-300: 0.74 0.15 304;
-  --co-brand-500: 0.627 0.205 304;
-  --co-brand-600: 0.55 0.205 304;
-  --co-brand-700: 0.47 0.17 304;
-  --co-brand-900: 0.345 0.13 304;
-  --co-brand-950: 0.24 0.09 304;
+  /* Brand emerald ramp (hue 159), the Contact-Ops signature (#19c37d). Dark
+     primary at the 600 step is AA-safe for white button text. */
+  --co-brand-50: 0.972 0.028 162;
+  --co-brand-100: 0.928 0.05 161;
+  --co-brand-200: 0.86 0.092 160;
+  --co-brand-300: 0.80 0.128 159;
+  --co-brand-500: 0.705 0.155 159;
+  --co-brand-600: 0.60 0.145 159;
+  --co-brand-700: 0.505 0.12 159;
+  --co-brand-900: 0.40 0.09 160;
+  --co-brand-950: 0.285 0.068 161;
 
   /* Fuchsia accent (≈ #d946ef) — the family's secondary CTA / highlight hue. */
   --co-fuchsia-300: 0.78 0.18 330;
@@ -190,17 +190,17 @@
   --motion-ease-out: cubic-bezier(0, 0, 0.2, 1);
   --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Brand signature gradient — purple → fuchsia. Used ONLY as a signature:
+  /* Brand signature gradient, emerald to spring mint. Used ONLY as a signature:
      the logo mark, the gradient CTA, and bg-clip-text page titles. The canon
      is otherwise flat; do not wash surfaces in gradient. */
-  --gradient-brand-start: 0.55 0.205 304;
-  --gradient-brand-end: 0.62 0.25 330;
+  --gradient-brand-start: 0.62 0.15 159;
+  --gradient-brand-end: 0.80 0.145 168;
   --gradient-brand: linear-gradient(135deg, oklch(var(--gradient-brand-start)), oklch(var(--gradient-brand-end)));
 
-  /* Living data — agent vs human */
-  --co-agent-color: oklch(0.7 0.16 304);
-  --co-agent-color-muted: oklch(0.7 0.16 304 / 0.16);
-  --co-agent-glow: oklch(0.7 0.16 304 / 0.08);
+  /* Living data, agent vs human */
+  --co-agent-color: oklch(0.72 0.15 161);
+  --co-agent-color-muted: oklch(0.72 0.15 161 / 0.16);
+  --co-agent-glow: oklch(0.72 0.15 161 / 0.08);
   --co-human-color: 0.547 0.012 280;
   --co-human-color-muted: 0.547 0.012 280 / 0.16;
 
@@ -259,12 +259,12 @@
   --motion-ease-out: cubic-bezier(0, 0, 0.2, 1);
   --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 
-  --gradient-brand-start: 0.47 0.17 304;
-  --gradient-brand-end: 0.55 0.22 330;
+  --gradient-brand-start: 0.55 0.135 159;
+  --gradient-brand-end: 0.72 0.15 166;
   --gradient-brand: linear-gradient(135deg, oklch(var(--gradient-brand-start)), oklch(var(--gradient-brand-end)));
 
-  --co-agent-color: oklch(0.47 0.17 304);
-  --co-agent-color-muted: oklch(0.47 0.17 304 / 0.16);
+  --co-agent-color: oklch(0.5 0.14 159);
+  --co-agent-color-muted: oklch(0.5 0.14 159 / 0.16);
   --co-agent-glow: oklch(0.47 0.17 304 / 0.08);
   --co-human-color: 0.334 0.013 280;
   --co-human-color-muted: 0.334 0.013 280 / 0.16;
