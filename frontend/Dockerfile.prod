@@ -18,6 +18,12 @@ ARG VITE_KEYCLOAK_CLIENT_ID=contact-ops-app
 ENV VITE_MCP_BASE_URL=$VITE_MCP_BASE_URL
 ENV VITE_KEYCLOAK_ISSUER=$VITE_KEYCLOAK_ISSUER
 ENV VITE_KEYCLOAK_CLIENT_ID=$VITE_KEYCLOAK_CLIENT_ID
+# Cross-app suite deep-links. Empty default = SAFE (the Project-Ops link degrades
+# to plain text); UC cells set this (dogfood -> projects.magicunicorn.dev, prod ->
+# projects.unicorncommander.ai). A self-host cell leaves it empty unless it runs
+# Project-Ops on a known domain.
+ARG VITE_PROJECTS_BASE_URL=
+ENV VITE_PROJECTS_BASE_URL=$VITE_PROJECTS_BASE_URL
 # Analytics (Umami + PostHog) — empty defaults so the bundle is byte-identical
 # until these are set; the SPA loaders stay dormant on empty values.
 ARG VITE_UMAMI_SRC=

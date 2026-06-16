@@ -23,6 +23,7 @@ import { AlertTriangle, Bell, ExternalLink, ListChecks, Monitor } from "lucide-r
 import { toast } from "sonner";
 
 import { tools } from "@/lib/mcp";
+import { env } from "@/lib/env";
 
 import {
   ResizableHandle,
@@ -1384,16 +1385,23 @@ function DetailPane({
             <ul className="space-y-co-4">
               {proposal.case_file_links.map((l) => (
                 <li key={`${l.project_id}-${l.task_id ?? "root"}`}>
-                  <a
-                    href={`https://projects.magicunicorn.dev/projects/${l.project_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-co-4 text-link hover:underline"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    {l.project_name}
-                    {l.task_name && ` / ${l.task_name}`}
-                  </a>
+                  {env.projectsBaseUrl ? (
+                    <a
+                      href={`${env.projectsBaseUrl}/projects/${l.project_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-co-4 text-link hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      {l.project_name}
+                      {l.task_name && ` / ${l.task_name}`}
+                    </a>
+                  ) : (
+                    <span className="inline-flex items-center gap-co-4 text-foreground">
+                      {l.project_name}
+                      {l.task_name && ` / ${l.task_name}`}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

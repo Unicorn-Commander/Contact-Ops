@@ -4,6 +4,13 @@ export const env = {
   keycloakIssuer:
     import.meta.env.VITE_KEYCLOAK_ISSUER ?? "https://auth.magicunicorn.dev/realms/uchub",
   keycloakClientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? "contact-ops-app",
+  // Cross-app suite deep-links (e.g. the Project-Ops "Related work" link).
+  // Per-deployment and OPTIONAL: empty is the SAFE default and the link degrades
+  // to plain text, so a self-host or white-label cell that does not run
+  // Project-Ops (or runs it on its own domain) never points at a UC-operated
+  // host. UC cells set VITE_PROJECTS_BASE_URL at build time (dogfood ->
+  // projects.magicunicorn.dev, prod -> projects.unicorncommander.ai).
+  projectsBaseUrl: import.meta.env.VITE_PROJECTS_BASE_URL ?? "",
   // Analytics — empty by default = DORMANT (loaders no-op). Point at the
   // self-hosted Umami + PostHog (centerdeep/commander VPS) to enable. These bake
   // at BUILD time, so flipping analytics on is a frontend rebuild. Consent-gated

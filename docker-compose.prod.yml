@@ -57,6 +57,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
+        # Cross-app suite links: dogfood points at the dogfood Project-Ops.
+        VITE_PROJECTS_BASE_URL: "${VITE_PROJECTS_BASE_URL:-https://projects.magicunicorn.dev}"
         # Analytics (Umami + PostHog) — empty unless set; dormant by default.
         VITE_UMAMI_SRC: "${VITE_UMAMI_SRC:-}"
         VITE_UMAMI_WEBSITE_ID: "${VITE_UMAMI_WEBSITE_ID:-}"

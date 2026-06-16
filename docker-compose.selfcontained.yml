@@ -155,6 +155,9 @@ services:
         VITE_MCP_BASE_URL: "https://${MCP_DOMAIN}"
         VITE_KEYCLOAK_ISSUER: "${KEYCLOAK_ISSUER}"
         VITE_KEYCLOAK_CLIENT_ID: "${VITE_KEYCLOAK_CLIENT_ID:-contact-ops-app}"
+        # Cross-app suite links: empty = SAFE (degrades to text). A cell sets this
+        # in its .env if it runs Project-Ops (prod -> projects.unicorncommander.ai).
+        VITE_PROJECTS_BASE_URL: "${VITE_PROJECTS_BASE_URL:-}"
         # Analytics (Umami + PostHog) — empty unless set; dormant by default.
         VITE_UMAMI_SRC: "${VITE_UMAMI_SRC:-}"
         VITE_UMAMI_WEBSITE_ID: "${VITE_UMAMI_WEBSITE_ID:-}"
