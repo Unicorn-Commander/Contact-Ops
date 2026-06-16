@@ -25,6 +25,7 @@ import {
   Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { env } from "@/lib/env";
 import {
   Card,
   CardContent,
@@ -422,7 +423,7 @@ export function PersonalAccessTokensSection() {
             <li>
               In your AI client&apos;s MCP config, add a new server with URL{" "}
               <code className="font-mono text-foreground">
-                https://mcp.contacts.magicunicorn.dev/mcp
+                {`${env.mcpBaseUrl}/mcp`}
               </code>
               .
             </li>

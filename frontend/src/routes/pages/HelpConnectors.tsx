@@ -33,6 +33,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { env } from "@/lib/env";
 
 const APPLE_HELP_URL = "https://appleid.apple.com/account/manage";
 
@@ -371,7 +372,7 @@ function M365Section({ def }: { def: ProviderSectionDef }) {
             symptom: '"Popup blocked"',
             fix: (
               <>
-                Allow popups for <span className="font-mono text-foreground">contacts.magicunicorn.dev</span>{" "}
+                Allow popups for <span className="font-mono text-foreground">{window.location.host}</span>{" "}
                 and retry; or use full-page redirect — the Connect button falls back to it
                 automatically after the first block.
               </>
@@ -383,7 +384,7 @@ function M365Section({ def }: { def: ProviderSectionDef }) {
               <>
                 Contact your admin. The app's redirect URI needs to be{" "}
                 <span className="font-mono text-foreground break-all">
-                  https://mcp.contacts.magicunicorn.dev/api/connectors/m365/oauth/callback
+                  {`${env.mcpBaseUrl}/api/connectors/m365/oauth/callback`}
                 </span>
                 . If the value in Azure portal doesn't match exactly, Microsoft rejects the
                 callback.
@@ -477,7 +478,7 @@ function GmailSection({ def }: { def: ProviderSectionDef }) {
             symptom: '"Popup blocked"',
             fix: (
               <>
-                Allow popups for <span className="font-mono text-foreground">contacts.magicunicorn.dev</span>{" "}
+                Allow popups for <span className="font-mono text-foreground">{window.location.host}</span>{" "}
                 and retry; or use full-page redirect — the Connect button falls back to it
                 automatically after the first block.
               </>
