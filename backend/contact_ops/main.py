@@ -284,9 +284,25 @@ def create_application() -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.CORS_ORIGINS,
             allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-            expose_headers=["X-Request-ID", "X-Process-Time"],
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            # The browser app IS an MCP client over Streamable HTTP, so the MCP
+            # transport headers must be allowed (request) and exposed (response).
+            # Without Mcp-Session-Id the session can never be read and every call
+            # fails CORS preflight with "Disallowed CORS headers".
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "X-Request-ID",
+                "Mcp-Session-Id",
+                "Mcp-Protocol-Version",
+                "Last-Event-ID",
+            ],
+            expose_headers=[
+                "X-Request-ID",
+                "X-Process-Time",
+                "Mcp-Session-Id",
+                "Mcp-Protocol-Version",
+            ],
             max_age=600,
         )
 
