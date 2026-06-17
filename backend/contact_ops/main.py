@@ -276,9 +276,43 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — restrictive by default. Dev sets CORS_ORIGINS explicitly via env.
-    # `allow_credentials=True` is incompatible with `allow_origins=["*"]` per
-    # browser rules; the validator on Settings refuses that combo at startup.
+    # CORS is mounted LAST in this function (the OUTERMOST middleware), so its
+    # headers attach to ALL responses including JWT 401s and rate-limit 429s, and
+    # it answers OPTIONS preflight before any auth/rate-limit work. The
+    # add_middleware call is at the end of the middleware section below.
+
+    # JWT validation — must run before audit so audit has claims to record.
+    app.add_middleware(JWTValidationMiddleware, settings=settings)
+    # Audit — runs after JWT, records request + response with full actor chain.
+    app.add_middleware(AuditMiddleware)
+    # HTTP request metrics — labels by route template only; dormant-safe (cheap)
+    # and on by default, flip METRICS_HTTP_ENABLED=false to disable.
+    if settings.METRICS_HTTP_ENABLED:
+        app.add_middleware(RequestMetricsMiddleware)
+
+    # Exposure hardening (P-00075). Each is dormant by default + shadow-first;
+    # main.py only mounts the ones turned on. Starlette runs the LAST-added
+    # middleware OUTERMOST. CORS is added LAST (below), so the request flow is:
+    #   CORS -> SecurityHeaders -> RateLimit -> BodySize -> [RequestMetrics]
+    #   -> Audit -> JWT -> route.
+    # RateLimit + BodySize sit OUTER of JWT so they shed abusive/oversized traffic
+    # (incl. 401-spam) before auth work; RateLimit keys by IP when there are no
+    # claims yet (degrades gracefully). CORS is outermost so its headers attach
+    # even to JWT 401s and rate-limit 429s (the browser sees a real status, not a
+    # misleading CORS error).
+    if settings.BODY_SIZE_LIMIT_ENABLED:
+        app.add_middleware(BodySizeLimitMiddleware, settings=settings)
+    if settings.RATE_LIMIT_ENABLED:
+        app.add_middleware(RateLimitMiddleware, settings=settings)
+    if settings.SECURITY_HEADERS_ENABLED:
+        app.add_middleware(SecurityHeadersMiddleware, settings=settings)
+
+    # CORS — OUTERMOST (added last). Restrictive by default; dev sets CORS_ORIGINS
+    # via env. allow_credentials=True is incompatible with allow_origins=["*"] per
+    # browser rules; the Settings validator refuses that combo at startup. Being
+    # outermost, CORS headers attach to error responses too (JWT 401s, rate-limit
+    # 429s) so the browser sees a real status instead of a misleading CORS wall,
+    # and OPTIONS preflight is answered before auth/rate-limit work.
     if settings.CORS_ORIGINS:
         app.add_middleware(
             CORSMiddleware,
@@ -305,31 +339,6 @@ def create_application() -> FastAPI:
             ],
             max_age=600,
         )
-
-    # JWT validation — must run before audit so audit has claims to record.
-    app.add_middleware(JWTValidationMiddleware, settings=settings)
-    # Audit — runs after JWT, records request + response with full actor chain.
-    app.add_middleware(AuditMiddleware)
-    # HTTP request metrics — labels by route template only; dormant-safe (cheap)
-    # and on by default, flip METRICS_HTTP_ENABLED=false to disable.
-    if settings.METRICS_HTTP_ENABLED:
-        app.add_middleware(RequestMetricsMiddleware)
-
-    # Exposure hardening (P-00075). Each is dormant by default + shadow-first;
-    # main.py only mounts the ones turned on. Starlette runs the LAST-added
-    # middleware OUTERMOST, so the add order below yields the request flow:
-    #   SecurityHeaders -> RateLimit -> BodySize -> [RequestMetrics] -> Audit
-    #   -> JWT -> CORS -> route.
-    # RateLimit + BodySize sit OUTER of JWT so they shed abusive/oversized traffic
-    # (incl. 401-spam) before auth work; RateLimit keys by IP when there are no
-    # claims yet (degrades gracefully). SecurityHeaders is outermost so its
-    # headers attach even to JWT 401s.
-    if settings.BODY_SIZE_LIMIT_ENABLED:
-        app.add_middleware(BodySizeLimitMiddleware, settings=settings)
-    if settings.RATE_LIMIT_ENABLED:
-        app.add_middleware(RateLimitMiddleware, settings=settings)
-    if settings.SECURITY_HEADERS_ENABLED:
-        app.add_middleware(SecurityHeadersMiddleware, settings=settings)
 
     # Routes
     app.include_router(health_router)
