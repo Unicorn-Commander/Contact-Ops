@@ -821,7 +821,11 @@ function CallbackRoute() {
   // its own — once authenticated, leave /auth/callback for the app.
   useEffect(() => {
     if (!auth.isLoading && auth.isAuthenticated) {
-      void navigate({ to: "/", replace: true });
+      // viewTransition:false: this redirect off the (invisible) spinner is the
+      // navigation most likely to collide with an in-flight transition during the
+      // login burst, and a cross-fade here is pointless. Opt it out at the source;
+      // defaultViewTransition stays on for real user navigations.
+      void navigate({ to: "/", replace: true, viewTransition: false });
     }
   }, [auth.isLoading, auth.isAuthenticated, navigate]);
   return (

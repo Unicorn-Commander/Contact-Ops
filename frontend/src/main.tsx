@@ -12,6 +12,32 @@ import { ConsentProvider } from "@/lib/consent";
 import { ConsentBanner } from "@/components/ConsentBanner";
 import "@/index.css";
 
+// Native View Transitions (enabled via the router's defaultViewTransition) throw a
+// benign DOMException when an in-flight transition is superseded by a rapid follow-up
+// navigation. That is expected per the View Transitions spec, and it happens during
+// auth churn: the cold load, the OIDC /auth/callback, and the post-callback redirect
+// to "/" all settle in quick succession, so each can abort the prior transition. The
+// page is unaffected (the cross-fade just resolves instantly), but the abort surfaces
+// as an uncaught rejection/error that pollutes the console. Swallow ONLY this exact
+// benign case, by DOMException name + a transition-scoped message, so it can never
+// mask an unrelated InvalidStateError (IndexedDB, WebRTC, media) or a real app fault.
+// The message text differs between Chrome ("Transition was aborted because of invalid
+// state") and the spec ("...skipped because document visibility state is hidden") and
+// has drifted across versions, so the predicate matches all known phrasings.
+function isBenignAbortedViewTransition(value: unknown): boolean {
+  return (
+    value instanceof DOMException &&
+    value.name === "InvalidStateError" &&
+    /view transition|transition was aborted|visibility state is hidden/i.test(value.message)
+  );
+}
+window.addEventListener("unhandledrejection", (event) => {
+  if (isBenignAbortedViewTransition(event.reason)) event.preventDefault();
+});
+window.addEventListener("error", (event) => {
+  if (isBenignAbortedViewTransition(event.error)) event.preventDefault();
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

@@ -1,7 +1,7 @@
 {
   "name": "contact-ops-frontend",
   "private": true,
-  "version": "2.18.2",
+  "version": "2.18.5",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
