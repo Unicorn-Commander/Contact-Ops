@@ -1,11 +1,16 @@
 import { env } from "@/lib/env";
 import type {
   ActionEvent,
+  AgentBreakerResult,
+  AgentGovernance,
   BulkActionResult,
   CanonicalizeTagsResult,
   CardDavPassword,
   CleanOrgNamesResult,
   Connector,
+  GetAgentTrustResult,
+  ListAgentsResult,
+  TierShiftResult,
   ConnectorProvider,
   ConnectorRun,
   DataQualityReport,
@@ -614,6 +619,73 @@ export const tools = {
   disconnectConnector: (args: { connector_id: UUID; reason?: string }, token: string) =>
     callTool<{ ok: true }>(
       "disconnect_connector",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+
+  // ---- Agent Command Center (matches backend mcp/tools/agent_admin.py) ----
+  //
+  // All ADMIN-role + "contactops:agents.admin" scope. A non-admin caller is
+  // rejected server-side with an MCPError, which the /agents console surfaces as
+  // an admin-only notice / toast (same pattern as the workspace-members surface).
+  // Reads tolerate failure with a calm empty fallback so the page never hard-errors.
+  listAgents: (token: string, args: { include_inactive?: boolean } = {}) =>
+    callTool<ListAgentsResult>("list_agents", args, token).catch(() => ({
+      agents: [],
+      count: 0
+    })),
+  getAgentTrust: (
+    args: { agent_slug: string; visibility?: "private" | "team" | "org" | "shared" },
+    token: string
+  ) =>
+    callTool<GetAgentTrustResult>(
+      "get_agent_trust",
+      { visibility: "private", ...args } as unknown as Record<string, unknown>,
+      token
+    ),
+  getAgentGovernance: (token: string) =>
+    callTool<AgentGovernance>("get_agent_governance", {}, token),
+  setAgentsPaused: (args: { paused: boolean; reason: string }, token: string) =>
+    callTool<AgentGovernance>(
+      "set_agents_paused",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  promoteAgentTier: (
+    args: {
+      agent_slug: string;
+      reason: string;
+      visibility?: "private" | "team" | "org" | "shared";
+    },
+    token: string
+  ) =>
+    callTool<TierShiftResult>(
+      "promote_agent_tier",
+      { visibility: "private", ...args } as unknown as Record<string, unknown>,
+      token
+    ),
+  demoteAgentTier: (
+    args: {
+      agent_slug: string;
+      reason: string;
+      visibility?: "private" | "team" | "org" | "shared";
+    },
+    token: string
+  ) =>
+    callTool<TierShiftResult>(
+      "demote_agent_tier",
+      { visibility: "private", ...args } as unknown as Record<string, unknown>,
+      token
+    ),
+  pauseAgent: (args: { agent_slug?: string; reason: string }, token: string) =>
+    callTool<AgentBreakerResult>(
+      "pause_agent",
+      args as unknown as Record<string, unknown>,
+      token
+    ),
+  resumeAgent: (args: { agent_slug?: string; reason: string }, token: string) =>
+    callTool<AgentBreakerResult>(
+      "resume_agent",
       args as unknown as Record<string, unknown>,
       token
     )

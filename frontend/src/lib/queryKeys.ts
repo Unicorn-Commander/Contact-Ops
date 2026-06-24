@@ -54,6 +54,13 @@ export function tenantKey(tenantId: TenantId) {
     carddavPasswords: [...base, "carddav-passwords"] as const,
     workspaceMembers: [...base, "workspace-members"] as const,
 
+    // --- agent command center (useAgents.ts) ---
+    // Trust + governance are per-tenant (the backend filters agent_trust by
+    // tenant_id and governance is workspace-scoped), so these carry the prefix.
+    agents: [...base, "agents"] as const,
+    agentGovernance: [...base, "agents", "governance"] as const,
+    agentTrust: (slug: string) => [...base, "agents", "trust", slug] as const,
+
     // --- inbox (useInbox.ts) ---
     inboxRoot: [...base, "inbox"] as const,
     inbox: (filters: unknown) => [...base, "inbox", filters] as const,

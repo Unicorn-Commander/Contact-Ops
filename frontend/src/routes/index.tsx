@@ -19,6 +19,7 @@ import { OrgsRoute, OrgDetailRoute } from "@/routes/pages/Orgs";
 import { TagsRoute } from "@/routes/pages/Tags";
 import { DataQualityRoute } from "@/routes/pages/DataQuality";
 import { TenantsRoute } from "@/routes/pages/Tenants";
+import { AgentsRoute } from "@/routes/pages/Agents";
 import { SettingsRoute } from "@/routes/pages/Settings";
 import { ImportRoute } from "@/routes/pages/Import";
 import { ConnectorsRoute } from "@/routes/pages/Connectors";
@@ -708,6 +709,7 @@ const inboxRedirectRoute = createRoute({
   }
 });
 const tenantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/tenants", component: TenantsRoute });
+const agentsRoute = createRoute({ getParentRoute: () => appRoute, path: "/agents", component: AgentsRoute });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsRoute });
 const graphRoute = createRoute({ getParentRoute: () => appRoute, path: "/graph", component: LazyGraphRoute });
 const importRoute = createRoute({ getParentRoute: () => appRoute, path: "/import", component: ImportRoute });
@@ -849,7 +851,7 @@ export const routeTree = rootRoute.addChildren([
   ...(designSystemPATsRoute ? [designSystemPATsRoute] : []),
   ...(designSystemReviewQueueRoute ? [designSystemReviewQueueRoute] : []),
   ...(designSystemRoute ? [designSystemRoute] : []),
-  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, dataQualityRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
+  appRoute.addChildren([indexRoute, peopleRoute, personRoute, personGraphRoute, orgsRoute, orgRoute, tagsRoute, dataQualityRoute, reviewRoute, inboxRedirectRoute, tenantsRoute, agentsRoute, settingsRoute, graphRoute, importRoute, connectorsRoute, helpConnectorsRoute]),
   callbackRoute
 ]);
 

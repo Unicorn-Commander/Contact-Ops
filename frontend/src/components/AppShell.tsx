@@ -1,6 +1,7 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
+  Bot,
   Building2,
   Cable,
   Command,
@@ -66,6 +67,7 @@ const nav = [
 
 const adminNav = [
   { to: "/tenants", label: "Tenants", icon: Building2, accent: "text-[oklch(var(--co-sky-500))]" },
+  { to: "/agents", label: "Agents", icon: Bot, accent: "text-[oklch(var(--co-fuchsia-500))]" },
   { to: "/settings", label: "Settings", icon: Settings, accent: "text-muted-foreground" }
 ] as const;
 
