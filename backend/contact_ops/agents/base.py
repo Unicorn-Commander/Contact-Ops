@@ -40,6 +40,7 @@ from contact_ops.agents.errors import (
     CostBudgetExceededError,
     IdempotencyKeyReusedError,
     RetryableError,
+    WorkspaceAgentsPausedError,
 )
 from contact_ops.agents.observability.metrics import (
     AGENT_LATENCY_SECONDS,
@@ -125,6 +126,12 @@ class BaseAgent(ABC):
         # Circuit breaker: refuse to run if open. The breaker also stops
         # cost burn on already-known-bad agents.
         await ctx.circuit_breaker.check(agent_slug=self.agent_def.slug)
+
+        # Workspace master switch: an admin can pause the entire fleet for a
+        # tenant via tenants.agents_paused. Checked right after the breaker so a
+        # paused workspace incurs no span, no cost, no _run. Distinct from the
+        # per-agent / auto-fleet breaker above: this is a deliberate human stop.
+        await self._assert_workspace_not_paused(ctx)
 
         outcome_label = "errored"
         span_cm = agent_span(
@@ -497,6 +504,32 @@ class BaseAgent(ABC):
         )
         stored_tier = TrustTier(int(row["current_tier"]))
         return TrustTier(min(int(posterior_tier), int(stored_tier)))
+
+    async def _assert_workspace_not_paused(self, ctx: AgentContext) -> None:
+        """Raise if an admin has paused the whole fleet for this tenant.
+
+        Reads ``tenants.agents_paused`` through the RLS-bound app session (the
+        row is the caller's own tenant via the tenants_select / tenants_modify
+        policies). A missing row is treated as not-paused (fail-open) rather than
+        wedging the fleet on an anomalous read; the deliberate stop is the True
+        flag, not the absence of a row.
+        """
+        result = await ctx.db.execute(
+            text(
+                """
+                SELECT agents_paused, agents_paused_reason
+                FROM tenants
+                WHERE id = CAST(:tenant AS uuid)
+                """
+            ),
+            {"tenant": str(ctx.tenant_id)},
+        )
+        row = result.mappings().first()
+        if row is not None and bool(row["agents_paused"]):
+            raise WorkspaceAgentsPausedError(
+                tenant_id=str(ctx.tenant_id),
+                reason=row["agents_paused_reason"],
+            )
 
     async def _lookup_existing(
         self,

@@ -11,6 +11,9 @@ destinations:
   thresholds is the user-facing surface (see ``cost_guard``).
 * ``CircuitBreakerOpenError`` — the per-agent or fleet-wide breaker is open;
   the agent refuses to run until the breaker is reset.
+* ``WorkspaceAgentsPausedError`` is raised when an admin flips the tenant-wide
+  ``tenants.agents_paused`` master switch; every agent then refuses to run for
+  that workspace until it is cleared (before any work or cost, like the breaker).
 * ``IdempotencyKeyReusedError`` — caller tried to write a proposal with a key
   that already exists. The replay path returns the prior decision instead of
   re-running the LLM; this exception is raised only when caller is asking for
@@ -80,3 +83,21 @@ class CircuitBreakerOpenError(AgentError):
         self.scope = scope
         self.reason = reason
         super().__init__(f"circuit breaker open ({scope}): {reason}")
+
+
+class WorkspaceAgentsPausedError(AgentError):
+    """An admin paused the whole agent fleet for a tenant (master switch).
+
+    Distinct from ``CircuitBreakerOpenError`` (a per-agent or auto-tripped fleet
+    breaker): this is a deliberate, human-thrown stop on ``tenants.agents_paused``.
+    Every agent refuses to run for the tenant until an admin clears it via the
+    ``set_agents_paused`` MCP tool. Raised before any work or cost is incurred.
+    """
+
+    def __init__(self, tenant_id: str, reason: str | None) -> None:
+        self.tenant_id = tenant_id
+        self.reason = reason
+        super().__init__(
+            f"workspace agents paused (tenant {tenant_id}): "
+            f"{reason or 'no reason given'}"
+        )

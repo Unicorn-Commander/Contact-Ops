@@ -55,6 +55,17 @@ class Tenant(Base):
     data_residency: Mapped[str] = mapped_column(Text, default="us-east")
     data_intel_publish_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_approve_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Workspace-wide agent master switch (the Agent Command Center kill-switch).
+    # True => BaseAgent.execute refuses to run ANY agent for this tenant, beside
+    # the per-agent / fleet circuit breaker. Distinct from auto_approve_disabled
+    # (which only stops auto-APPLY; agents still run and propose). reason/at/by
+    # are audit detail the console surfaces; who/when/why also hits prov_activities.
+    agents_paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa.text("false")
+    )
+    agents_paused_reason: Mapped[str | None] = mapped_column(Text)
+    agents_paused_at: Mapped[datetime | None] = mapped_column()
+    agents_paused_by: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
     carddav_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     graph_mode: Mapped[str] = mapped_column(Text, default="per_org_graph")
     graph_name: Mapped[str | None] = mapped_column(Text)
