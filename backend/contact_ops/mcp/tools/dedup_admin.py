@@ -1,10 +1,22 @@
-"""Dedup admin MCP tools."""
+"""Dedup admin MCP tools.
+
+Two tools: propose_merge (comparison scoring + evidence pack, lands a proposal in
+the approval inbox) and dedup_status (per-tenant stats).
+
+Applying or reversing a merge is done by the canonical data_quality path
+(merge_people / unmerge_people / merge_organizations / unmerge_organizations),
+which is schema correct. The old dedup apply_merge / unmerge tools called
+agents/dedup/merge_executor + unmerge_executor, which wrote columns that were
+never migrated (merge_history.merge_activity_id / can_unmerge,
+facts.prov_activity_id / was_revision_of / promoted_into_survivor_id) and so
+errored on first write. They were retired rather than left as a 500 trap for any
+caller holding dedup:apply.
+"""
 # ruff: noqa: I001
 
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -13,7 +25,6 @@ from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.errors import (
     HIPAA_BLOCKED,
     ToolError,
-    VALIDATION_FAILED,
 )
 from contact_ops.mcp.registry import MCPContext, ToolDef, register_tool
 from contact_ops.mcp.rbac import require_role, require_scopes
@@ -29,15 +40,6 @@ class ProposeMergeInput(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
-class ApplyMergeInput(BaseModel):
-    action_event_id: uuid.UUID
-    survivor_id: uuid.UUID | None = None
-
-
-class UnmergeInput(BaseModel):
-    person_alias_id: uuid.UUID
-
-
 class DedupStatusInput(BaseModel):
     tenant_id: uuid.UUID | None = None
 
@@ -49,22 +51,6 @@ class ProposeMergeOutput(ToolOutput):
     action_event_id: str
     match_probability: float
     recommendation: str
-
-
-class ApplyMergeOutput(ToolOutput):
-    merge_history_id: str
-    survivor_id: str
-    alias_id: str
-    can_unmerge: bool
-    can_unmerge_until: str | None
-    facts_promoted: int
-
-
-class UnmergeOutput(ToolOutput):
-    alias_id: str
-    survivor_id: str
-    facts_restored: int
-    edges_restored: int
 
 
 class DedupStatusOutput(ToolOutput):
@@ -201,133 +187,6 @@ async def _propose_merge(ctx: MCPContext, args: BaseModel) -> ProposeMergeOutput
     )
 
 
-async def _apply_merge(ctx: MCPContext, args: BaseModel) -> ApplyMergeOutput:
-    require_role(ctx, "STAFF")
-    require_scopes(ctx, ("person:write", "dedup:apply"))
-    data = ApplyMergeInput.model_validate(args)
-
-    ev_result = await ctx.audit_db.execute(
-        text("""
-            SELECT event_id, event_type, status, tenant_id, evidence
-            FROM action_event
-            WHERE event_id = CAST(:event_id AS uuid)
-        """),
-        {"event_id": str(data.action_event_id)},
-    )
-    ev_row = ev_result.mappings().first()
-    if ev_row is None:
-        raise ToolError(VALIDATION_FAILED, "action_event not found", retryable=False)
-    if ev_row["event_type"] != "dedup.propose_merge":
-        raise ToolError(
-            VALIDATION_FAILED,
-            f"expected dedup.propose_merge, got {ev_row['event_type']}",
-            retryable=False,
-        )
-    if ev_row["status"] != "proposed":
-        raise ToolError(
-            VALIDATION_FAILED,
-            f"action_event status is '{ev_row['status']}', expected 'proposed'",
-            retryable=False,
-        )
-
-    evidence: dict[str, Any] = ev_row["evidence"]
-    person_a_id = uuid.UUID(str(evidence["person_a_id"]))
-    person_b_id = uuid.UUID(str(evidence["person_b_id"]))
-
-    await load_person(ctx, person_a_id)
-    await load_person(ctx, person_b_id)
-
-    from contact_ops.agents.dedup.merge_executor import apply_merge
-
-    try:
-        result = await apply_merge(
-            action_event_id=data.action_event_id,
-            db=ctx.db,
-            audit_db=ctx.audit_db,
-            survivor_override=data.survivor_id,
-        )
-    except ValueError as exc:
-        raise ToolError(VALIDATION_FAILED, str(exc), retryable=False) from exc
-
-    await ctx.audit_db.execute(
-        text("""
-            UPDATE action_event
-            SET status = 'applied', applied_at = now()
-            WHERE event_id = CAST(:event_id AS uuid)
-        """),
-        {"event_id": str(data.action_event_id)},
-    )
-
-    await emit_action_event(
-        ctx,
-        event_type="dedup.merge_applied",
-        aggregate_type="person",
-        aggregate_id=result.survivor_id,
-        affected_ids=[result.alias_id, result.survivor_id],
-        payload_before=None,
-        payload_after={
-            "merge_history_id": str(result.merge_history_id),
-            "survivor_id": str(result.survivor_id),
-            "alias_id": str(result.alias_id),
-            "facts_promoted": result.facts_promoted,
-        },
-        evidence={"supersedes_event_id": str(data.action_event_id)},
-    )
-
-    return ApplyMergeOutput(
-        merge_history_id=str(result.merge_history_id),
-        survivor_id=str(result.survivor_id),
-        alias_id=str(result.alias_id),
-        can_unmerge=result.can_unmerge,
-        can_unmerge_until=result.can_unmerge_until.isoformat() if result.can_unmerge_until else None,
-        facts_promoted=result.facts_promoted,
-    )
-
-
-async def _unmerge(ctx: MCPContext, args: BaseModel) -> UnmergeOutput:
-    require_role(ctx, "STAFF")
-    require_scopes(ctx, ("person:write", "dedup:apply"))
-    data = UnmergeInput.model_validate(args)
-
-    alias_result = await ctx.db.execute(
-        text("""
-            SELECT pa.alias_id, pa.current_canonical_id AS survivor_id,
-                   p.canonical_owner_tenant_id AS tenant_id
-            FROM person_alias pa
-            JOIN persons p ON p.id = pa.alias_id
-            WHERE pa.alias_id = CAST(:alias_id AS uuid)
-        """),
-        {"alias_id": str(data.person_alias_id)},
-    )
-    alias_row = alias_result.mappings().first()
-    if alias_row is None:
-        raise ToolError(VALIDATION_FAILED, "person_alias not found", retryable=False)
-
-    alias_tenant_id = uuid.UUID(str(alias_row["tenant_id"]))
-    if alias_tenant_id != ctx.tenant_id:
-        raise ToolError(VALIDATION_FAILED, "tenant mismatch", retryable=False)
-
-    await load_person(ctx, uuid.UUID(str(alias_row["survivor_id"])))
-
-    from contact_ops.agents.dedup.unmerge_executor import unmerge
-
-    try:
-        unmerge_result = await unmerge(
-            person_alias_id=data.person_alias_id,
-            db=ctx.db,
-            audit_db=ctx.audit_db,
-        )
-    except ValueError as exc:
-        raise ToolError(VALIDATION_FAILED, str(exc), retryable=False) from exc
-
-    return UnmergeOutput(
-        alias_id=str(unmerge_result.alias_id),
-        survivor_id=str(unmerge_result.survivor_id),
-        facts_restored=unmerge_result.facts_restored,
-        edges_restored=unmerge_result.edges_restored,
-    )
-
-
 async def _dedup_status(ctx: MCPContext, args: BaseModel) -> DedupStatusOutput:
     require_scopes(ctx, ("dedup:read",))
     data = DedupStatusInput.model_validate(args)
@@ -412,30 +271,6 @@ def register_dedup_admin_tools() -> None:
         required_scopes=("person:write", "dedup:propose"),
         annotations={**base, "readOnlyHint": False, "idempotentHint": False},
         idempotency="not-idempotent",
-    ))
-
-    register_tool(ToolDef(
-        name="apply_merge",
-        description="Apply an approved merge proposal. Idempotent on action_event_id.",
-        input_model=ApplyMergeInput,
-        output_model=ApplyMergeOutput,
-        handler=_apply_merge,
-        required_role="STAFF",
-        required_scopes=("person:write", "dedup:apply"),
-        annotations={**base, "readOnlyHint": False, "idempotentHint": True},
-        idempotency="natural-key",
-    ))
-
-    register_tool(ToolDef(
-        name="unmerge",
-        description="Reverse a previously applied merge. Idempotent on person_alias_id.",
-        input_model=UnmergeInput,
-        output_model=UnmergeOutput,
-        handler=_unmerge,
-        required_role="STAFF",
-        required_scopes=("person:write", "dedup:apply"),
-        annotations={**base, "readOnlyHint": False, "idempotentHint": True},
-        idempotency="natural-key",
     ))
 
     register_tool(ToolDef(
