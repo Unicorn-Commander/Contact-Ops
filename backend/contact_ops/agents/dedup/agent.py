@@ -362,7 +362,12 @@ async def _build_candidates_dataframe(
     if not all_ids:
         return pd.DataFrame()
 
-    id_list_literal = "{" + ",".join(str(pid) for pid in all_ids) + "}"
+    # Bind the ids as a real list and cast via CAST(... AS uuid[]). The asyncpg
+    # driver (the agent runs under it) renders bind params as $N and chokes on
+    # the `:ids::uuid[]` postfix-cast form ("syntax error at or near :"); the
+    # CAST() function form binds cleanly. (psycopg2 adapts the list the same
+    # way, so this stays cross-driver.)
+    id_list = [str(pid) for pid in all_ids]
 
     # Load persons
     person_rows = await db.execute(
@@ -387,9 +392,9 @@ async def _build_candidates_dataframe(
                 p.nickname,
                 p.headline
             FROM persons p
-            WHERE p.id = ANY(:ids::uuid[])
+            WHERE p.id = ANY(CAST(:ids AS uuid[]))
         """),
-        {"ids": id_list_literal},
+        {"ids": id_list},
     )
     person_map: dict[UUID, dict[str, Any]] = {}
     for row in person_rows.mappings():
@@ -410,11 +415,11 @@ async def _build_candidates_dataframe(
                 person_id,
                 address
             FROM emails
-            WHERE person_id = ANY(:ids::uuid[])
+            WHERE person_id = ANY(CAST(:ids AS uuid[]))
               AND is_primary = true
             ORDER BY person_id, id
         """),
-        {"ids": id_list_literal},
+        {"ids": id_list},
     )
     email_map: dict[UUID, str | None] = {}
     for row in email_rows:
@@ -429,11 +434,11 @@ async def _build_candidates_dataframe(
                 person_id,
                 e164
             FROM phones
-            WHERE person_id = ANY(:ids::uuid[])
+            WHERE person_id = ANY(CAST(:ids AS uuid[]))
               AND is_primary = true
             ORDER BY person_id, id
         """),
-        {"ids": id_list_literal},
+        {"ids": id_list},
     )
     phone_map: dict[UUID, str | None] = {}
     for row in phone_rows:
