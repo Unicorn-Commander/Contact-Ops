@@ -47,14 +47,25 @@ opentelemetry-instrumentation-celery==0.57b0
 # Phase 3 Foundation: Beta posterior credible intervals for trust ladder
 scipy==1.14.1
 
-# Phase 3.1 Dedup Agent: probabilistic record linkage
-splink~=4.0
-duckdb~=1.1
-sentence-transformers~=3.2
+# Phase 3.1 Dedup Agent: light comparison/normalization deps for the live
+# propose_merge / dedup_status MCP tools. jellyfish + rapidfuzz (string
+# similarity) and usaddress (address parsing) import cleanly in the slim API
+# image; they are the only dedup deps the live MCP tool path needs.
 jellyfish~=1.1
 rapidfuzz~=3.10
 usaddress~=0.5
-pyarrow~=18.0
+
+# Phase 3.1 Dedup Agent: HEAVY probabilistic-record-linkage stack, EXCLUDED
+# from the slim API image. splink + duckdb + sentence-transformers (which
+# pulls torch, multi-GB) + pyarrow exceed the backend container's hard 1G
+# memory limit (docker-compose.prod.yml) and would OOM. The batch dedup agent
+# (agents/dedup/agent.py, splink_runner.py) that uses them runs out of
+# process, not inside the API image, so they are intentionally not compiled
+# into requirements.txt. Re-enable only in a separate batch-agent image build.
+# splink~=4.0
+# duckdb~=1.1
+# sentence-transformers~=3.2
+# pyarrow~=18.0
 
 # Phase 3.1 Dedup Agent tie-breaker: LiteLLM gateway client (Aaron's
 # `project_llm_routing` — agent calls flow through commander's LiteLLM).

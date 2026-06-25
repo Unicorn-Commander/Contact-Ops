@@ -147,7 +147,7 @@ async def test_stage1_email_blocking(db_session, seeded_tenants):
     result = await stage1_deterministic_blocking(tenant_id=tenant_id, db_session=db_session)
 
     assert len(result) >= 1
-    pair_ids = {p.person_a_id, p.person_b_id}
+    pair_ids = {pid for p in result for pid in (p.person_a_id, p.person_b_id)}
     assert a_id in pair_ids
     assert b_id in pair_ids
 
@@ -166,7 +166,7 @@ async def test_stage1_phone_blocking(db_session, seeded_tenants):
     result = await stage1_deterministic_blocking(tenant_id=tenant_id, db_session=db_session)
 
     assert len(result) >= 1
-    pair_ids = {p.person_a_id, p.person_b_id}
+    pair_ids = {pid for p in result for pid in (p.person_a_id, p.person_b_id)}
     assert a_id in pair_ids
     assert b_id in pair_ids
 

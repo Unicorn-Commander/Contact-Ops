@@ -94,7 +94,7 @@ async def test_propose_merge_hipaa_rejected(db_session, seeded_tenants):
 
     # Patch crosses_hipaa_fence to simulate cross-HIPAA boundary
     with patch(
-        "contact_ops.mcp.tools.dedup_admin.crosses_hipaa_fence",
+        "contact_ops.agents.dedup.hipaa_fence.crosses_hipaa_fence",
         return_value=True,
     ):
         with pytest.raises(ToolError) as exc_info:
