@@ -97,10 +97,25 @@ def make_celery_app() -> Celery:
         },
     )
 
+    # Retention sweep -- daily PII age-out + purge (DORMANT behind
+    # RETENTION_SWEEP_ENABLED). Daily at 04:00 UTC (low-traffic) per the
+    # task's daily Celery beat task intent.
+    app.conf.beat_schedule.setdefault(
+        "retention-sweep",
+        {
+            "task": "contact_ops.agents.tasks.run_retention_sweep",
+            "schedule": crontab(minute="0", hour="4"),
+            "kwargs": {"agent_slug": "retention-sweep"},
+        },
+    )
+
     # Force-import infra tasks so the worker registers them at startup.
     # The import has the side-effect of binding the @shared_task to
     # this Celery app via Celery's task registry.
-    from contact_ops.agents import inbox_snooze_flipper  # noqa: F401
+    from contact_ops.agents import (
+        inbox_snooze_flipper,  # noqa: F401
+        retention_sweep,  # noqa: F401
+    )
 
     return app
 
