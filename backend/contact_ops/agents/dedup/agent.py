@@ -391,7 +391,8 @@ async def _build_candidates_dataframe(
                 (p.birthday->>'year')::int           AS dob_year,
                 (p.birthday->>'month')::int          AS dob_month,
                 (p.birthday->>'day')::int            AS dob_day,
-                p.birthday::text                     AS dob,
+                CASE WHEN jsonb_typeof(p.birthday) = 'object'
+                     THEN p.birthday::text END        AS dob,
                 p.occupation_title,
                 p.headline
             FROM persons p
@@ -531,13 +532,20 @@ async def _load_person_summary(
     *,
     db: AsyncSession,
 ) -> dict[str, Any]:
-    """Load a person's field summary for evidence-pack building."""
+    """Load a person's field summary for evidence-pack building.
+
+    Keeps the evidence dict's keys stable while reconciling with the real
+    persons schema: nickname comes from the nicknames[] array, and company /
+    address / government_id are not persons columns (they live in facts /
+    postal_addresses), so they are selected as NULL placeholders for now rather
+    than referencing non-existent columns. Sourcing them is a dedup follow-up.
+    """
     result = await db.execute(
         text("""
             SELECT
                 id, display_name, given_name, family_name,
-                birthday, occupation_title, nickname, headline,
-                company, address, government_id
+                birthday, occupation_title, nicknames[1] AS nickname, headline,
+                NULL AS company, NULL AS address, NULL AS government_id
             FROM persons
             WHERE id = CAST(:pid AS uuid)
         """),

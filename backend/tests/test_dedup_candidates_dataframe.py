@@ -98,3 +98,35 @@ async def test_build_candidates_dataframe_empty_is_noop(db_session, seeded_tenan
         candidates=[], tenant_id=seeded_tenants["non_hipaa"], db=db_session
     )
     assert df.empty
+
+
+@pytest.mark.asyncio
+async def test_load_person_summary_real_schema(db_session, seeded_tenants):
+    """_load_person_summary must select real columns + keep the evidence keys.
+
+    Regression for the same speculative-schema bug as the candidate loader:
+    nickname comes from nicknames[], and company/address/government_id are NULL
+    placeholders (not persons columns). The dict keys stay present for the
+    evidence-pack builder.
+    """
+    from contact_ops.agents.dedup.agent import _load_person_summary
+
+    tid = seeded_tenants["non_hipaa"]
+    pid = uuid.uuid4()
+    await _seed_person(db_session, pid, tid, "Bob", "Jones", birthday={"year": 1980, "month": 1, "day": 2})
+    await db_session.execute(
+        text("UPDATE persons SET nicknames = ARRAY['Bobby'] WHERE id = :id"),
+        {"id": pid},
+    )
+    await _seed_email(db_session, pid, "REMOVED")
+    await db_session.commit()
+
+    summary = await _load_person_summary(pid, db=db_session)
+
+    assert summary["given_name"] == "Bob"
+    assert summary["nickname"] == "Bobby"
+    assert summary["email"] == "REMOVED"
+    # Placeholder keys are present (the evidence builder relies on them) but null.
+    assert summary["company"] is None
+    assert summary["address"] is None
+    assert summary["government_id"] is None
