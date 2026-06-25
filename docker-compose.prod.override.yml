@@ -26,9 +26,7 @@ services:
   # --concurrency or split into per-queue replicas later if load warrants;
   # one worker covering every queue is the minimal correct prod baseline.
   contact-ops-celery-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: contact-ops-contact-ops-backend:latest
     container_name: contact-ops-celery-worker
     healthcheck:
       disable: true
@@ -62,9 +60,7 @@ services:
   # Celery beat scheduler. Computes the per-agent cron schedule from the
   # in-process registry on startup; restart on each deploy. Exactly one.
   contact-ops-celery-beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: contact-ops-contact-ops-backend:latest
     container_name: contact-ops-celery-beat
     healthcheck:
       disable: true
