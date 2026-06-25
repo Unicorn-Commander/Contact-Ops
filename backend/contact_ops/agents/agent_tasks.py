@@ -273,4 +273,87 @@ def run_dedup(self: Any, agent_slug: str = "dedup") -> dict[str, int]:
     return summary
 
 
-__all__ = ["run_dedup", "_run_agent_all_tenants"]
+async def _run_calibration_global(settings: Settings) -> dict[str, Any]:
+    """Run ONE global trust-ladder calibration pass under the admin DSN.
+
+    Calibration is a PLATFORM pass, not a per-tenant one: ``calibration_run_log``
+    is platform-tenant (one global watermark), and the pass walks every tenant's
+    action_event reverts to update the per-(agent, tenant, visibility) posteriors.
+    So it runs cross-tenant under the admin/BYPASSRLS DSN (``MIGRATION_DATABASE_URL``),
+    NOT per-tenant through the agent-execution bridge. BYPASSRLS lets the walk see
+    every tenant and lets the tier-change action_event INSERT satisfy
+    ``ae_audit_insert`` by writing each row's explicit tenant_id. SHADOW
+    (``CALIBRATION_SHADOW``) keeps the pass observe-only for tier changes.
+    """
+    admin_url = _admin_async_url(settings)
+    if not admin_url:
+        logger.warning(
+            "calibration_no_admin_dsn",
+            reason="MIGRATION_DATABASE_URL unset; cannot run the platform "
+            "calibration pass",
+        )
+        return {"enabled": True, "ran": False}
+
+    # Lazy import: pulling daemon.py registers the calibration-daemon AgentDef, so
+    # importing it inside the task (not at module load) keeps it out of the beat
+    # schedule build in make_celery_app (which would otherwise auto-schedule a
+    # run_calibration_daemon entry that does not exist).
+    from contact_ops.agents.calibration.daemon import run_calibration_pass
+
+    engine = create_async_engine(admin_url)
+    sessions = async_sessionmaker(
+        bind=engine, class_=AsyncSession, expire_on_commit=False
+    )
+    shadow = bool(settings.CALIBRATION_SHADOW)
+    try:
+        async with sessions() as db, sessions() as audit_db:
+            result = await run_calibration_pass(
+                db=db, audit_db=audit_db, shadow=shadow
+            )
+    finally:
+        await engine.dispose()
+
+    return {
+        "enabled": True,
+        "ran": True,
+        "shadow": int(shadow),
+        "posteriors_updated": result.posteriors_updated,
+        # In shadow these are the WOULD-BE counts (nothing was emitted/applied).
+        "tier_promotes": result.tier_promotes_proposed,
+        "tier_demotes": result.tier_demotes_applied,
+        "fleet_revert_rate_pct": result.fleet_revert_rate_pct,
+    }
+
+
+@shared_task(  # type: ignore[misc]
+    name="contact_ops.agents.tasks.run_calibration",
+    bind=True,
+    acks_late=True,
+)
+def run_calibration(self: Any, agent_slug: str = "calibration-daemon") -> dict[str, Any]:
+    """Global trust-ladder calibration pass. DORMANT unless enabled; SHADOW by default.
+
+    Gated by ``CALIBRATION_ENABLED`` (default False): off -> logs
+    ``calibration_disabled`` and returns without touching the DB. When on it runs
+    ``_run_calibration_global`` (which honours ``CALIBRATION_SHADOW``, default
+    True -> updates posteriors + drift but only LOGS the tier changes it would
+    make). This is the platform pass that, once SHADOW is flipped off, is the
+    only path that auto-applies tier DEMOTIONS fleet-wide.
+    """
+    settings = get_settings()
+
+    if not settings.CALIBRATION_ENABLED:
+        logger.info("calibration_disabled")
+        return {"enabled": False, "ran": False}
+
+    summary = asyncio.run(_run_calibration_global(settings))
+    logger.info("calibration_complete", **summary)
+    return summary
+
+
+__all__ = [
+    "run_dedup",
+    "run_calibration",
+    "_run_agent_all_tenants",
+    "_run_calibration_global",
+]

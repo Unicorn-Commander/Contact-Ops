@@ -314,6 +314,20 @@ class Settings(BaseSettings):
     # splink_runner (Splink/DuckDB are an optional precision upgrade not in the
     # API image).
     DEDUP_AGENT_ENABLED: bool = False
+    # Calibration daemon (trust-ladder self-calibration) two-flag rollout, same
+    # observe-before-enforce posture as RETENTION_SWEEP. CALIBRATION_ENABLED gates
+    # the global run_calibration task at the top level: with it False the task
+    # logs `calibration_disabled` and touches nothing. CALIBRATION_SHADOW (default
+    # True) is the second safety: even when ENABLED, shadow mode still updates
+    # posteriors + drift state (observations) but only LOGS the tier changes it
+    # WOULD make (`calibration_would_demote` / `_would_promote`) without emitting
+    # an action_event or changing any agent_trust.current_tier. Flip SHADOW False
+    # only after observing the would-be tier changes in the logs: this is the one
+    # path that auto-applies autonomy changes (demotions) fleet-wide. The daemon
+    # runs as a GLOBAL platform pass under the admin/BYPASSRLS DSN (calibration_run_log
+    # is platform-tenant), not per-tenant through the agent-execution bridge.
+    CALIBRATION_ENABLED: bool = False
+    CALIBRATION_SHADOW: bool = True
     # Per-class TTL (days) for the retention-ageing path, measured from
     # last_interaction_at (falling back to created_at). 'ephemeral_30d' → 30,
     # 'operational_2y' → 730. 'legal_hold' / 'hipaa_6y' / 'indefinite' are

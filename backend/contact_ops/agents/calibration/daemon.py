@@ -108,12 +108,18 @@ async def run_calibration_pass(
     db: AsyncSession,
     audit_db: AsyncSession,
     now: datetime | None = None,
+    shadow: bool = False,
 ) -> CalibrationPassResult:
     """Execute one calibration pass; returns aggregate stats.
 
     Idempotent: a second invocation immediately after the first will
     see the updated ``calibration_run_log.last_run_at`` and walk zero
     action_event rows.
+
+    ``shadow`` (observe-before-enforce): posteriors + drift state are still
+    updated (those are observations), but tier changes are only COMPUTED + logged
+    as ``calibration_would_*``, never emitted or applied. Used for the dormant /
+    shadow rollout of the one path that auto-applies autonomy changes fleet-wide.
     """
     daemon_run_id = uuid4()
     started_at = now or datetime.now(UTC)
@@ -147,6 +153,7 @@ async def run_calibration_pass(
         updates=updates,
         drifts=drifts,
         daemon_run_id=daemon_run_id,
+        shadow=shadow,
     )
     promotes = sum(1 for c in changes if c.kind == "promote")
     demotes = sum(1 for c in changes if c.kind == "demote")

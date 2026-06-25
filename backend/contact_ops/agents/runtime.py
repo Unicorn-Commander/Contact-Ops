@@ -124,6 +124,21 @@ def make_celery_app() -> Celery:
         },
     )
 
+    # Trust-ladder calibration -- the GLOBAL platform pass (run_calibration,
+    # admin DSN, not the per-tenant bridge), DORMANT behind CALIBRATION_ENABLED
+    # and SHADOW behind CALIBRATION_SHADOW. Daily at 03:00 UTC (matches the
+    # calibration-daemon AgentDef's intended cron). Scheduled by a plain
+    # task-name + cron string so beat does not import the daemon module (which
+    # would register the AgentDef and auto-schedule a duplicate entry).
+    app.conf.beat_schedule.setdefault(
+        "calibration",
+        {
+            "task": "contact_ops.agents.tasks.run_calibration",
+            "schedule": crontab(minute="0", hour="3"),
+            "kwargs": {"agent_slug": "calibration-daemon"},
+        },
+    )
+
     # Force-import infra tasks so the worker registers them at startup.
     # The import has the side-effect of binding the @shared_task to
     # this Celery app via Celery's task registry. agent_tasks is the
