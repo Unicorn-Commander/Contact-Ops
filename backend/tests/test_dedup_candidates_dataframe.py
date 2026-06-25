@@ -12,6 +12,7 @@ binding error.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -21,17 +22,32 @@ from contact_ops.agents.dedup.agent import _build_candidates_dataframe
 from contact_ops.agents.dedup.blocking import CandidatePair
 
 
-async def _seed_person(db, pid: uuid.UUID, tid: uuid.UUID, given: str, family: str) -> None:
+async def _seed_person(
+    db,
+    pid: uuid.UUID,
+    tid: uuid.UUID,
+    given: str,
+    family: str,
+    birthday: dict | None = None,
+) -> None:
     await db.execute(
         text(
             """
             INSERT INTO persons (id, canonical_owner_tenant_id, merge_status,
-                                 display_name, given_name, family_name,
+                                 display_name, given_name, family_name, birthday,
                                  created_at, updated_at)
-            VALUES (:id, :tid, 'canonical', :dn, :gn, :fn, now(), now())
+            VALUES (:id, :tid, 'canonical', :dn, :gn, :fn,
+                    CAST(:bd AS jsonb), now(), now())
             """
         ),
-        {"id": pid, "tid": tid, "dn": f"{given} {family}", "gn": given, "fn": family},
+        {
+            "id": pid,
+            "tid": tid,
+            "dn": f"{given} {family}",
+            "gn": given,
+            "fn": family,
+            "bd": json.dumps(birthday) if birthday else None,
+        },
     )
 
 
@@ -48,7 +64,9 @@ async def test_build_candidates_dataframe_binds_ids_under_asyncpg(
 ):
     tid = seeded_tenants["non_hipaa"]
     a, b = uuid.uuid4(), uuid.uuid4()
-    await _seed_person(db_session, a, tid, "Alice", "Smith")
+    # birthday is a JSONB partial-date {year,month,day}; the loader must extract
+    # dob_year/month/day via the JSONB operators, not EXTRACT() (it is not a date).
+    await _seed_person(db_session, a, tid, "Alice", "Smith", birthday={"year": 1990, "month": 5, "day": 12})
     await _seed_person(db_session, b, tid, "Alicia", "Smith")
     await _seed_email(db_session, a, "REMOVED")
     await _seed_email(db_session, b, "REMOVED")
@@ -69,6 +87,9 @@ async def test_build_candidates_dataframe_binds_ids_under_asyncpg(
     # first_name comparison columns were assembled from the loaded person rows.
     assert row["first_name_l"] == "Alice"
     assert row["first_name_r"] == "Alicia"
+    # dob_year came from the JSONB birthday extraction (the EXTRACT() regression).
+    assert int(row["dob_year_l"]) == 1990
+    assert int(row["dob_month_l"]) == 5
 
 
 @pytest.mark.asyncio

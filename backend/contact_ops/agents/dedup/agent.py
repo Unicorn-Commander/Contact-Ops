@@ -369,7 +369,17 @@ async def _build_candidates_dataframe(
     # way, so this stays cross-driver.)
     id_list = [str(pid) for pid in all_ids]
 
-    # Load persons
+    # Load persons. This selects only the persons columns that actually exist
+    # and are simply typed: name parts, the JSONB birthday (extracted to
+    # dob_year/month/day), occupation_title, headline. Email + phone come from
+    # the per-id queries below. The richer comparison fields the scorer also
+    # knows about (company, government_id, postal address, and the name/face
+    # embeddings) are intentionally NOT loaded here yet: company/government_id/
+    # address are not persons columns (they live in facts / postal_addresses)
+    # and the embeddings are pgvector and need typed handling. The comparison
+    # functions treat any absent field as a null-exclude, so dedup scores on the
+    # available deterministic signals (name, email, phone, dob) until those
+    # sources are wired. See the dedup follow-up task.
     person_rows = await db.execute(
         text("""
             SELECT
@@ -378,18 +388,11 @@ async def _build_candidates_dataframe(
                 p.family_name,
                 p.display_name,
                 p.birthday,
-                EXTRACT(YEAR FROM p.birthday)::int  AS dob_year,
-                EXTRACT(MONTH FROM p.birthday)::int  AS dob_month,
-                EXTRACT(DAY FROM p.birthday)::int    AS dob_day,
+                (p.birthday->>'year')::int           AS dob_year,
+                (p.birthday->>'month')::int          AS dob_month,
+                (p.birthday->>'day')::int            AS dob_day,
                 p.birthday::text                     AS dob,
-                p.name_embedding,
-                p.face_embedding,
-                p.voice_fingerprint,
-                p.company,
-                p.government_id,
-                p.address,
                 p.occupation_title,
-                p.nickname,
                 p.headline
             FROM persons p
             WHERE p.id = ANY(CAST(:ids AS uuid[]))
@@ -422,7 +425,7 @@ async def _build_candidates_dataframe(
         {"ids": id_list},
     )
     email_map: dict[UUID, str | None] = {}
-    for row in email_rows:
+    for row in email_rows.mappings():
         email_map[UUID(str(row["person_id"]))] = row["address"]
     for pid in all_ids:
         email_map.setdefault(pid, None)
@@ -441,7 +444,7 @@ async def _build_candidates_dataframe(
         {"ids": id_list},
     )
     phone_map: dict[UUID, str | None] = {}
-    for row in phone_rows:
+    for row in phone_rows.mappings():
         phone_map[UUID(str(row["person_id"]))] = row["e164"]
     for pid in all_ids:
         phone_map.setdefault(pid, None)
