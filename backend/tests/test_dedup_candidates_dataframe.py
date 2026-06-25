@@ -58,6 +58,34 @@ async def _seed_email(db, pid: uuid.UUID, address: str) -> None:
     )
 
 
+async def _seed_address(db, pid: uuid.UUID, formatted: str) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO postal_addresses (person_id, formatted, is_primary) "
+            "VALUES (:p, :f, true)"
+        ),
+        {"p": pid, "f": formatted},
+    )
+
+
+async def _seed_company(db, pid: uuid.UUID, tid: uuid.UUID, name: str) -> None:
+    org_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO organizations (id, legal_name, display_name, "
+            "canonical_owner_tenant_id) VALUES (:o, :n, :n, :t)"
+        ),
+        {"o": org_id, "n": name, "t": tid},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO person_org_role (person_id, organization_id, role_type, "
+            "is_primary) VALUES (:p, :o, 'employee', true)"
+        ),
+        {"p": pid, "o": org_id},
+    )
+
+
 @pytest.mark.asyncio
 async def test_build_candidates_dataframe_binds_ids_under_asyncpg(
     db_session, seeded_tenants
@@ -70,6 +98,10 @@ async def test_build_candidates_dataframe_binds_ids_under_asyncpg(
     await _seed_person(db_session, b, tid, "Alicia", "Smith")
     await _seed_email(db_session, a, "REMOVED")
     await _seed_email(db_session, b, "REMOVED")
+    # address (postal_addresses) + company (person_org_role -> organizations) are
+    # sourced from their own tables, not persons columns.
+    await _seed_address(db_session, a, "1 Main St, Springfield")
+    await _seed_company(db_session, a, tid, "Acme Corp")
     await db_session.commit()
 
     pair = CandidatePair(person_a_id=a, person_b_id=b, blocking_key="email", tenant_id=tid)
@@ -90,6 +122,9 @@ async def test_build_candidates_dataframe_binds_ids_under_asyncpg(
     # dob_year came from the JSONB birthday extraction (the EXTRACT() regression).
     assert int(row["dob_year_l"]) == 1990
     assert int(row["dob_month_l"]) == 5
+    # address + company are sourced from postal_addresses / person_org_role.
+    assert row["address_l"] == "1 Main St, Springfield"
+    assert row["company_l"] == "Acme Corp"
 
 
 @pytest.mark.asyncio
@@ -119,6 +154,8 @@ async def test_load_person_summary_real_schema(db_session, seeded_tenants):
         {"id": pid},
     )
     await _seed_email(db_session, pid, "REMOVED")
+    await _seed_address(db_session, pid, "2 Oak Ave, Shelbyville")
+    await _seed_company(db_session, pid, tid, "Globex")
     await db_session.commit()
 
     summary = await _load_person_summary(pid, db=db_session)
@@ -126,7 +163,8 @@ async def test_load_person_summary_real_schema(db_session, seeded_tenants):
     assert summary["given_name"] == "Bob"
     assert summary["nickname"] == "Bobby"
     assert summary["email"] == "REMOVED"
-    # Placeholder keys are present (the evidence builder relies on them) but null.
-    assert summary["company"] is None
-    assert summary["address"] is None
+    # address + company sourced from their own tables; government_id stays a NULL
+    # placeholder (no identifiers data source on this deployment).
+    assert summary["address"] == "2 Oak Ave, Shelbyville"
+    assert summary["company"] == "Globex"
     assert summary["government_id"] is None

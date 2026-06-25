@@ -450,6 +450,49 @@ async def _build_candidates_dataframe(
     for pid in all_ids:
         phone_map.setdefault(pid, None)
 
+    # Load primary postal address (the pre-formatted string). A strong dedup
+    # signal sourced from its own table (it is not a persons column).
+    address_rows = await db.execute(
+        text("""
+            SELECT DISTINCT ON (person_id)
+                person_id,
+                formatted
+            FROM postal_addresses
+            WHERE person_id = ANY(CAST(:ids AS uuid[]))
+              AND is_primary = true
+            ORDER BY person_id, id
+        """),
+        {"ids": id_list},
+    )
+    address_map: dict[UUID, str | None] = {}
+    for row in address_rows.mappings():
+        address_map[UUID(str(row["person_id"]))] = row["formatted"]
+    for pid in all_ids:
+        address_map.setdefault(pid, None)
+
+    # Load the best current employer name (the dedup "company" signal): join
+    # person_org_role -> organizations, preferring the primary then most-recent
+    # role. Company lives in the employment relation, not on persons.
+    company_rows = await db.execute(
+        text("""
+            SELECT DISTINCT ON (por.person_id)
+                por.person_id,
+                o.display_name AS company
+            FROM person_org_role por
+            JOIN organizations o ON o.id = por.organization_id
+            WHERE por.person_id = ANY(CAST(:ids AS uuid[]))
+            ORDER BY por.person_id,
+                     por.is_primary DESC NULLS LAST,
+                     por.started_at DESC NULLS LAST
+        """),
+        {"ids": id_list},
+    )
+    company_map: dict[UUID, str | None] = {}
+    for row in company_rows.mappings():
+        company_map[UUID(str(row["person_id"]))] = row["company"]
+    for pid in all_ids:
+        company_map.setdefault(pid, None)
+
     # Build rows
     rows: list[dict[str, Any]] = []
     for c in candidates:
@@ -473,12 +516,11 @@ async def _build_candidates_dataframe(
         _add_field_pair(row, pa, pb, "dob_month", "dob_month")
         _add_field_pair(row, pa, pb, "dob_day", "dob_day")
         _add_field_pair(row, pa, pb, "dob_year", "dob_year")
-        _add_field_pair(row, pa, pb, "address", "address")
-        _add_field_pair(row, pa, pb, "name_embedding", "name_embedding")
-        _add_field_pair(row, pa, pb, "face_embedding", "face_embedding")
-        _add_field_pair(row, pa, pb, "voice_fingerprint", "voice_fingerprint")
-        _add_field_pair(row, pa, pb, "company", "company")
-        _add_field_pair(row, pa, pb, "government_id", "government_id")
+        _add_lookup_pair(row, c.person_a_id, c.person_b_id, address_map, "address")
+        _add_lookup_pair(row, c.person_a_id, c.person_b_id, company_map, "company")
+        # name/face embeddings (pgvector) and government_id (no data on this
+        # deployment) are not loaded yet; the comparisons treat them as
+        # null-exclude. See the dedup full-precision follow-up.
 
         rows.append(row)
 
@@ -582,6 +624,36 @@ async def _load_person_summary(
     phone_row = phone_result.mappings().first()
     if phone_row:
         person["phone"] = phone_row["e164"]
+
+    # Primary postal address (overrides the NULL placeholder when present).
+    address_result = await db.execute(
+        text("""
+            SELECT formatted FROM postal_addresses
+            WHERE person_id = CAST(:pid AS uuid) AND is_primary = true
+            LIMIT 1
+        """),
+        {"pid": str(person_id)},
+    )
+    address_row = address_result.mappings().first()
+    if address_row:
+        person["address"] = address_row["formatted"]
+
+    # Best current employer name (overrides the NULL placeholder when present).
+    company_result = await db.execute(
+        text("""
+            SELECT o.display_name AS company
+            FROM person_org_role por
+            JOIN organizations o ON o.id = por.organization_id
+            WHERE por.person_id = CAST(:pid AS uuid)
+            ORDER BY por.is_primary DESC NULLS LAST,
+                     por.started_at DESC NULLS LAST
+            LIMIT 1
+        """),
+        {"pid": str(person_id)},
+    )
+    company_row = company_result.mappings().first()
+    if company_row:
+        person["company"] = company_row["company"]
 
     return person
 
