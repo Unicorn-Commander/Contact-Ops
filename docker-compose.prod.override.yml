@@ -30,12 +30,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: contact-ops-celery-worker
+    healthcheck:
+      disable: true
     restart: unless-stopped
     env_file:
       - .env
     environment:
       - STANDALONE_MODE=false
-      - CONTACT_OPS_AGENTS_BROKER_URL=redis://unicorn-redis:6379/9
     depends_on:
       - contact-ops-backend
     command:
@@ -65,12 +66,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: contact-ops-celery-beat
+    healthcheck:
+      disable: true
     restart: unless-stopped
     env_file:
       - .env
     environment:
       - STANDALONE_MODE=false
-      - CONTACT_OPS_AGENTS_BROKER_URL=redis://unicorn-redis:6379/9
     depends_on:
       - contact-ops-celery-worker
     command:
@@ -78,6 +80,8 @@ services:
       - "-A"
       - contact_ops.agents.runtime
       - beat
+      - "-s"
+      - "/tmp/celerybeat-schedule"
       - "--loglevel=info"
     networks:
       - unicorn-network
