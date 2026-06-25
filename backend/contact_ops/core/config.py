@@ -303,6 +303,17 @@ class Settings(BaseSettings):
     # it NEVER touches legal_hold rows or the non-expiring retention classes.
     RETENTION_SWEEP_ENABLED: bool = False
     RETENTION_SWEEP_SHADOW: bool = True
+    # Dedup BATCH agent master flag, same "present but OFF" posture. The
+    # agent-execution bridge (contact_ops.agents.agent_tasks.run_dedup) is wired
+    # into the beat schedule, but DORMANT until this is True: with it False the
+    # task logs `dedup_agent_disabled` and enumerates/executes nothing. When on,
+    # it runs DedupAgent.execute per tenant under RLS through the full
+    # governance path (circuit breaker, workspace kill-switch, trust ladder).
+    # Proposals land in the approval inbox; the agent starts at T0_PROBATION so
+    # nothing auto-applies. Scoring uses the pure-Python fallback in
+    # splink_runner (Splink/DuckDB are an optional precision upgrade not in the
+    # API image).
+    DEDUP_AGENT_ENABLED: bool = False
     # Per-class TTL (days) for the retention-ageing path, measured from
     # last_interaction_at (falling back to created_at). 'ephemeral_30d' → 30,
     # 'operational_2y' → 730. 'legal_hold' / 'hipaa_6y' / 'indefinite' are

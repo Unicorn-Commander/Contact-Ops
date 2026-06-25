@@ -109,10 +109,28 @@ def make_celery_app() -> Celery:
         },
     )
 
+    # Dedup BATCH agent -- runs through the agent-execution bridge (DORMANT
+    # behind DEDUP_AGENT_ENABLED). Scheduled here as a plain task-name + cron
+    # string (every 6h, from DEDUP_AGENT_DEF.triggers) rather than via
+    # _build_beat_schedule, so beat does NOT need to import the dedup agent
+    # module (which pulls pandas) to schedule it. The worker picks up the task
+    # and run_dedup lazy-imports DedupAgent; if disabled it no-ops immediately.
+    app.conf.beat_schedule.setdefault(
+        "dedup",
+        {
+            "task": "contact_ops.agents.tasks.run_dedup",
+            "schedule": crontab(minute="0", hour="*/6"),
+            "kwargs": {"agent_slug": "dedup"},
+        },
+    )
+
     # Force-import infra tasks so the worker registers them at startup.
     # The import has the side-effect of binding the @shared_task to
-    # this Celery app via Celery's task registry.
+    # this Celery app via Celery's task registry. agent_tasks is the
+    # agent-execution bridge (light: it lazy-imports heavy agent classes
+    # inside the task body, so this import is safe in the slim API image).
     from contact_ops.agents import (
+        agent_tasks,  # noqa: F401
         inbox_snooze_flipper,  # noqa: F401
         retention_sweep,  # noqa: F401
     )

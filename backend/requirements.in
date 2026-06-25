@@ -47,21 +47,26 @@ opentelemetry-instrumentation-celery==0.57b0
 # Phase 3 Foundation: Beta posterior credible intervals for trust ladder
 scipy==1.14.1
 
-# Phase 3.1 Dedup Agent: light comparison/normalization deps for the live
-# propose_merge / dedup_status MCP tools. jellyfish + rapidfuzz (string
-# similarity) and usaddress (address parsing) import cleanly in the slim API
-# image; they are the only dedup deps the live MCP tool path needs.
+# Phase 3.1 Dedup Agent: comparison/normalization deps. jellyfish + rapidfuzz
+# (string similarity) and usaddress (address parsing) cover the live
+# propose_merge / dedup_status MCP tools. pandas is the DataFrame interchange
+# format the batch DedupAgent (agents/dedup/agent.py, splink_runner.py) builds
+# candidate pairs in; it is light enough for the worker image (no torch) and is
+# imported lazily, so the API process never loads it. These import cleanly in
+# the deployed image.
 jellyfish~=1.1
 rapidfuzz~=3.10
 usaddress~=0.5
+pandas~=2.2
 
-# Phase 3.1 Dedup Agent: HEAVY probabilistic-record-linkage stack, EXCLUDED
-# from the slim API image. splink + duckdb + sentence-transformers (which
-# pulls torch, multi-GB) + pyarrow exceed the backend container's hard 1G
-# memory limit (docker-compose.prod.yml) and would OOM. The batch dedup agent
-# (agents/dedup/agent.py, splink_runner.py) that uses them runs out of
-# process, not inside the API image, so they are intentionally not compiled
-# into requirements.txt. Re-enable only in a separate batch-agent image build.
+# Phase 3.1 Dedup Agent: OPTIONAL probabilistic-linkage accelerator, EXCLUDED.
+# splink + duckdb give EM-trained weights, but splink_runner wraps the import
+# in try/except and falls back to the pure-Python comparison scoring when they
+# are absent, so the agent is fully functional without them. sentence-
+# transformers pulls torch (multi-GB) and is declared-but-unused (the embedding
+# comparisons take precomputed vectors), so it stays out too. Re-enable splink/
+# duckdb in a dedicated heavier batch-worker image when EM-calibrated scoring is
+# wanted; keep them out of the API/worker image to stay within the 1G limit.
 # splink~=4.0
 # duckdb~=1.1
 # sentence-transformers~=3.2

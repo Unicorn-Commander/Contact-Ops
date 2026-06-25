@@ -17,14 +17,16 @@
 # The worker and beat therefore depend_on contact-ops-backend, whose own CMD
 # (contact_ops.ops.prestart) runs alembic upgrade head before the API starts,
 # so the schema is migrated once, in order, before any task touches the DB.
-# The broker (Celery db 9) is derived from REDIS_URL in .env automatically;
-# CONTACT_OPS_AGENTS_BROKER_URL is set below only to make it explicit.
+# The broker (Celery db 9) is derived from the authenticated REDIS_URL in .env
+# automatically by contact_ops.agents.runtime; no broker URL is set here.
 
 services:
   # Celery worker pool for the agent fleet. Same prod backend image (same
   # code, different command), subscribed to all three fleet queues. Bump
   # --concurrency or split into per-queue replicas later if load warrants;
   # one worker covering every queue is the minimal correct prod baseline.
+  # Memory is 2G (not the API's 1G): the batch DedupAgent loads pandas and
+  # builds candidate-pair DataFrames, which the API image never does.
   contact-ops-celery-worker:
     image: contact-ops-contact-ops-backend:latest
     container_name: contact-ops-celery-worker
@@ -51,7 +53,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
           cpus: '1.0'
         reservations:
           memory: 512M
