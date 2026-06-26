@@ -199,11 +199,26 @@ class DedupAgent(BaseAgent):
             for sp in splink_result.scored_pairs
         }
 
+        # Re-run hygiene: the agent re-scores the whole tenant on every scheduled
+        # pass. Without these skips a re-run would re-propose pairs already in the
+        # review queue (queue flood) or already merged. Fetched once per run.
+        open_pairs, noncanonical_ids = await self._dedup_rerun_skips(db)
+
         # Step 5 -- process each final edge
         for edge in final_edges:
             pair_key = frozenset({edge.person_a_id, edge.person_b_id})
             pair = scored_map.get(pair_key)
             if pair is None:
+                continue
+
+            # Skip a pair already pending review, or one whose person has been
+            # merged away -- both would otherwise churn the review queue.
+            if pair_key in open_pairs:
+                continue
+            if (
+                edge.person_a_id in noncanonical_ids
+                or edge.person_b_id in noncanonical_ids
+            ):
                 continue
 
             prob = edge.score
@@ -283,6 +298,39 @@ class DedupAgent(BaseAgent):
                 f"emitted {proposals_emitted} proposals"
             ),
         )
+
+    async def _dedup_rerun_skips(
+        self, db: AsyncSession
+    ) -> tuple[set[frozenset[UUID]], set[UUID]]:
+        """Pairs already pending review + persons no longer canonical.
+
+        A scheduled re-run re-scores the whole tenant; the proposal idempotency
+        key hashes the full evidence payload (which shifts as the graph changes),
+        so a re-run would otherwise create a NEW proposal for a pair already in
+        the queue and re-propose already-merged people. Both sets are skipped in
+        the propose loop. RLS scopes both queries to the agent's tenant.
+        """
+        open_rows = await db.execute(
+            text(
+                """
+                SELECT payload->'candidate'->>'person_a_id' AS a,
+                       payload->'candidate'->>'person_b_id' AS b
+                FROM action_event
+                WHERE event_type = 'dedup.propose_merge'
+                  AND status::text = 'proposed'
+                """
+            )
+        )
+        open_pairs: set[frozenset[UUID]] = set()
+        for r in open_rows.mappings():
+            if r["a"] and r["b"]:
+                open_pairs.add(frozenset({UUID(str(r["a"])), UUID(str(r["b"]))}))
+
+        nc_rows = await db.execute(
+            text("SELECT id FROM persons WHERE merge_status::text <> 'canonical'")
+        )
+        noncanonical = {UUID(str(row[0])) for row in nc_rows.all()}
+        return open_pairs, noncanonical
 
     # ------------------------------------------------------------------
     # Tie-breaker wrapper

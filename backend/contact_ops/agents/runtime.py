@@ -119,7 +119,10 @@ def make_celery_app() -> Celery:
         "dedup",
         {
             "task": "contact_ops.agents.tasks.run_dedup",
-            "schedule": crontab(minute="0", hour="*/6"),
+            # Daily (02:00 UTC). A deduped contact graph does not accrue new
+            # duplicates fast enough to warrant a full re-scan every 6h, and the
+            # re-run skip guards make frequent passes pure overhead.
+            "schedule": crontab(minute="0", hour="2"),
             "kwargs": {"agent_slug": "dedup"},
         },
     )
