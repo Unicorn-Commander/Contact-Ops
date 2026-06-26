@@ -97,6 +97,18 @@ _BAND_THRESHOLDS: list[tuple[float, str]] = [
     (0.40, "batch_review"),
 ]
 
+# Auto-merge guardrail. A match may only reach the auto_merge_eligible band (and
+# therefore auto-apply at T2+) when it is backed by an exact unique identifier
+# (email or phone). A name is NOT a unique identifier: Splink scores ~1.0 on an
+# identical name with no other field populated, which would auto-conflate two
+# distinct people ("A. Rojas" vs "Mateo Cruz", two unrelated "Aaron Stransky"s).
+# Identifier-less matches are capped just below the floor so they route to
+# single_review and surface for a human to confirm identity. The real model
+# probability is preserved in the evidence pack's match_probability.
+_AUTO_MERGE_FLOOR = 0.95
+_REVIEW_CONFIDENCE_CAP = 0.94
+_IDENTIFIER_BLOCK_KEYS = frozenset({"email_exact", "phone_exact"})
+
 
 # ===================================================================
 # DedupAgent
@@ -230,6 +242,16 @@ class DedupAgent(BaseAgent):
                 if {p.person_a_id, p.person_b_id} == pair_key
             ]
 
+            # Auto-merge guardrail: identifier-less matches cannot reach the
+            # auto-merge band, however high the model score, so a name-only
+            # collision is surfaced for review instead of silently merged.
+            corroborated = _has_identifier_corroboration(blocking_keys)
+            decision_confidence = prob
+            decision_band = band
+            if prob >= _AUTO_MERGE_FLOOR and not corroborated:
+                decision_confidence = _REVIEW_CONFIDENCE_CAP
+                decision_band = _determine_band(decision_confidence) or band
+
             await self.propose_action(
                 ctx=ctx,
                 event_type="dedup.propose_merge",
@@ -237,15 +259,17 @@ class DedupAgent(BaseAgent):
                 aggregate_id=edge.person_a_id,
                 payload_before=None,
                 payload_after=evidence_pack,
-                confidence=prob,
+                confidence=decision_confidence,
                 reversibility=Reversibility.REVERSIBLE,
                 evidence={
                     "blocking_keys": blocking_keys,
                     "splink_model_version": splink_result.model_version,
                     "cluster_repair_applied": repair_result.black_holes_detected > 0,
+                    "identifier_corroborated": corroborated,
                 },
                 rationale=(
-                    f"Splink scored {prob:.4f} via {band} band; "
+                    f"Splink scored {prob:.4f} via {band} band; decision "
+                    f"confidence {decision_confidence:.4f} ({decision_band}); "
                     f"blocking keys: {blocking_keys}"
                 ),
             )
@@ -557,6 +581,16 @@ def _determine_band(prob: float) -> str | None:
         if prob >= threshold:
             return band
     return None
+
+
+def _has_identifier_corroboration(blocking_keys: list[str]) -> bool:
+    """True when the pair is backed by an exact unique-identifier match.
+
+    This is the only evidence dedup trusts enough to AUTO-merge. Matches on name
+    alone (even with company / dob / address corroboration) are surfaced for
+    human review instead, because a name is not a unique identifier.
+    """
+    return any(k in _IDENTIFIER_BLOCK_KEYS for k in blocking_keys)
 
 
 def _bits_to_probability(bits: float) -> float:
