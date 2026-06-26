@@ -346,6 +346,26 @@ class BaseAgent(ABC):
                 ),
                 {"id": str(event_id)},
             )
+            # Auto-apply must perform the proposal's real-world effect, not just
+            # mark it applied. For a dedup merge at T2+ this actually merges the
+            # two person records via merge_people; without it a "trusted" agent
+            # would silently no-op. Same sessions + transaction as the insert, so
+            # a merge failure aborts the whole propose_action.
+            from contact_ops.services.downstream_apply import (
+                apply_downstream_effect,
+            )
+
+            await apply_downstream_effect(
+                event_type=event_type,
+                app_db=ctx.db,
+                audit_db=ctx.audit_db,
+                tenant_id=ctx.tenant_id,
+                payload=payload_after,
+                confidence=confidence,
+                actor_chain=actor_chain,
+                human_authority="agent",
+                request_id=f"agent-autoapply:{self.agent_def.slug}",
+            )
         else:
             # Phase 3.3a (C6): only proposed (non-auto-applied) rows can
             # conflict against another inbox item. Auto-applied rows are

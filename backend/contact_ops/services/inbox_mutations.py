@@ -36,6 +36,9 @@ from contact_ops.schemas.inbox import (
     RejectMode,
     Tier,
 )
+from contact_ops.services.downstream_apply import (
+    apply_downstream_effect,
+)
 from contact_ops.services.inbox_query import get_proposal_for_decision
 from contact_ops.services.suppression_rules import create_suppression_rule
 
@@ -229,6 +232,31 @@ async def approve_proposal(
             "ttd": time_to_decide_sec,
         },
     )
+
+    # Realize the proposal's real-world effect when it needs more than a status
+    # flip. A dedup.propose_merge approval actually merges the two person records
+    # via the canonical merge_people path; without this the contacts stayed
+    # duplicated and calibration learned a positive outcome for a merge that
+    # never happened. Runs in this same transaction (db == audit, app_db == app),
+    # so a merge failure raises and rolls the approval + outcome back.
+    merge_result = await apply_downstream_effect(
+        event_type=row["event_type"],
+        app_db=app_db or db,
+        audit_db=db,
+        tenant_id=tenant_id,
+        payload=row["payload"],
+        confidence=float(row["confidence"]) if row["confidence"] is not None else None,
+        actor_chain={"sub": str(reviewer_id)},
+        human_authority=str(reviewer_id),
+        request_id="inbox-approve",
+    )
+    if merge_result is not None:
+        logger.info(
+            "proposal_downstream_effect_applied",
+            proposal_id=str(proposal_id),
+            event_type=row["event_type"],
+            result=merge_result,
+        )
 
     decision_id = await _write_inbox_decision(
         db=db,
@@ -910,6 +938,38 @@ async def bulk_approve(
                 await _apply_person_create_proposal(
                     db=db, tenant_id=tenant_id, proposal_id=pid, graph_client=graph_client
                 )
+
+            # Realize a dedup merge (or any future non-trivial effect) before the
+            # status flip, in a per-item SAVEPOINT so one failure skips just that
+            # item instead of poisoning the whole batch transaction. Cluster edges
+            # whose persons are already unified return without error (no-op).
+            if row["event_type"] == "dedup.propose_merge":
+                try:
+                    async with db.begin_nested():
+                        await apply_downstream_effect(
+                            event_type=row["event_type"],
+                            app_db=db,
+                            audit_db=db,
+                            tenant_id=tenant_id,
+                            payload=row["payload"],
+                            confidence=(
+                                float(row["confidence"])
+                                if row["confidence"] is not None
+                                else None
+                            ),
+                            actor_chain={"sub": str(reviewer_id)},
+                            human_authority=str(reviewer_id),
+                            request_id="inbox-bulk-approve",
+                        )
+                except Exception:
+                    logger.warning(
+                        "bulk_approve_merge_failed",
+                        proposal_id=str(pid),
+                        exc_info=True,
+                    )
+                    skipped.append(pid)
+                    reasons[str(pid)] = "merge_failed"
+                    continue
 
             # apply
             await db.execute(
