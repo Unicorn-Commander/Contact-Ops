@@ -202,6 +202,99 @@ export type ListWorkspaceMembersResult = ToolEnvelope & {
   directory_enriched: boolean;
 };
 
+// ---- Agent Command Center (matches backend mcp/tools/agent_admin.py) ----
+//
+// The agent-governance admin surface. All seven tools are ADMIN-role +
+// "contactops:agents.admin" scope; a non-admin caller is rejected server-side
+// and the console renders an admin-only notice (same pattern as workspace
+// members). Trust tiers run T0 Probation .. T4 Principal; drift status is one
+// of "stable" | "warning" | "drift".
+
+/** Row shape returned by `list_agents`. One per registered fleet agent. */
+export type AgentSummary = {
+  slug: string;
+  name: string;
+  version: string;
+  agent_class: string;
+  description: string;
+  cost_budget_monthly_cents: number;
+  /** The agent's bootstrap tier (0..4) before any calibration. */
+  initial_trust_tier: number;
+  /** Human-readable label for `initial_trust_tier`, e.g. "T0 Probation". */
+  initial_trust_tier_label: string;
+  triggers: string[];
+  declared_capabilities: string[];
+};
+
+export type ListAgentsResult = ToolEnvelope & {
+  agents: AgentSummary[];
+  count: number;
+};
+
+/**
+ * Per (agent x tenant x visibility) calibration state. `stored_tier` is the
+ * authoritative tier the runtime enforces; `posterior_tier` is what the Beta
+ * posterior currently implies (they can disagree after a manual promote/demote
+ * or while drift is suppressing an auto-promotion).
+ */
+export type AgentTrust = {
+  agent_slug: string;
+  visibility: string;
+  tenant_id: UUID;
+  alpha: number;
+  beta: number;
+  mean: number;
+  lower_ci_95: number;
+  posterior_tier: number;
+  posterior_tier_label: string;
+  stored_tier: number;
+  stored_tier_label: string;
+  /** "stable" | "warning" | "drift". */
+  drift_status: string;
+  samples_total: number;
+  samples_7d: number;
+  samples_30d: number;
+};
+
+/** `get_agent_trust` envelope: `trust` is null when the row is uncalibrated. */
+export type GetAgentTrustResult = ToolEnvelope & {
+  trust: AgentTrust | null;
+  found: boolean;
+};
+
+/**
+ * Workspace-wide agent governance (the fleet kill-switch). When `agents_paused`
+ * is true the whole fleet refuses to run until resumed; the reason / who / when
+ * are surfaced so the banner can explain the pause.
+ */
+export type AgentGovernance = ToolEnvelope & {
+  agents_paused: boolean;
+  agents_paused_reason: string | null;
+  agents_paused_at: string | null;
+  agents_paused_by: string | null;
+};
+
+/** Result of `promote_agent_tier` / `demote_agent_tier`. */
+export type TierShiftResult = ToolEnvelope & {
+  agent_slug: string;
+  visibility: string;
+  previous_tier: number;
+  previous_tier_label: string;
+  new_tier: number;
+  new_tier_label: string;
+  /** False when already at the T0/T4 floor/ceiling (a no-op shift). */
+  changed: boolean;
+};
+
+/** Result of `pause_agent` / `resume_agent` (the per-agent circuit breaker). */
+export type AgentBreakerResult = ToolEnvelope & {
+  /** "agent" for a single agent, "fleet" for the fleet-wide breaker. */
+  scope: string;
+  /** True when the breaker is OPEN (the agent/fleet is paused). */
+  open: boolean;
+  reason: string | null;
+};
+
 // ---- Notes / Log (Settings + future profile-page surface) ----
 // Matches the backend MCP `list_notes` / `append_note` shape on `feat-notes-backend`.
 

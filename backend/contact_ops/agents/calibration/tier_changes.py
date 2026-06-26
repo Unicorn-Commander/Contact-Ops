@@ -45,7 +45,7 @@ class TierChange:
     from_tier: TrustTier
     to_tier: TrustTier
     kind: str  # 'promote' | 'demote'
-    action_event_id: UUID
+    action_event_id: UUID | None  # None in shadow mode (nothing was emitted)
     rationale: str
 
 
@@ -56,11 +56,19 @@ async def evaluate_and_apply_tier_changes(
     updates: list[TrustUpdate],
     drifts: dict[tuple[str, UUID, str], DriftResult],
     daemon_run_id: UUID,
+    shadow: bool = False,
 ) -> list[TierChange]:
     """For each updated trust row, decide and apply tier changes.
 
     Returns the list of changes (proposals + auto-applied demotions)
     so the daemon can summarize them in its log + Slack alert.
+
+    When ``shadow`` is True the SAME promote/demote decisions are computed and
+    returned (with ``action_event_id=None``) and logged as
+    ``calibration_would_demote`` / ``calibration_would_promote``, but NOTHING is
+    emitted or applied: no ``action_event`` is written and no
+    ``agent_trust.current_tier`` is changed. This is the observe-before-enforce
+    safety for the one path that auto-applies autonomy changes fleet-wide.
     """
     changes: list[TierChange] = []
     for upd in updates:
@@ -90,26 +98,38 @@ async def evaluate_and_apply_tier_changes(
                 drift=drift,
                 upd=upd,
             )
-            event_id = await _emit_tier_change(
-                audit_db=audit_db,
-                agent_slug=upd.agent_slug,
-                tenant_id=upd.tenant_id,
-                visibility=upd.visibility,
-                from_tier=current_tier,
-                to_tier=new_tier,
-                kind="demote",
-                rationale=rationale,
-                daemon_run_id=daemon_run_id,
-                auto_apply=True,
-            )
-            await _apply_tier(
-                db=db,
-                agent_slug=upd.agent_slug,
-                tenant_id=upd.tenant_id,
-                visibility=upd.visibility,
-                new_tier=new_tier,
-                is_demotion=True,
-            )
+            event_id: UUID | None = None
+            if shadow:
+                logger.info(
+                    "calibration_would_demote",
+                    agent_slug=upd.agent_slug,
+                    tenant_id=str(upd.tenant_id),
+                    visibility=upd.visibility,
+                    from_tier=int(current_tier),
+                    to_tier=int(new_tier),
+                    rationale=rationale,
+                )
+            else:
+                event_id = await _emit_tier_change(
+                    audit_db=audit_db,
+                    agent_slug=upd.agent_slug,
+                    tenant_id=upd.tenant_id,
+                    visibility=upd.visibility,
+                    from_tier=current_tier,
+                    to_tier=new_tier,
+                    kind="demote",
+                    rationale=rationale,
+                    daemon_run_id=daemon_run_id,
+                    auto_apply=True,
+                )
+                await _apply_tier(
+                    db=db,
+                    agent_slug=upd.agent_slug,
+                    tenant_id=upd.tenant_id,
+                    visibility=upd.visibility,
+                    new_tier=new_tier,
+                    is_demotion=True,
+                )
             changes.append(
                 TierChange(
                     agent_slug=upd.agent_slug,
@@ -133,18 +153,30 @@ async def evaluate_and_apply_tier_changes(
                 upd=upd,
                 drift=drift,
             )
-            event_id = await _emit_tier_change(
-                audit_db=audit_db,
-                agent_slug=upd.agent_slug,
-                tenant_id=upd.tenant_id,
-                visibility=upd.visibility,
-                from_tier=current_tier,
-                to_tier=new_tier,
-                kind="promote",
-                rationale=rationale,
-                daemon_run_id=daemon_run_id,
-                auto_apply=False,
-            )
+            promote_event_id: UUID | None = None
+            if shadow:
+                logger.info(
+                    "calibration_would_promote",
+                    agent_slug=upd.agent_slug,
+                    tenant_id=str(upd.tenant_id),
+                    visibility=upd.visibility,
+                    from_tier=int(current_tier),
+                    to_tier=int(new_tier),
+                    rationale=rationale,
+                )
+            else:
+                promote_event_id = await _emit_tier_change(
+                    audit_db=audit_db,
+                    agent_slug=upd.agent_slug,
+                    tenant_id=upd.tenant_id,
+                    visibility=upd.visibility,
+                    from_tier=current_tier,
+                    to_tier=new_tier,
+                    kind="promote",
+                    rationale=rationale,
+                    daemon_run_id=daemon_run_id,
+                    auto_apply=False,
+                )
             changes.append(
                 TierChange(
                     agent_slug=upd.agent_slug,
@@ -153,7 +185,7 @@ async def evaluate_and_apply_tier_changes(
                     from_tier=current_tier,
                     to_tier=new_tier,
                     kind="promote",
-                    action_event_id=event_id,
+                    action_event_id=promote_event_id,
                     rationale=rationale,
                 )
             )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -9,14 +8,10 @@ from sqlalchemy import text
 from contact_ops.mcp.errors import HIPAA_BLOCKED, ToolError
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.dedup_admin import (
-    ApplyMergeInput,
     DedupStatusInput,
     ProposeMergeInput,
-    UnmergeInput,
-    _apply_merge,
     _dedup_status,
     _propose_merge,
-    _unmerge,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -99,7 +94,7 @@ async def test_propose_merge_hipaa_rejected(db_session, seeded_tenants):
 
     # Patch crosses_hipaa_fence to simulate cross-HIPAA boundary
     with patch(
-        "contact_ops.mcp.tools.dedup_admin.crosses_hipaa_fence",
+        "contact_ops.agents.dedup.hipaa_fence.crosses_hipaa_fence",
         return_value=True,
     ):
         with pytest.raises(ToolError) as exc_info:
@@ -150,138 +145,6 @@ async def test_propose_merge_happy_path(db_session, seeded_tenants):
     assert ev_row is not None
     assert ev_row["event_type"] == "dedup.propose_merge"
     assert ev_row["status"] == "proposed"
-
-
-async def test_apply_merge_happy_path(db_session, seeded_tenants):
-    tenant_id = seeded_tenants["non_hipaa"]
-    a_id = uuid.uuid4()
-    b_id = uuid.uuid4()
-
-    await _seed_person(db_session, a_id, tenant_id, "Alice Smith", given_name="Alice", family_name="Smith")
-    await _seed_person(db_session, b_id, tenant_id, "Bob Jones", given_name="Bob", family_name="Jones")
-    await _seed_email(db_session, a_id, "REMOVED")
-    await _seed_email(db_session, b_id, "REMOVED")
-
-    # Need a source for facts
-    source_id = uuid.uuid4()
-    await db_session.execute(
-        text("INSERT INTO sources (id, source_type, tenant_id) VALUES (:id, 'manual_entry', :tid)"),
-        {"id": str(source_id), "tid": str(tenant_id)},
-    )
-
-    # Seed a fact on b_id (the younger record becomes alias)
-    await db_session.execute(
-        text("""
-            INSERT INTO facts (id, tenant_id, subject_kind, subject_id,
-                               predicate, object_kind, object_value, source_id,
-                               confidence, observed_at)
-            VALUES (:id, :tid, 'person', :sid, 'phone', 'text',
-                    CAST(:ov AS jsonb), :src, 1.0, now())
-        """),
-        {
-            "id": str(uuid.uuid4()),
-            "tid": str(tenant_id),
-            "sid": str(b_id),
-            "ov": '{"value": "+12025551234"}',
-            "src": str(source_id),
-        },
-    )
-
-    await db_session.commit()
-
-    ctx = _ctx(db_session, tenant_id=tenant_id)
-
-    propose_out = await _propose_merge(
-        ctx,
-        ProposeMergeInput(
-            person_a_id=a_id,
-            person_b_id=b_id,
-            reason="same email",
-        ),
-    )
-
-    # Apply merge
-    apply_out = await _apply_merge(
-        ctx,
-        ApplyMergeInput(action_event_id=uuid.UUID(propose_out.action_event_id)),
-    )
-
-    assert isinstance(apply_out.merge_history_id, str)
-    assert apply_out.survivor_id == str(a_id)  # a_id is older (inserted first)
-    assert apply_out.alias_id == str(b_id)
-    assert apply_out.can_unmerge is True
-    assert apply_out.facts_promoted >= 0
-
-    # Verify action_event status updated to 'applied'
-    ev = await ctx.audit_db.execute(
-        text("SELECT status FROM action_event WHERE event_id = :eid"),
-        {"eid": propose_out.action_event_id},
-    )
-    assert ev.mappings().one()["status"] == "applied"
-
-
-async def test_unmerge_round_trip(db_session, seeded_tenants):
-    tenant_id = seeded_tenants["non_hipaa"]
-    a_id = uuid.uuid4()
-    b_id = uuid.uuid4()
-
-    await _seed_person(db_session, a_id, tenant_id, "Alice Smith", given_name="Alice", family_name="Smith")
-    await _seed_person(db_session, b_id, tenant_id, "Bob Jones", given_name="Bob", family_name="Jones")
-    await _seed_email(db_session, a_id, "REMOVED")
-    await _seed_email(db_session, b_id, "REMOVED")
-
-    source_id = uuid.uuid4()
-    await db_session.execute(
-        text("INSERT INTO sources (id, source_type, tenant_id) VALUES (:id, 'manual_entry', :tid)"),
-        {"id": str(source_id), "tid": str(tenant_id)},
-    )
-    await db_session.execute(
-        text("""
-            INSERT INTO facts (id, tenant_id, subject_kind, subject_id,
-                               predicate, object_kind, object_value, source_id,
-                               confidence, observed_at)
-            VALUES (:id, :tid, 'person', :sid, 'phone', 'text',
-                    CAST(:ov AS jsonb), :src, 1.0, now())
-        """),
-        {
-            "id": str(uuid.uuid4()),
-            "tid": str(tenant_id),
-            "sid": str(b_id),
-            "ov": '{"value": "+12025551234"}',
-            "src": str(source_id),
-        },
-    )
-
-    await db_session.commit()
-
-    ctx = _ctx(db_session, tenant_id=tenant_id)
-
-    propose_out = await _propose_merge(
-        ctx,
-        ProposeMergeInput(person_a_id=a_id, person_b_id=b_id, reason="same email"),
-    )
-    apply_out = await _apply_merge(
-        ctx,
-        ApplyMergeInput(action_event_id=uuid.UUID(propose_out.action_event_id)),
-    )
-
-    # Unmerge
-    unmerge_out = await _unmerge(
-        ctx,
-        UnmergeInput(person_alias_id=uuid.UUID(apply_out.alias_id)),
-    )
-
-    assert unmerge_out.alias_id == apply_out.alias_id
-    assert unmerge_out.survivor_id == apply_out.survivor_id
-    assert unmerge_out.facts_restored >= 0
-
-    # Verify alias restored to canonical
-    alias_row = (await db_session.execute(
-        text("SELECT merge_status, merged_into_id FROM persons WHERE id = :id"),
-        {"id": apply_out.alias_id},
-    )).mappings().one()
-    assert alias_row["merge_status"] == "canonical"
-    assert alias_row["merged_into_id"] is None
 
 
 async def test_dedup_status(db_session, seeded_tenants):

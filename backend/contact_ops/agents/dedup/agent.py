@@ -362,9 +362,24 @@ async def _build_candidates_dataframe(
     if not all_ids:
         return pd.DataFrame()
 
-    id_list_literal = "{" + ",".join(str(pid) for pid in all_ids) + "}"
+    # Bind the ids as a real list and cast via CAST(... AS uuid[]). The asyncpg
+    # driver (the agent runs under it) renders bind params as $N and chokes on
+    # the `:ids::uuid[]` postfix-cast form ("syntax error at or near :"); the
+    # CAST() function form binds cleanly. (psycopg2 adapts the list the same
+    # way, so this stays cross-driver.)
+    id_list = [str(pid) for pid in all_ids]
 
-    # Load persons
+    # Load persons. This selects only the persons columns that actually exist
+    # and are simply typed: name parts, the JSONB birthday (extracted to
+    # dob_year/month/day), occupation_title, headline. Email + phone come from
+    # the per-id queries below. The richer comparison fields the scorer also
+    # knows about (company, government_id, postal address, and the name/face
+    # embeddings) are intentionally NOT loaded here yet: company/government_id/
+    # address are not persons columns (they live in facts / postal_addresses)
+    # and the embeddings are pgvector and need typed handling. The comparison
+    # functions treat any absent field as a null-exclude, so dedup scores on the
+    # available deterministic signals (name, email, phone, dob) until those
+    # sources are wired. See the dedup follow-up task.
     person_rows = await db.execute(
         text("""
             SELECT
@@ -373,23 +388,17 @@ async def _build_candidates_dataframe(
                 p.family_name,
                 p.display_name,
                 p.birthday,
-                EXTRACT(YEAR FROM p.birthday)::int  AS dob_year,
-                EXTRACT(MONTH FROM p.birthday)::int  AS dob_month,
-                EXTRACT(DAY FROM p.birthday)::int    AS dob_day,
-                p.birthday::text                     AS dob,
-                p.name_embedding,
-                p.face_embedding,
-                p.voice_fingerprint,
-                p.company,
-                p.government_id,
-                p.address,
+                (p.birthday->>'year')::int           AS dob_year,
+                (p.birthday->>'month')::int          AS dob_month,
+                (p.birthday->>'day')::int            AS dob_day,
+                CASE WHEN jsonb_typeof(p.birthday) = 'object'
+                     THEN p.birthday::text END        AS dob,
                 p.occupation_title,
-                p.nickname,
                 p.headline
             FROM persons p
-            WHERE p.id = ANY(:ids::uuid[])
+            WHERE p.id = ANY(CAST(:ids AS uuid[]))
         """),
-        {"ids": id_list_literal},
+        {"ids": id_list},
     )
     person_map: dict[UUID, dict[str, Any]] = {}
     for row in person_rows.mappings():
@@ -410,14 +419,14 @@ async def _build_candidates_dataframe(
                 person_id,
                 address
             FROM emails
-            WHERE person_id = ANY(:ids::uuid[])
+            WHERE person_id = ANY(CAST(:ids AS uuid[]))
               AND is_primary = true
             ORDER BY person_id, id
         """),
-        {"ids": id_list_literal},
+        {"ids": id_list},
     )
     email_map: dict[UUID, str | None] = {}
-    for row in email_rows:
+    for row in email_rows.mappings():
         email_map[UUID(str(row["person_id"]))] = row["address"]
     for pid in all_ids:
         email_map.setdefault(pid, None)
@@ -429,17 +438,60 @@ async def _build_candidates_dataframe(
                 person_id,
                 e164
             FROM phones
-            WHERE person_id = ANY(:ids::uuid[])
+            WHERE person_id = ANY(CAST(:ids AS uuid[]))
               AND is_primary = true
             ORDER BY person_id, id
         """),
-        {"ids": id_list_literal},
+        {"ids": id_list},
     )
     phone_map: dict[UUID, str | None] = {}
-    for row in phone_rows:
+    for row in phone_rows.mappings():
         phone_map[UUID(str(row["person_id"]))] = row["e164"]
     for pid in all_ids:
         phone_map.setdefault(pid, None)
+
+    # Load primary postal address (the pre-formatted string). A strong dedup
+    # signal sourced from its own table (it is not a persons column).
+    address_rows = await db.execute(
+        text("""
+            SELECT DISTINCT ON (person_id)
+                person_id,
+                formatted
+            FROM postal_addresses
+            WHERE person_id = ANY(CAST(:ids AS uuid[]))
+              AND is_primary = true
+            ORDER BY person_id, id
+        """),
+        {"ids": id_list},
+    )
+    address_map: dict[UUID, str | None] = {}
+    for row in address_rows.mappings():
+        address_map[UUID(str(row["person_id"]))] = row["formatted"]
+    for pid in all_ids:
+        address_map.setdefault(pid, None)
+
+    # Load the best current employer name (the dedup "company" signal): join
+    # person_org_role -> organizations, preferring the primary then most-recent
+    # role. Company lives in the employment relation, not on persons.
+    company_rows = await db.execute(
+        text("""
+            SELECT DISTINCT ON (por.person_id)
+                por.person_id,
+                o.display_name AS company
+            FROM person_org_role por
+            JOIN organizations o ON o.id = por.organization_id
+            WHERE por.person_id = ANY(CAST(:ids AS uuid[]))
+            ORDER BY por.person_id,
+                     por.is_primary DESC NULLS LAST,
+                     por.started_at DESC NULLS LAST
+        """),
+        {"ids": id_list},
+    )
+    company_map: dict[UUID, str | None] = {}
+    for row in company_rows.mappings():
+        company_map[UUID(str(row["person_id"]))] = row["company"]
+    for pid in all_ids:
+        company_map.setdefault(pid, None)
 
     # Build rows
     rows: list[dict[str, Any]] = []
@@ -464,12 +516,11 @@ async def _build_candidates_dataframe(
         _add_field_pair(row, pa, pb, "dob_month", "dob_month")
         _add_field_pair(row, pa, pb, "dob_day", "dob_day")
         _add_field_pair(row, pa, pb, "dob_year", "dob_year")
-        _add_field_pair(row, pa, pb, "address", "address")
-        _add_field_pair(row, pa, pb, "name_embedding", "name_embedding")
-        _add_field_pair(row, pa, pb, "face_embedding", "face_embedding")
-        _add_field_pair(row, pa, pb, "voice_fingerprint", "voice_fingerprint")
-        _add_field_pair(row, pa, pb, "company", "company")
-        _add_field_pair(row, pa, pb, "government_id", "government_id")
+        _add_lookup_pair(row, c.person_a_id, c.person_b_id, address_map, "address")
+        _add_lookup_pair(row, c.person_a_id, c.person_b_id, company_map, "company")
+        # name/face embeddings (pgvector) and government_id (no data on this
+        # deployment) are not loaded yet; the comparisons treat them as
+        # null-exclude. See the dedup full-precision follow-up.
 
         rows.append(row)
 
@@ -523,13 +574,20 @@ async def _load_person_summary(
     *,
     db: AsyncSession,
 ) -> dict[str, Any]:
-    """Load a person's field summary for evidence-pack building."""
+    """Load a person's field summary for evidence-pack building.
+
+    Keeps the evidence dict's keys stable while reconciling with the real
+    persons schema: nickname comes from the nicknames[] array, and company /
+    address / government_id are not persons columns (they live in facts /
+    postal_addresses), so they are selected as NULL placeholders for now rather
+    than referencing non-existent columns. Sourcing them is a dedup follow-up.
+    """
     result = await db.execute(
         text("""
             SELECT
                 id, display_name, given_name, family_name,
-                birthday, occupation_title, nickname, headline,
-                company, address, government_id
+                birthday, occupation_title, nicknames[1] AS nickname, headline,
+                NULL AS company, NULL AS address, NULL AS government_id
             FROM persons
             WHERE id = CAST(:pid AS uuid)
         """),
@@ -566,6 +624,36 @@ async def _load_person_summary(
     phone_row = phone_result.mappings().first()
     if phone_row:
         person["phone"] = phone_row["e164"]
+
+    # Primary postal address (overrides the NULL placeholder when present).
+    address_result = await db.execute(
+        text("""
+            SELECT formatted FROM postal_addresses
+            WHERE person_id = CAST(:pid AS uuid) AND is_primary = true
+            LIMIT 1
+        """),
+        {"pid": str(person_id)},
+    )
+    address_row = address_result.mappings().first()
+    if address_row:
+        person["address"] = address_row["formatted"]
+
+    # Best current employer name (overrides the NULL placeholder when present).
+    company_result = await db.execute(
+        text("""
+            SELECT o.display_name AS company
+            FROM person_org_role por
+            JOIN organizations o ON o.id = por.organization_id
+            WHERE por.person_id = CAST(:pid AS uuid)
+            ORDER BY por.is_primary DESC NULLS LAST,
+                     por.started_at DESC NULLS LAST
+            LIMIT 1
+        """),
+        {"pid": str(person_id)},
+    )
+    company_row = company_result.mappings().first()
+    if company_row:
+        person["company"] = company_row["company"]
 
     return person
 

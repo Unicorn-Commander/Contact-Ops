@@ -228,6 +228,7 @@ BulkSkipReason = Literal[
     "suppressed_by_rule",
     "not_found",
     "wrong_tenant",
+    "merge_failed",
 ]
 
 

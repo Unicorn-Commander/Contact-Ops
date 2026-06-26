@@ -40,6 +40,7 @@ from contact_ops.agents.errors import (
     CostBudgetExceededError,
     IdempotencyKeyReusedError,
     RetryableError,
+    WorkspaceAgentsPausedError,
 )
 from contact_ops.agents.observability.metrics import (
     AGENT_LATENCY_SECONDS,
@@ -125,6 +126,12 @@ class BaseAgent(ABC):
         # Circuit breaker: refuse to run if open. The breaker also stops
         # cost burn on already-known-bad agents.
         await ctx.circuit_breaker.check(agent_slug=self.agent_def.slug)
+
+        # Workspace master switch: an admin can pause the entire fleet for a
+        # tenant via tenants.agents_paused. Checked right after the breaker so a
+        # paused workspace incurs no span, no cost, no _run. Distinct from the
+        # per-agent / auto-fleet breaker above: this is a deliberate human stop.
+        await self._assert_workspace_not_paused(ctx)
 
         outcome_label = "errored"
         span_cm = agent_span(
@@ -339,6 +346,26 @@ class BaseAgent(ABC):
                 ),
                 {"id": str(event_id)},
             )
+            # Auto-apply must perform the proposal's real-world effect, not just
+            # mark it applied. For a dedup merge at T2+ this actually merges the
+            # two person records via merge_people; without it a "trusted" agent
+            # would silently no-op. Same sessions + transaction as the insert, so
+            # a merge failure aborts the whole propose_action.
+            from contact_ops.services.downstream_apply import (
+                apply_downstream_effect,
+            )
+
+            await apply_downstream_effect(
+                event_type=event_type,
+                app_db=ctx.db,
+                audit_db=ctx.audit_db,
+                tenant_id=ctx.tenant_id,
+                payload=payload_after,
+                confidence=confidence,
+                actor_chain=actor_chain,
+                human_authority="agent",
+                request_id=f"agent-autoapply:{self.agent_def.slug}",
+            )
         else:
             # Phase 3.3a (C6): only proposed (non-auto-applied) rows can
             # conflict against another inbox item. Auto-applied rows are
@@ -497,6 +524,32 @@ class BaseAgent(ABC):
         )
         stored_tier = TrustTier(int(row["current_tier"]))
         return TrustTier(min(int(posterior_tier), int(stored_tier)))
+
+    async def _assert_workspace_not_paused(self, ctx: AgentContext) -> None:
+        """Raise if an admin has paused the whole fleet for this tenant.
+
+        Reads ``tenants.agents_paused`` through the RLS-bound app session (the
+        row is the caller's own tenant via the tenants_select / tenants_modify
+        policies). A missing row is treated as not-paused (fail-open) rather than
+        wedging the fleet on an anomalous read; the deliberate stop is the True
+        flag, not the absence of a row.
+        """
+        result = await ctx.db.execute(
+            text(
+                """
+                SELECT agents_paused, agents_paused_reason
+                FROM tenants
+                WHERE id = CAST(:tenant AS uuid)
+                """
+            ),
+            {"tenant": str(ctx.tenant_id)},
+        )
+        row = result.mappings().first()
+        if row is not None and bool(row["agents_paused"]):
+            raise WorkspaceAgentsPausedError(
+                tenant_id=str(ctx.tenant_id),
+                reason=row["agents_paused_reason"],
+            )
 
     async def _lookup_existing(
         self,

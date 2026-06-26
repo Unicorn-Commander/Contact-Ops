@@ -303,6 +303,31 @@ class Settings(BaseSettings):
     # it NEVER touches legal_hold rows or the non-expiring retention classes.
     RETENTION_SWEEP_ENABLED: bool = False
     RETENTION_SWEEP_SHADOW: bool = True
+    # Dedup BATCH agent master flag, same "present but OFF" posture. The
+    # agent-execution bridge (contact_ops.agents.agent_tasks.run_dedup) is wired
+    # into the beat schedule, but DORMANT until this is True: with it False the
+    # task logs `dedup_agent_disabled` and enumerates/executes nothing. When on,
+    # it runs DedupAgent.execute per tenant under RLS through the full
+    # governance path (circuit breaker, workspace kill-switch, trust ladder).
+    # Proposals land in the approval inbox; the agent starts at T0_PROBATION so
+    # nothing auto-applies. Scoring uses the pure-Python fallback in
+    # splink_runner (Splink/DuckDB are an optional precision upgrade not in the
+    # API image).
+    DEDUP_AGENT_ENABLED: bool = False
+    # Calibration daemon (trust-ladder self-calibration) two-flag rollout, same
+    # observe-before-enforce posture as RETENTION_SWEEP. CALIBRATION_ENABLED gates
+    # the global run_calibration task at the top level: with it False the task
+    # logs `calibration_disabled` and touches nothing. CALIBRATION_SHADOW (default
+    # True) is the second safety: even when ENABLED, shadow mode still updates
+    # posteriors + drift state (observations) but only LOGS the tier changes it
+    # WOULD make (`calibration_would_demote` / `_would_promote`) without emitting
+    # an action_event or changing any agent_trust.current_tier. Flip SHADOW False
+    # only after observing the would-be tier changes in the logs: this is the one
+    # path that auto-applies autonomy changes (demotions) fleet-wide. The daemon
+    # runs as a GLOBAL platform pass under the admin/BYPASSRLS DSN (calibration_run_log
+    # is platform-tenant), not per-tenant through the agent-execution bridge.
+    CALIBRATION_ENABLED: bool = False
+    CALIBRATION_SHADOW: bool = True
     # Per-class TTL (days) for the retention-ageing path, measured from
     # last_interaction_at (falling back to created_at). 'ephemeral_30d' → 30,
     # 'operational_2y' → 730. 'legal_hold' / 'hipaa_6y' / 'indefinite' are

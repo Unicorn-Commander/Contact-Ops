@@ -1,14 +1,16 @@
 """MCP admin tools for the Phase 3 agent fleet.
 
-Seven tools, all ADMIN-role gated:
+Nine tools, all ADMIN-role gated:
 
-* ``list_agents``        — registry contents per tenant
-* ``get_agent_trust``    — Beta(α, β) + tier per (agent × tenant × visibility)
-* ``promote_agent_tier`` — shift the stored tier up one
-* ``demote_agent_tier``  — shift the stored tier down one
-* ``drain_dlq``          — replay DLQ entries by id
-* ``pause_agent``        — open the per-agent circuit breaker
-* ``resume_agent``       — close the per-agent (or fleet) breaker
+* ``list_agents``          - registry contents per tenant
+* ``get_agent_trust``      - Beta(alpha, beta) + tier per (agent x tenant x visibility)
+* ``promote_agent_tier``   - shift the stored tier up one
+* ``demote_agent_tier``    - shift the stored tier down one
+* ``drain_dlq``            - replay DLQ entries by id
+* ``pause_agent``          - open the per-agent circuit breaker
+* ``resume_agent``         - close the per-agent (or fleet) breaker
+* ``get_agent_governance`` - read the workspace agents-paused master switch
+* ``set_agents_paused``    - workspace kill-switch: pause/resume the whole fleet
 
 These mirror the ``contact_ops.agents.cli`` admin commands so SREs can drive
 the fleet from either a tunnel + Python shell or a JWT-authenticated MCP
@@ -18,6 +20,7 @@ session against the production API.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -410,6 +413,109 @@ async def _handle_resume(ctx: MCPContext, payload: BreakerInput) -> BreakerOutpu
         await redis.aclose()
 
 
+# ---- set_agents_paused / get_agent_governance (workspace master switch) ----
+
+class GetAgentGovernanceInput(BaseModel):
+    pass
+
+
+class SetAgentsPausedInput(BaseModel):
+    paused: bool
+    reason: str = Field(default="", max_length=1024)
+
+
+class AgentGovernanceOutput(ToolOutput):
+    agents_paused: bool
+    agents_paused_reason: str | None
+    agents_paused_at: datetime | None
+    agents_paused_by: uuid.UUID | None
+
+
+async def _read_agent_governance(ctx: MCPContext) -> AgentGovernanceOutput:
+    result = await ctx.db.execute(
+        text(
+            """
+            SELECT agents_paused, agents_paused_reason,
+                   agents_paused_at, agents_paused_by
+            FROM tenants
+            WHERE id = CAST(:tenant AS uuid)
+            """
+        ),
+        {"tenant": str(ctx.tenant_id)},
+    )
+    row = result.mappings().first()
+    if row is None:
+        return AgentGovernanceOutput(
+            agents_paused=False,
+            agents_paused_reason=None,
+            agents_paused_at=None,
+            agents_paused_by=None,
+        )
+    return AgentGovernanceOutput(
+        agents_paused=bool(row["agents_paused"]),
+        agents_paused_reason=row["agents_paused_reason"],
+        agents_paused_at=row["agents_paused_at"],
+        agents_paused_by=row["agents_paused_by"],
+    )
+
+
+async def _handle_get_agent_governance(
+    ctx: MCPContext, payload: GetAgentGovernanceInput
+) -> AgentGovernanceOutput:
+    return await _read_agent_governance(ctx)
+
+
+async def _handle_set_agents_paused(
+    ctx: MCPContext, payload: SetAgentsPausedInput
+) -> AgentGovernanceOutput:
+    reason = payload.reason.strip() or None
+    actor = uuid.UUID(ctx.user_id)
+    # The tenants_modify RLS policy (FOR ALL TO contact_ops_app, migration 0015)
+    # scopes this UPDATE to the caller's own tenant; reason/at/by are cleared on
+    # resume so a not-paused row never carries stale pause metadata.
+    await ctx.db.execute(
+        text(
+            """
+            UPDATE tenants
+            SET agents_paused = :paused,
+                agents_paused_reason = CASE WHEN :paused THEN :reason ELSE NULL END,
+                agents_paused_at = CASE WHEN :paused THEN now() ELSE NULL END,
+                agents_paused_by = CASE WHEN :paused THEN CAST(:actor AS uuid) ELSE NULL END,
+                updated_at = now()
+            WHERE id = CAST(:tenant AS uuid)
+            """
+        ),
+        {
+            "paused": payload.paused,
+            "reason": reason,
+            "actor": str(actor),
+            "tenant": str(ctx.tenant_id),
+        },
+    )
+    # Audit the master-switch flip on the same provenance trail as tier changes.
+    await ctx.audit_db.execute(
+        text(
+            """
+            INSERT INTO prov_activities (
+                tenant_id, activity_type, agent_id, agent_version,
+                started_at, ended_at, reasoning, confidence
+            ) VALUES (
+                CAST(:tenant AS uuid), :activity, 'workspace', 'admin-action',
+                now(), now(), :reason, 1.0
+            )
+            """
+        ),
+        {
+            "tenant": str(ctx.tenant_id),
+            "activity": (
+                "fleet.workspace_pause" if payload.paused else "fleet.workspace_resume"
+            ),
+            "reason": reason or ("paused" if payload.paused else "resumed"),
+        },
+    )
+    return await _read_agent_governance(ctx)
+
+
 # ---- registration ----
 
 def register_agent_admin_tools() -> None:
@@ -530,6 +636,44 @@ def register_agent_admin_tools() -> None:
         annotations={
             "readOnlyHint": False,
             "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="idempotent",
+    )
+    register(
+        name="get_agent_governance",
+        description=(
+            "Read the workspace agent master switch: whether the fleet is paused "
+            "for this tenant, and the reason / at / by when it is."
+        ),
+        input_model=GetAgentGovernanceInput,
+        output_model=AgentGovernanceOutput,
+        handler=_handle_get_agent_governance,
+        required_role="ADMIN",
+        required_scopes=("contactops:agents.admin",),
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="repeatable",
+    )
+    register(
+        name="set_agents_paused",
+        description=(
+            "Workspace kill-switch: pause or resume the ENTIRE agent fleet for "
+            "this tenant. When paused, every agent refuses to run until resumed."
+        ),
+        input_model=SetAgentsPausedInput,
+        output_model=AgentGovernanceOutput,
+        handler=_handle_set_agents_paused,
+        required_role="ADMIN",
+        required_scopes=("contactops:agents.admin",),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
             "idempotentHint": True,
             "openWorldHint": False,
         },

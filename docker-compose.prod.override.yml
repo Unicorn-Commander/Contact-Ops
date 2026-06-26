@@ -1,0 +1,97 @@
+# Contact-Ops - Production Celery overlay (worker + beat)
+#
+# docker-compose.prod.yml ships only backend + frontend, so the scheduled
+# agent fleet never runs in prod: the inbox snooze re-surfacing flipper, the
+# retention sweep, the graph-sync outbox drain, and the BATCH agents all sit
+# idle. This overlay adds the Celery worker pool and the beat scheduler that
+# the dev docker-compose.yml already defines, using prod conventions (build,
+# env_file, networks, restart policy).
+#
+# Launch (overlay ON TOP of the prod file, second -f wins on conflicts):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml up -d
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml logs --tail=100 contact-ops-celery-worker
+#
+# Redis + Postgres are external infra (unicorn-redis, unicorn-postgresql)
+# reached over the external unicorn-network, exactly as the prod backend
+# reaches them; there is no redis/postgres compose service to depend_on here.
+# The worker and beat therefore depend_on contact-ops-backend, whose own CMD
+# (contact_ops.ops.prestart) runs alembic upgrade head before the API starts,
+# so the schema is migrated once, in order, before any task touches the DB.
+# The broker (Celery db 9) is derived from the authenticated REDIS_URL in .env
+# automatically by contact_ops.agents.runtime; no broker URL is set here.
+
+services:
+  # Celery worker pool for the agent fleet. Same prod backend image (same
+  # code, different command), subscribed to all three fleet queues. Bump
+  # --concurrency or split into per-queue replicas later if load warrants;
+  # one worker covering every queue is the minimal correct prod baseline.
+  # Memory is 2G (not the API's 1G): the batch DedupAgent loads pandas and
+  # builds candidate-pair DataFrames, which the API image never does.
+  contact-ops-celery-worker:
+    image: contact-ops-contact-ops-backend:latest
+    container_name: contact-ops-celery-worker
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=false
+    depends_on:
+      - contact-ops-backend
+    command:
+      - celery
+      - "-A"
+      - contact_ops.agents.runtime
+      - worker
+      - "--loglevel=info"
+      - "-Q"
+      - "agents.batch.high,agents.batch.low,agents.calibration"
+      - "--concurrency=4"
+    networks:
+      - unicorn-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Celery beat scheduler. Computes the per-agent cron schedule from the
+  # in-process registry on startup; restart on each deploy. Exactly one.
+  contact-ops-celery-beat:
+    image: contact-ops-contact-ops-backend:latest
+    container_name: contact-ops-celery-beat
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=false
+    depends_on:
+      - contact-ops-celery-worker
+    command:
+      - celery
+      - "-A"
+      - contact_ops.agents.runtime
+      - beat
+      - "-s"
+      - "/tmp/celerybeat-schedule"
+      - "--loglevel=info"
+    networks:
+      - unicorn-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+networks:
+  unicorn-network:
+    external: true

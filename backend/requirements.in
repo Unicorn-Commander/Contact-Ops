@@ -47,14 +47,30 @@ opentelemetry-instrumentation-celery==0.57b0
 # Phase 3 Foundation: Beta posterior credible intervals for trust ladder
 scipy==1.14.1
 
-# Phase 3.1 Dedup Agent: probabilistic record linkage
-splink~=4.0
-duckdb~=1.1
-sentence-transformers~=3.2
+# Phase 3.1 Dedup Agent: comparison/normalization deps. jellyfish + rapidfuzz
+# (string similarity) and usaddress (address parsing) cover the live
+# propose_merge / dedup_status MCP tools. pandas is the DataFrame interchange
+# format the batch DedupAgent (agents/dedup/agent.py, splink_runner.py) builds
+# candidate pairs in; it is light enough for the worker image (no torch) and is
+# imported lazily, so the API process never loads it. These import cleanly in
+# the deployed image.
 jellyfish~=1.1
 rapidfuzz~=3.10
 usaddress~=0.5
-pyarrow~=18.0
+pandas~=2.2
+
+# Phase 3.1 Dedup Agent: OPTIONAL probabilistic-linkage accelerator, EXCLUDED.
+# splink + duckdb give EM-trained weights, but splink_runner wraps the import
+# in try/except and falls back to the pure-Python comparison scoring when they
+# are absent, so the agent is fully functional without them. sentence-
+# transformers pulls torch (multi-GB) and is declared-but-unused (the embedding
+# comparisons take precomputed vectors), so it stays out too. Re-enable splink/
+# duckdb in a dedicated heavier batch-worker image when EM-calibrated scoring is
+# wanted; keep them out of the API/worker image to stay within the 1G limit.
+# splink~=4.0
+# duckdb~=1.1
+# sentence-transformers~=3.2
+# pyarrow~=18.0
 
 # Phase 3.1 Dedup Agent tie-breaker: LiteLLM gateway client (Aaron's
 # `project_llm_routing` — agent calls flow through commander's LiteLLM).
