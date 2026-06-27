@@ -238,3 +238,129 @@ async def test_rls_isolation(db_session, seeded_tenants):
     cross_phone_pair = (ya, yb) if ya < yb else (yb, ya)
     assert cross_email_pair not in pair_ids
     assert cross_phone_pair not in pair_ids
+
+
+async def test_stage1_name_blocking_requires_same_first_initial(
+    db_session, seeded_tenants
+):
+    """Key 3 (rewritten to an indexed SQL join) must still require a matching
+    first initial: same dmetaphone surname but different given-name initial is
+    NOT a name-block pair."""
+    tenant_id = seeded_tenants["non_hipaa"]
+    a_id = uuid.uuid4()
+    b_id = uuid.uuid4()
+    # Smith/Smythe share dmetaphone SM0, but Bob vs Carol differ on first initial.
+    await _seed_person(
+        db_session, a_id, tenant_id,
+        display_name="Bob Smith", given_name="Bob", family_name="Smith",
+    )
+    await _seed_person(
+        db_session, b_id, tenant_id,
+        display_name="Carol Smythe", given_name="Carol", family_name="Smythe",
+    )
+    await db_session.commit()
+
+    result = await stage1_deterministic_blocking(
+        tenant_id=tenant_id, db_session=db_session
+    )
+    name_pairs = [
+        p for p in result
+        if p.blocking_key == "dmetaphone_lastname_first_initial"
+        and {p.person_a_id, p.person_b_id} == {a_id, b_id}
+    ]
+    assert not name_pairs, "different first initial must not produce a name pair"
+
+
+async def test_stage1_email_domain_soundex_blocking(db_session, seeded_tenants):
+    """Key 4 (rewritten to an indexed SQL join): same email domain + same
+    soundex(family_name) yields a coworker candidate, with the unchanged label."""
+    tenant_id = seeded_tenants["non_hipaa"]
+    a_id = uuid.uuid4()
+    b_id = uuid.uuid4()
+    # Smith/Smythe share soundex S530; Alice vs Bob differ on first initial so
+    # Key 3 will not fire; the only pairing path is the shared-domain coworker key.
+    await _seed_person(
+        db_session, a_id, tenant_id,
+        display_name="Alice Smith", given_name="Alice", family_name="Smith",
+    )
+    await _seed_person(
+        db_session, b_id, tenant_id,
+        display_name="Bob Smythe", given_name="Bob", family_name="Smythe",
+    )
+    await _seed_email(db_session, a_id, "REMOVED")
+    await _seed_email(db_session, b_id, "REMOVED")
+    await db_session.commit()
+
+    result = await stage1_deterministic_blocking(
+        tenant_id=tenant_id, db_session=db_session
+    )
+    pairing = next(
+        (
+            p for p in result
+            if {p.person_a_id, p.person_b_id} == {a_id, b_id}
+            and p.blocking_key == "email_domain_soundex_lastname"
+        ),
+        None,
+    )
+    assert pairing is not None, "expected an email-domain + soundex coworker pair"
+
+
+async def test_stage1_email_domain_different_domain_no_pair(
+    db_session, seeded_tenants
+):
+    """Key 4 must NOT pair same-soundex surnames across DIFFERENT email domains."""
+    tenant_id = seeded_tenants["non_hipaa"]
+    a_id = uuid.uuid4()
+    b_id = uuid.uuid4()
+    await _seed_person(
+        db_session, a_id, tenant_id,
+        display_name="Alice Smith", given_name="Alice", family_name="Smith",
+    )
+    await _seed_person(
+        db_session, b_id, tenant_id,
+        display_name="Bob Smythe", given_name="Bob", family_name="Smythe",
+    )
+    await _seed_email(db_session, a_id, "REMOVED")
+    await _seed_email(db_session, b_id, "REMOVED")
+    await db_session.commit()
+
+    result = await stage1_deterministic_blocking(
+        tenant_id=tenant_id, db_session=db_session
+    )
+    coworker = [
+        p for p in result
+        if {p.person_a_id, p.person_b_id} == {a_id, b_id}
+        and p.blocking_key == "email_domain_soundex_lastname"
+    ]
+    assert not coworker, "different domains must not produce a coworker pair"
+
+
+async def test_stage1_email_domain_excludes_free_providers(
+    db_session, seeded_tenants
+):
+    """Key 4 must NOT treat a shared free-webmail domain (gmail.com) as a coworker
+    signal, even with matching soundex(family_name)."""
+    tenant_id = seeded_tenants["non_hipaa"]
+    a_id = uuid.uuid4()
+    b_id = uuid.uuid4()
+    await _seed_person(
+        db_session, a_id, tenant_id,
+        display_name="Alice Smith", given_name="Alice", family_name="Smith",
+    )
+    await _seed_person(
+        db_session, b_id, tenant_id,
+        display_name="Bob Smythe", given_name="Bob", family_name="Smythe",
+    )
+    await _seed_email(db_session, a_id, "REMOVED")
+    await _seed_email(db_session, b_id, "REMOVED")
+    await db_session.commit()
+
+    result = await stage1_deterministic_blocking(
+        tenant_id=tenant_id, db_session=db_session
+    )
+    coworker = [
+        p for p in result
+        if {p.person_a_id, p.person_b_id} == {a_id, b_id}
+        and p.blocking_key == "email_domain_soundex_lastname"
+    ]
+    assert not coworker, "free webmail domain must not produce a coworker pair"

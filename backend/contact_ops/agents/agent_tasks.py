@@ -178,9 +178,22 @@ async def _run_agent_all_tenants(
     # Dedicated engines for this tick. The agent runs RLS-bound under the app
     # role; action_event is written under the audit role. Both NEVER use the
     # admin DSN used for enumeration above.
-    app_engine = create_async_engine(settings.DATABASE_URL)
+    # Per-statement timeout guard. A blocking query on a freshly bulk-imported
+    # tenant can pick a nested-loop plan before autovacuum has analyzed the new
+    # rows and run for hours, pegging Postgres (this happened: a 50k-contact
+    # tenant's stage1 email self-join ran ~6h). Cap every agent statement at 120s
+    # so that degrades to a clean per-tenant failure (logged, retried next tick)
+    # instead of a database-wide runaway. 120s is far above any healthy agent
+    # query; with the migration 0045 blocking indexes even large tenants finish in
+    # well under a second. This privilege-free engine guard is primary; the
+    # role-level ALTER in 0045 is defense-in-depth.
+    _timeout_args = {"server_settings": {"statement_timeout": "120000"}}
+    app_engine = create_async_engine(
+        settings.DATABASE_URL, connect_args=_timeout_args
+    )
     audit_engine = create_async_engine(
-        settings.AUDIT_DATABASE_URL or settings.DATABASE_URL
+        settings.AUDIT_DATABASE_URL or settings.DATABASE_URL,
+        connect_args=_timeout_args,
     )
     app_sessions = async_sessionmaker(
         bind=app_engine, class_=AsyncSession, expire_on_commit=False

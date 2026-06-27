@@ -3,12 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-import jellyfish
 from sqlalchemy import text
 
 from contact_ops.agents.dedup.hipaa_fence import PersonRef, crosses_hipaa_fence
 
 CONTACT_OPS_PERSON_NAME_COLLECTION = "contact_ops_person_name"
+
+# Free webmail providers carry no coworker signal: "both use gmail" is noise, not
+# evidence of a shared employer. A personal address book heavy in one provider
+# would otherwise collapse into a single enormous Key-4 (email-domain) block.
+# Excluding these improves precision and bounds block size.
+FREE_EMAIL_DOMAINS: tuple[str, ...] = (
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "hotmail.com",
+    "outlook.com", "live.com", "msn.com", "icloud.com", "me.com", "mac.com",
+    "aol.com", "proton.me", "protonmail.com", "gmx.com", "mail.com", "zoho.com",
+    "comcast.net", "verizon.net", "sbcglobal.net",
+)
 
 
 @dataclass(frozen=True)
@@ -86,15 +96,20 @@ async def stage1_deterministic_blocking(
             tenant_id=tenant_id,
         ))
 
-    # Key 3: Double Metaphone(last_name) + first_initial
-    # Fetch all cross-pairs for the tenant, then apply DM in Python
+    # Key 3: Double Metaphone(family_name) + first initial of given_name.
+    # The phonetic equality is pushed into SQL (served by persons_dmeta_block_idx,
+    # migration 0045) so this is an index-driven join, NOT a per-tenant Cartesian
+    # product scored row-by-row in Python. dmetaphone is IMMUTABLE; it produces
+    # SM0 for both "Smith" and "Smythe" exactly like the prior jellyfish.metaphone,
+    # and the blocking_key label is unchanged.
     sql_name_meta = text("""
-        SELECT p1.id AS p1_id, p2.id AS p2_id,
-               p1.family_name AS fn1, p2.family_name AS fn2,
-               p1.given_name AS gn1, p2.given_name AS gn2
-        FROM persons p1, persons p2
-        WHERE p1.id < p2.id
-          AND p1.family_name IS NOT NULL
+        SELECT p1.id AS p1_id, p2.id AS p2_id
+        FROM persons p1
+        JOIN persons p2
+          ON p1.id < p2.id
+         AND dmetaphone(p1.family_name) = dmetaphone(p2.family_name)
+         AND upper(left(p1.given_name, 1)) = upper(left(p2.given_name, 1))
+        WHERE p1.family_name IS NOT NULL
           AND p2.family_name IS NOT NULL
           AND p1.given_name IS NOT NULL
           AND p2.given_name IS NOT NULL
@@ -103,52 +118,49 @@ async def stage1_deterministic_blocking(
     """)
     result = await db_session.execute(sql_name_meta, {"tenant": tenant_id})
     for row in result:
-        meta1 = jellyfish.metaphone(row.fn1)
-        meta2 = jellyfish.metaphone(row.fn2)
-        if not (meta1 and meta2 and meta1 == meta2):
-            continue
-        first_initial1 = row.gn1[0].upper() if row.gn1 else ""
-        first_initial2 = row.gn2[0].upper() if row.gn2 else ""
-        if first_initial1 and first_initial2 and first_initial1 == first_initial2:
-            candidates.append(CandidatePair(
-                person_a_id=row.p1_id,
-                person_b_id=row.p2_id,
-                blocking_key="dmetaphone_lastname_first_initial",
-                tenant_id=tenant_id,
-            ))
+        candidates.append(CandidatePair(
+            person_a_id=row.p1_id,
+            person_b_id=row.p2_id,
+            blocking_key="dmetaphone_lastname_first_initial",
+            tenant_id=tenant_id,
+        ))
 
-    # Key 4: Email domain + Soundex(last_name) for coworker pairs
+    # Key 4: shared email domain + Soundex(family_name) for coworker pairs.
+    # Both equalities are pushed into SQL: soundex via persons_soundex_block_idx
+    # and the email domain via emails_domain_idx (migration 0045). This replaces a
+    # non-equi emails self-join (e2.person_id != p1.id) that fanned out to a near
+    # Cartesian product before the Python soundex/domain filter. soundex and
+    # split_part are IMMUTABLE. DISTINCT collapses multiple shared-domain emails on
+    # the same person pair.
     sql_email_domain = text("""
-        SELECT p1.id AS p1_id, p2.id AS p2_id,
-               p1.family_name AS fn1, p2.family_name AS fn2,
-               e1.address AS addr1, e2.address AS addr2
+        SELECT DISTINCT p1.id AS p1_id, p2.id AS p2_id
         FROM persons p1
         JOIN emails e1 ON e1.person_id = p1.id
-        JOIN emails e2 ON e2.person_id != p1.id
-        JOIN persons p2 ON p2.id = e2.person_id
-        WHERE p1.id < p2.id
-          AND p1.family_name IS NOT NULL
+        JOIN emails e2
+          ON split_part(lower(e2.address::text), '@', 2)
+           = split_part(lower(e1.address::text), '@', 2)
+         AND e2.person_id <> p1.id
+        JOIN persons p2 ON p2.id = e2.person_id AND p1.id < p2.id
+        WHERE p1.family_name IS NOT NULL
           AND p2.family_name IS NOT NULL
+          AND soundex(p1.family_name) = soundex(p2.family_name)
+          AND split_part(lower(e1.address::text), '@', 2) <> ''
+          AND split_part(lower(e1.address::text), '@', 2)
+              <> ALL(CAST(:free_domains AS text[]))
           AND p1.canonical_owner_tenant_id = :tenant
           AND p2.canonical_owner_tenant_id = :tenant
     """)
-    result = await db_session.execute(sql_email_domain, {"tenant": tenant_id})
+    result = await db_session.execute(
+        sql_email_domain,
+        {"tenant": tenant_id, "free_domains": list(FREE_EMAIL_DOMAINS)},
+    )
     for row in result:
-        sd1 = jellyfish.soundex(row.fn1)
-        sd2 = jellyfish.soundex(row.fn2)
-        if not (sd1 and sd2 and sd1 == sd2):
-            continue
-        addr1_lower = row.addr1.lower() if row.addr1 else ""
-        addr2_lower = row.addr2.lower() if row.addr2 else ""
-        domain1 = addr1_lower.split("@")[-1] if "@" in addr1_lower else ""
-        domain2 = addr2_lower.split("@")[-1] if "@" in addr2_lower else ""
-        if domain1 and domain2 and domain1 == domain2:
-            candidates.append(CandidatePair(
-                person_a_id=row.p1_id,
-                person_b_id=row.p2_id,
-                blocking_key="email_domain_soundex_lastname",
-                tenant_id=tenant_id,
-            ))
+        candidates.append(CandidatePair(
+            person_a_id=row.p1_id,
+            person_b_id=row.p2_id,
+            blocking_key="email_domain_soundex_lastname",
+            tenant_id=tenant_id,
+        ))
 
     return candidates
 

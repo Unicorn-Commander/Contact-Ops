@@ -35,14 +35,16 @@ async def _seed_person(
     given_name: str,
     family_name: str,
     display_name: str | None = None,
-    company: str | None = None,
+    company: str | None = None,  # accepted for call-site compat; persons has no
+    # company column (it is sourced elsewhere), so it is not seeded here. The
+    # "name + company" scenario below is detected by the name blocking key.
 ) -> None:
     await db_session.execute(
         text("""
             INSERT INTO persons (id, canonical_owner_tenant_id, merge_status,
-                                 display_name, given_name, family_name, company,
+                                 display_name, given_name, family_name,
                                  created_at, updated_at)
-            VALUES (:id, :tid, 'canonical', :name, :gn, :fn, :co, now(), now())
+            VALUES (:id, :tid, 'canonical', :name, :gn, :fn, now(), now())
         """),
         {
             "id": str(person_id),
@@ -50,7 +52,6 @@ async def _seed_person(
             "name": display_name or f"{given_name} {family_name}",
             "gn": given_name,
             "fn": family_name,
-            "co": company,
         },
     )
 

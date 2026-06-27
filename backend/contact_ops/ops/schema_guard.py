@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-EXPECTED_ALEMBIC_REVISION = "0044"
+EXPECTED_ALEMBIC_REVISION = "0045"
 
 
 @dataclass(frozen=True)
