@@ -64,7 +64,7 @@ DEDUP_AGENT_DEF = AgentDef(
     description="Probabilistic person deduplication using Splink + Qdrant blocking",
     cost_budget_monthly_cents=2000,
     initial_trust_tier=TrustTier.T0_PROBATION,
-    triggers=("0 */6 * * *", "manual"),
+    triggers=("0 2 * * *", "manual"),  # daily 02:00 UTC; runtime.py beat schedule is authoritative
     declared_capabilities=(
         "person:read",
         "person:write",
