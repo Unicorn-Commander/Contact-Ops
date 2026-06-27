@@ -1,0 +1,110 @@
+# Contact-Ops - SELF-CONTAINED Celery overlay (worker + beat)
+#
+# The self-contained cell (docker-compose.selfcontained.yml) ships only the two
+# app services + bundled infra, so the scheduled agent fleet (dedup, calibration,
+# retention sweep, inbox snooze flipper, graph-sync drain) never runs there. This
+# overlay adds the Celery worker pool + beat scheduler for a self-contained cell,
+# and is the self-contained counterpart of docker-compose.prod.override.yml.
+#
+# WHY A SEPARATE FILE FROM prod.override.yml: the prod overlay attaches worker and
+# beat to the EXTERNAL `unicorn-network` and reaches shared `unicorn-redis` /
+# `unicorn-postgresql`. A self-contained cell has no shared infra: its broker and
+# DB are the IN-STACK contact-ops-redis / contact-ops-postgres on the cell-owned
+# `contact-ops-internal` network. So the only real differences below vs the prod
+# overlay are the network and the depends_on targets.
+#
+# Launch (overlay ON TOP of the self-contained file, second -f wins on conflicts):
+#   docker compose -f docker-compose.selfcontained.yml \
+#                  -f docker-compose.selfcontained.override.yml up -d
+#
+# BROKER: Celery's broker (Redis db 9) is derived from the authenticated
+# REDIS_URL in .env automatically by contact_ops.agents.runtime; no broker URL is
+# set here. The self-contained REDIS_URL must point at redis://contact-ops-redis:6379.
+#
+# MIGRATION ORDER: worker/beat wait for contact-ops-backend to be healthy, and the
+# backend's prestart (contact_ops.ops.prestart) runs `alembic upgrade head` +
+# asserts schema_guard before uvicorn reports healthy. So the schema is migrated
+# once, in order, before any task touches the DB.
+#
+# FLEET STAYS DORMANT BY DEFAULT: the agents are gated by env flags that default
+# False in config.py (DEDUP_AGENT_ENABLED, CALIBRATION_ENABLED, RETENTION_SWEEP_
+# ENABLED, and the per-tenant agents_paused kill-switch). Deploying this overlay
+# runs the worker/beat but acts on nothing until an operator sets those flags. For
+# a fresh product cell (0 persons) that is the correct first state.
+#
+# !!! BEFORE RELYING ON THIS: smoke-test the broker on the target cell. After
+# `up -d`, confirm the worker logs show "celery@... ready" and the four tasks
+# register (run_dedup / run_calibration / run_retention_sweep /
+# run_inbox_snooze_flipper). A worker that cannot reach contact-ops-redis will
+# retry the broker silently; check the logs, do not assume.
+
+services:
+  contact-ops-celery-worker:
+    image: contact-ops-contact-ops-backend:latest
+    container_name: contact-ops-celery-worker
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=false
+    depends_on:
+      contact-ops-backend:
+        condition: service_healthy
+      contact-ops-redis:
+        condition: service_healthy
+    command:
+      - celery
+      - "-A"
+      - contact_ops.agents.runtime
+      - worker
+      - "--loglevel=info"
+      - "-Q"
+      - "agents.batch.high,agents.batch.low,agents.calibration"
+      - "--concurrency=4"
+    networks:
+      - contact-ops-internal
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  contact-ops-celery-beat:
+    image: contact-ops-contact-ops-backend:latest
+    container_name: contact-ops-celery-beat
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - STANDALONE_MODE=false
+    depends_on:
+      - contact-ops-celery-worker
+    command:
+      - celery
+      - "-A"
+      - contact_ops.agents.runtime
+      - beat
+      - "-s"
+      - "/tmp/celerybeat-schedule"
+      - "--loglevel=info"
+    networks:
+      - contact-ops-internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+networks:
+  contact-ops-internal:
+    name: contact-ops-internal
