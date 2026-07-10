@@ -50,6 +50,7 @@ services:
       - "--concurrency=4"
     networks:
       - unicorn-network
+      - unicorn-vectordb
     deploy:
       resources:
         limits:
@@ -83,6 +84,7 @@ services:
       - "--loglevel=info"
     networks:
       - unicorn-network
+      - unicorn-vectordb
     deploy:
       resources:
         limits:
@@ -94,4 +96,6 @@ services:
 
 networks:
   unicorn-network:
+    external: true
+  unicorn-vectordb:
     external: true

@@ -21,6 +21,7 @@ services:
     networks:
       - unicorn-network
       - web
+      - unicorn-vectordb
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
       interval: 30s
@@ -98,4 +99,6 @@ networks:
   unicorn-network:
     external: true
   web:
+    external: true
+  unicorn-vectordb:
     external: true
