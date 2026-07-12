@@ -43,6 +43,7 @@ from contact_ops.middleware import (
     RequestMetricsMiddleware,
     SecurityHeadersMiddleware,
 )
+from contact_ops.core.redis import close_redis, init_redis
 from contact_ops.observability.sentry import init_sentry
 from contact_ops.routers import health_router
 from contact_ops.services.brigade_jwt_verifier import prime_brigade_jwks_cache
@@ -248,6 +249,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is
     # missing (e.g. dev without OTel installed).
     init_otel(service_name=f"{settings.APP_NAME.lower()}-api")
+
+    # Redis client for rate-limiting + ephemeral caches. Best-effort: the
+    # rate-limit middleware fails open when Redis is unreachable, so a Redis
+    # outage must NOT crash boot -- log and continue. Without this call the
+    # global client is never initialised and get_redis() always raises, which
+    # silently forces the rate limiter open (rate_limit_redis_unavailable on
+    # every request). See core/redis.py + middleware/rate_limit.py.
+    try:
+        await init_redis()
+    except Exception as exc:  # noqa: BLE001 -- Redis is optional / fail-open
+        logger.warning("redis_init_failed", error=str(exc))
+
     prime_brigade_jwks_cache(settings)
     asyncio.create_task(register_with_brigade(settings))
 
@@ -255,6 +268,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     from contact_ops.core.database import close_db
     logger.info("contact_ops_shutting_down")
+    await close_redis()
     await close_db()
 
 
