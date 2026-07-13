@@ -171,7 +171,10 @@ services:
       - contact-ops-internal
       - web
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      # Probe the dedicated nginx-only endpoint (always 200): the bare "/" now
+      # 302-redirects to /welcome/, which busybox wget --spider would score
+      # ambiguously and could flap the container.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/nginx-health"]
       interval: 30s
       timeout: 10s
       retries: 3

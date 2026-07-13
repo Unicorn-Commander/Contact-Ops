@@ -1,0 +1,7 @@
+# Contact-Ops — https://contacts.unicorncommander.ai/welcome/
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+
+Sitemap: https://contacts.unicorncommander.ai/sitemap.xml
