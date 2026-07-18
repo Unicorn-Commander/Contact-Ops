@@ -1,10 +1,9 @@
 # Contact-Ops Architecture
 
-**Date**: 2026-05-21
-**Status**: Phase 0 (scaffold)
-**Canonical source**: `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md` (5,685 lines).
+**Date**: 2026-07-18
+**Status**: v2.19.x (shipped through `phase-6-complete`; MCP tool surface live, ~95 tools)
 
-This document is a navigable summary of the design doc. When this disagrees with the design doc, the design doc wins.
+This document is a navigable summary of the Contact-Ops architecture. When it disagrees with the `backend/` implementation, the code wins.
 
 ---
 

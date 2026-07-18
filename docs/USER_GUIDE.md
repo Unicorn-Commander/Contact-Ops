@@ -19,7 +19,7 @@ It does five things you can't get anywhere else off the shelf:
 4. **iOS/macOS sync via CardDAV.** Your iPhone Contacts app talks to Contact-Ops natively. No third-party CardDAV server, no proprietary lock-in.
 5. **Per-tenant white-label.** Your personal tenant is private. Your Magic Unicorn tenant has team visibility. Your customer tenants (if any) are isolated. HIPAA tenants are physically fenced.
 
-Phase 0 is the scaffold. None of these features are user-facing yet. Phase 1+2 ships the human UI + CardDAV. Phase 3+4 ships the agent fleet and the 3D viewer. Phase 5 connects the rest of the ecosystem.
+All of these features are live today: the human UI and CardDAV, the agent fleet, the 3D viewer, and the ecosystem integrations across the suite.
 
 ---
 
@@ -27,9 +27,9 @@ Phase 0 is the scaffold. None of these features are user-facing yet. Phase 1+2 s
 
 | Feature | Status |
 |---------|--------|
-| Schema | Migrations 0001-0016 land in Postgres |
+| Schema | Migrations 0001-0045 land in Postgres |
 | MCP server | 95 tools registered, JSON-RPC live |
-| Human UI | Next.js frontend live at `contacts.magicunicorn.dev` |
+| Human UI | React/Vite frontend live at `contacts.magicunicorn.dev` |
 | CardDAV | Live at `carddav.contacts.magicunicorn.dev` |
 | Agents | Dedup, Enrichment, Voice Match, Tag, Lifecycle agents running |
 | 3D viewer | Live via FalkorDB graph sync |
@@ -44,7 +44,7 @@ This guide describes the product as it is today.
 You interact with Contact-Ops in three ways:
 
 - **Direct MCP**: from Claude Code or any MCP client, calling tools like `get_person`, `upsert_person`, `search_people`. You'll need an OBO token (your access token exchanged for one targeting Contact-Ops). The Developer Guide has the details.
-- **Human UI**: `contacts.magicunicorn.dev`. A Next.js app for browsing, editing, and approving agent proposals. Same auth as the rest of the ecosystem (Keycloak SSO).
+- **Human UI**: `contacts.magicunicorn.dev`. A React/Vite app for browsing, editing, and approving agent proposals. Same auth as the rest of the ecosystem (Keycloak SSO).
 - **CardDAV**: `carddav.contacts.magicunicorn.dev/<your-user>/<your-tenant>/`. Point your iPhone / Mac / Thunderbird at this URL, log in with HTTP Basic over TLS (or use the iOS Contact setup wizard), and your contacts sync bi-directionally.
 
 All three surfaces are live and fully functional.
@@ -96,11 +96,11 @@ Default for new memberships is `private`. The tag agent and other auto-curators 
 | Relationship graph (3D viz) | FalkorDB (`contactops-falkordb` on centerdeep) |
 | Audit log (every change with full actor chain) | Postgres `action_event` table, append-only, archived nightly to write-once Garage bucket |
 
-Everything is yours. Export at any time (vCard, JSON, CSV, Phase 2 ships these).
+Everything is yours. Export at any time (vCard, JSON, CSV).
 
 ---
 
-## 6. The approval inbox (Phase 3)
+## 6. The approval inbox
 
 Agents propose; humans approve. Most agent proposals land in your Inbox with:
 
@@ -136,7 +136,7 @@ The Calibration Daemon's promotion ceiling enforces this regardless of agent tru
 
 ---
 
-## 7. The 3D graph viewer (Phase 4)
+## 7. The 3D graph viewer
 
 Open your ego graph by clicking your own avatar. See, in 3D:
 
@@ -152,7 +152,7 @@ Click any node to drill in: see all of that person's emails, phones, employments
 
 ---
 
-## 8. iOS / macOS sync via CardDAV (Phase 2)
+## 8. iOS / macOS sync via CardDAV
 
 Add Contact-Ops as a CardDAV account on your iPhone:
 
@@ -218,7 +218,7 @@ Contact-Ops is a registry. It is deliberately not:
 - **A marketing automation tool.** Mass send, A/B tests, drip campaigns, different product, not built here.
 - **A phone book.** You can search by name, but the primary navigation is graph-based ("who knows whom") and agent-driven (Inbox approvals).
 
-If you find yourself wanting CRM-style features: open a question on `/Users/aaronstransky/Documents/Contact-Ops-Open-Questions.md` and Aaron will decide whether CRM-Ops gets prioritized.
+If you find yourself wanting CRM-style features: raise it with Aaron and he will decide whether CRM-Ops gets prioritized.
 
 ---
 
@@ -229,4 +229,4 @@ If you find yourself wanting CRM-style features: open a question on `/Users/aaro
 - **Ecosystem integration**: `INTEGRATION_GUIDE.md`.
 - **AI agent orientation**: `CLAUDE.md`.
 
-If something isn't clear, append to `/Users/aaronstransky/Documents/Contact-Ops-Open-Questions.md` and Aaron will resolve.
+If something isn't clear, raise it with Aaron and he will resolve it.

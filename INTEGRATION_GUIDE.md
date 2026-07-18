@@ -1,10 +1,10 @@
 # Contact-Ops Integration Guide
 
-**Date**: 2026-05-21
+**Date**: 2026-07-18
 **Audience**: Developers of ecosystem apps (Listing-Ops, Crisis-Ops, Project-Ops, Meeting-Ops, Stable, Brigade, Majiks-*) integrating with Contact-Ops MCP.
-**Status**: Phase 0 (scaffold). Tools listed below land in Phase 1+. The handshake and OBO infrastructure are in place from day one; the tools themselves are not.
+**Status**: v2.19.x — the MCP tool surface is live (~95 tools across 23 domains). The handshake, OBO infrastructure, and the tools described below are all registered and serving.
 
-For end-user docs (Aaron-as-user) see `docs/USER_GUIDE.md`. For day-to-day Contact-Ops developer workflow see `docs/DEVELOPER_GUIDE.md`. For the canonical design see `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md`.
+For end-user docs (Aaron-as-user) see `docs/USER_GUIDE.md`. For day-to-day Contact-Ops developer workflow see `docs/DEVELOPER_GUIDE.md`. For the architecture summary see `ARCHITECTURE.md`.
 
 ---
 
@@ -165,24 +165,24 @@ Response on tool-level error (still HTTP 200; JSON-RPC distinguishes app errors 
 
 JSON-RPC transport errors (malformed envelope, server crash) come back as HTTP 4xx/5xx with a `error` object.
 
-### 3.3 Phase 0 tools
+### 3.3 Registered tools
 
-Phase 0 has **no tools registered**. The MCP server responds to:
+The MCP server registers the full tool surface (~95 tools across 23 domains). It responds to:
 
 - `initialize`, handshake, returns server info and capabilities.
-- `tools/list`, returns an empty list.
-- `tools/call`, returns `isError: true` with code `TOOL_NOT_FOUND` for any name.
+- `tools/list`, returns the full list of registered tools with their input/output schemas and annotations.
+- `tools/call`, executes the named tool; an unknown name returns `isError: true`.
 
-Phase 1 lights up the core read + write tools (people, orgs, employment, identifiers, emails, phones, addresses, tags, search). Watch the design doc §5 for the full tool surface as it lands.
+The core read + write tools (people, orgs, employment, identifiers, emails, phones, addresses, tags, search) plus tenancy, ACL, photos, voice, agent-pipeline, imports, and personal-access-token tools are all live. Call `tools/list` for the authoritative, current surface.
 
-### 3.4 Tool conventions (applies to all tools, when they land)
+### 3.4 Tool conventions (applies to all tools)
 
 - **Tenant**: read from the JWT claim. Do NOT pass a `tenant_id` argument. Cross-tenant tools use `scope` or `include_tenants`.
 - **Idempotency**: every `create_*` / `bulk_*` tool accepts `idempotency_key: UUID`. Replays within 24h return the original result.
 - **Etag**: every `update_*` tool requires the current `etag` from the prior read. Stale etag returns `STALE_ETAG`.
 - **Confidence**: every agent-callable mutation accepts `confidence: 0-1`. Below threshold, the tool returns `{status: "proposed", proposal_id}`. Above, returns `{status: "applied", event_id}`.
 - **Pagination**: cursor-based. Default `limit` 25, max 100. Returns `items`, `count`, `next_cursor`, optional `total_count`.
-- **Errors**: `{isError: true, code, message, retryable, hint?, retry_after_ms?, details?}`. Common codes: `UNAUTHORIZED`, `FORBIDDEN_ROLE`, `FORBIDDEN_SCOPE`, `TENANT_NOT_FOUND`, `RATE_LIMITED`, `STALE_ETAG`, `VALIDATION_ERROR`, `INTERNAL`, plus tool-specific codes.
+- **Errors**: `{isError: true, code, message, retryable, hint?, retry_after_ms?, details?}`. Common codes: `INSUFFICIENT_ROLE`, `INSUFFICIENT_SCOPE`, `ENTITLEMENT_REQUIRED`, `QUOTA_EXCEEDED`, `TENANT_MISMATCH`, `STALE_ETAG`, `VALIDATION_FAILED`, plus tool-specific codes (e.g. `PERSON_NOT_FOUND`). The authoritative catalog is `backend/contact_ops/mcp/errors.py`.
 
 ---
 
@@ -364,6 +364,8 @@ Use this to:
 ```
 
 ### 6.2 Retry guidance
+
+> Reconcile these code names against the authoritative catalog in `backend/contact_ops/mcp/errors.py`: the server emits `INSUFFICIENT_ROLE`, `INSUFFICIENT_SCOPE`, `VALIDATION_FAILED`, and `QUOTA_EXCEEDED` (not `FORBIDDEN_ROLE`, `FORBIDDEN_SCOPE`, `VALIDATION_ERROR`, or `RATE_LIMITED`). The retry semantics by category still hold.
 
 | Code | Retryable? | Backoff |
 |------|-----------|---------|

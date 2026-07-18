@@ -11,12 +11,18 @@ migrations, the membership gate, and the gotchas that have actually bitten.
   `git.unicorncommander.ai/aaron/Contact-Ops.git`, deployed branch **`main`**
   — repointed from `feat/brigade-multi-issuer-verifier` at the v2.7.0 publish;
   commit + deploy directly on `main` now).
-- **Services (`docker-compose.prod.yml`):** `contact-ops-backend` (uvicorn,
-  internal :8501; hosts both the MCP server at `mcp.contacts.magicunicorn.dev`
-  and CardDAV at `carddav.contacts.magicunicorn.dev`) and
-  `contact-ops-frontend` (nginx). Postgres + FalkorDB are external on the
-  `unicorn-network`. **There is intentionally NO background worker** — the graph
-  is written synchronously in-request; the async `graph_sync_outbox` is dead code.
+- **Services (`docker-compose.prod.yml` + `docker-compose.prod.override.yml`):**
+  `contact-ops-backend` (uvicorn, internal :8501; hosts both the MCP server at
+  `mcp.contacts.magicunicorn.dev` and CardDAV at
+  `carddav.contacts.magicunicorn.dev`) and `contact-ops-frontend` (nginx). The
+  prod Celery overlay adds a **background worker and beat scheduler**:
+  `contact-ops-celery-worker` (queues `agents.batch.high`, `agents.batch.low`,
+  `agents.calibration`; `--concurrency=4`) and `contact-ops-celery-beat` run the
+  scheduled agent fleet — inbox snooze re-surfacing, retention sweep, graph-sync
+  outbox drain, and the batch + calibration agents — over the Redis broker
+  (`unicorn-redis`, Celery db 9). Postgres + FalkorDB + Redis are external on the
+  `unicorn-network`. The graph is written best-effort in-request; the
+  `graph_sync_outbox` is drained by the worker as a backstop (no longer dead code).
 - **Data:** Postgres (multi-tenant via RLS) is the source of truth; FalkorDB
   holds a per-tenant relationship graph (`contact_ops__<slug>`), best-effort
   synced. Dogfood tenant `019e50a3-d995-723f-ab66-0f765f92c0f4`
