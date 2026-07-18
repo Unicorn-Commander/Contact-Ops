@@ -357,6 +357,22 @@ class Settings(BaseSettings):
     # one-off catch-up, then lower again.
     RETENTION_SWEEP_BATCH_LIMIT: int = 500
 
+    # Graph-sync outbox drain. The GraphSyncWorker (contact_ops.agents.graph_sync)
+    # drains ``graph_sync_outbox`` into each tenant's FalkorDB graph, but nothing
+    # scheduled it — so the outbox could only grow. A Celery beat task
+    # (contact_ops.agents.graph_sync_drain.run_graph_sync) now runs it. UNLIKE the
+    # dedup/retention/calibration flags this defaults True: the drain is
+    # non-destructive (idempotent Cypher upserts, per-row retry + DLQ) and a cheap
+    # no-op when the outbox is empty (it never opens a FalkorDB connection with
+    # zero rows), so leaving it OFF would just let the outbox grow again. Flip it
+    # False to pause draining (e.g. FalkorDB maintenance). The drain reads across
+    # tenants under the admin/BYPASSRLS MIGRATION_DATABASE_URL; each row carries
+    # its own tenant_id + graph_name, so the write still lands in the right graph.
+    GRAPH_SYNC_DRAIN_ENABLED: bool = True
+    # Rows drained per beat tick. Bounds each tick's blast radius; the backlog
+    # drains over subsequent ticks (the task runs every minute).
+    GRAPH_SYNC_DRAIN_BATCH_LIMIT: int = 500
+
     # Data Intel federation (Phase 3+; stubs only in Phase 0)
     DATA_INTEL_BASE_URL: str = ""
     DATA_INTEL_CLIENT_ID: str = "contact-ops-publisher"

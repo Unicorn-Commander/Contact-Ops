@@ -10,7 +10,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: contact-ops-backend
+    # No container_name: the backend is multi-replica-safe (stateless; migrations
+    # run once under a Postgres advisory lock in prestart), so a pinned name — which
+    # forbids a second replica — is intentionally omitted. Traefik discovers every
+    # replica by its labels + the `contact-ops-mcp` loadbalancer service below and
+    # balances across them; routing never depended on the container name.
     restart: unless-stopped
     expose:
       - "8501"

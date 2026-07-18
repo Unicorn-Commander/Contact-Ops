@@ -10,13 +10,19 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 import httpx
+import structlog
 from pydantic import BaseModel
 
+from contact_ops.agents.cost_guard import CostGuard
+from contact_ops.agents.errors import CostBudgetExceededError
 from contact_ops.services.chat_tools import (
+    AI_CONTACTS_ANALYST_AGENT_SLUG,
     ChatRequestContext,
     ChatToolExecutor,
     parse_tool_arguments,
 )
+
+logger = structlog.get_logger(__name__)
 
 SYSTEM_PROMPT = (
     "You are the AI Contacts Analyst for Contact-Ops, the canonical contacts/identity "
@@ -38,6 +44,15 @@ SYSTEM_PROMPT = (
 # chat layer additionally slims known large lists (see chat_tools) so the cap
 # rarely truncates anything meaningful.
 _TOOL_RESULT_CHAR_CAP = 12000
+
+# Hard backstop on the agentic tool-call loop. Every iteration is one LLM
+# round-trip; a model that keeps requesting tools (a genuine multi-step task, or
+# a buggy/looping model) would otherwise spin forever, burning tokens with no
+# ceiling. When a CostGuard is supplied its per-run turn budget
+# (``CostBudget.max_turns_per_run``, default 25) trips first and records a
+# violation; this constant is the guard-independent ceiling that also protects
+# the no-CostGuard path (tests, self-host without a budget-bearing session).
+_MAX_TOOL_CALL_TURNS = 50
 
 
 class _ThinkStripper:
@@ -197,18 +212,83 @@ class ChatOrchestrator:
         self.llm_client = llm_client or OpenAICompatibleClient()
         self.tool_executor = tool_executor or ChatToolExecutor()
 
+    @staticmethod
+    async def _enforce_budget(
+        cost_guard: CostGuard, ctx: ChatRequestContext
+    ) -> str | None:
+        """Pre-flight the next LLM turn against the CostGuard.
+
+        Returns a user-facing stop reason when the budget is exhausted, else
+        ``None`` (proceed). A non-budget error (e.g. the guard's DB is
+        unreachable) fails open — logged, returns ``None`` — so a metering hiccup
+        never blocks chat; the hard turn ceiling remains the backstop.
+        """
+        try:
+            await cost_guard.check_and_record(
+                agent_slug=AI_CONTACTS_ANALYST_AGENT_SLUG,
+                tenant_id=ctx.tenant_id,
+                estimated_tokens=0,
+                estimated_cents=0,
+            )
+        except CostBudgetExceededError as exc:
+            logger.info(
+                "chat_cost_budget_exceeded",
+                tenant_id=str(ctx.tenant_id),
+                layer=getattr(exc, "layer", None),
+            )
+            return f"chat budget reached: {exc}"
+        except Exception as exc:  # noqa: BLE001 — fail open on metering errors
+            logger.warning(
+                "chat_cost_guard_unavailable",
+                tenant_id=str(ctx.tenant_id),
+                error=str(exc),
+            )
+        return None
+
     async def stream(
         self,
         *,
         messages: Sequence[ChatMessage],
         conversation_id: uuid.UUID | None,
         ctx: ChatRequestContext,
+        cost_guard: CostGuard | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         resolved_conversation_id = conversation_id or uuid.uuid4()
         llm_messages = _compose_messages(messages)
         tools = self.tool_executor.definitions()
 
+        turns = 0
         while True:
+            # Hard ceiling on the tool-call loop (guard-independent backstop).
+            if turns >= _MAX_TOOL_CALL_TURNS:
+                yield {
+                    "event": "error",
+                    "message": (
+                        f"tool-call loop exceeded the maximum of {_MAX_TOOL_CALL_TURNS} "
+                        "turns; stopping to avoid an unbounded run."
+                    ),
+                }
+                yield {"event": "done", "conversation_id": str(resolved_conversation_id)}
+                return
+
+            # Per-run budget: route each LLM turn through the same CostGuard the
+            # agent fleet uses. estimated_tokens/estimated_cents are 0 — the
+            # orchestrator does not pre-tokenize — so this enforces the layer-2
+            # turn counter and the layers 4/5 aggregate tenant daily/monthly
+            # budgets off ALREADY-recorded burn (a tenant over budget is refused
+            # even at 0 incremental cost). Budget overruns end the stream cleanly;
+            # a CostGuard DB hiccup fails open (the hard ceiling still applies).
+            if cost_guard is not None:
+                stop_reason = await self._enforce_budget(cost_guard, ctx)
+                if stop_reason is not None:
+                    yield {"event": "error", "message": stop_reason}
+                    yield {
+                        "event": "done",
+                        "conversation_id": str(resolved_conversation_id),
+                    }
+                    return
+
+            turns += 1
             turn = _AssistantTurn()
             stripper = _ThinkStripper()
             async for chunk in self.llm_client.stream_chat_completion(llm_messages, tools):
@@ -218,6 +298,9 @@ class ChatOrchestrator:
             if tail:
                 turn.content.append(tail)
                 yield {"event": "delta", "content": tail}
+
+            if cost_guard is not None:
+                cost_guard.record_call(cents=0)
 
             if not turn.tool_calls:
                 if turn.content:
