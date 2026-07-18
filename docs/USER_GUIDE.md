@@ -1,9 +1,9 @@
 # Contact-Ops User Guide
 
-**Date**: 2026-05-21
-**Status**: Phase 0 (scaffold). Most of what's described here lands in Phases 1-6.
+**Date**: 2026-07-18
+**Status**: v2.19.x (MCP tool surface live, 95 tools). Most features described here are now live.
 
-For the canonical design doc see `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md`.
+For the canonical design doc see `ARCHITECTURE.md`.
 
 ---
 
@@ -23,31 +23,31 @@ Phase 0 is the scaffold. None of these features are user-facing yet. Phase 1+2 s
 
 ---
 
-## 2. Phase 0 status: what works today
+## 2. Current status: what works today
 
-| Feature | Phase 0 status |
-|---------|----------------|
-| Schema | Migrations 0001-0015 land in Postgres |
-| MCP server | Answers JSON-RPC handshake, no tools registered |
-| Human UI | Not yet built |
-| CardDAV | Not yet built |
-| Agents | Not yet running |
-| 3D viewer | Not yet built |
-| iOS sync | Not yet wired |
+| Feature | Status |
+|---------|--------|
+| Schema | Migrations 0001-0016 land in Postgres |
+| MCP server | 95 tools registered, JSON-RPC live |
+| Human UI | Next.js frontend live at `contacts.magicunicorn.dev` |
+| CardDAV | Live at `carddav.contacts.magicunicorn.dev` |
+| Agents | Dedup, Enrichment, Voice Match, Tag, Lifecycle agents running |
+| 3D viewer | Live via FalkorDB graph sync |
+| iOS sync | Wired via CardDAV |
 
-The end-user surface starts landing in Phase 1. This guide describes the eventual product so you (and any new team member) understand the shape of what's coming.
+This guide describes the product as it is today.
 
 ---
 
-## 3. The MCP tool surface (Phase 1+)
+## 3. The MCP tool surface
 
-When the tools are live, you interact with Contact-Ops in three ways:
+You interact with Contact-Ops in three ways:
 
 - **Direct MCP**: from Claude Code or any MCP client, calling tools like `get_person`, `upsert_person`, `search_people`. You'll need an OBO token (your access token exchanged for one targeting Contact-Ops). The Developer Guide has the details.
 - **Human UI**: `contacts.magicunicorn.dev`. A Next.js app for browsing, editing, and approving agent proposals. Same auth as the rest of the ecosystem (Keycloak SSO).
 - **CardDAV**: `carddav.contacts.magicunicorn.dev/<your-user>/<your-tenant>/`. Point your iPhone / Mac / Thunderbird at this URL, log in with HTTP Basic over TLS (or use the iOS Contact setup wizard), and your contacts sync bi-directionally.
 
-Phase 0 has none of these wired up to real tools yet. The endpoints exist; the tools land in Phase 1.
+All three surfaces are live and fully functional.
 
 ---
 
@@ -224,7 +224,6 @@ If you find yourself wanting CRM-style features: open a question on `/Users/aaro
 
 ## 13. Where to learn more
 
-- **Canonical design**: `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md` (5,685 lines). Every architectural decision is in here.
 - **Architecture summary**: `ARCHITECTURE.md` in this repo.
 - **Developer workflow**: `docs/DEVELOPER_GUIDE.md`.
 - **Ecosystem integration**: `INTEGRATION_GUIDE.md`.
