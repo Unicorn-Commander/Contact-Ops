@@ -67,11 +67,13 @@ def test_nine_inbox_tools_registered():
 
 
 def test_inbox_tools_require_staff_role():
+    read_tools = {"list_pending_proposals", "get_proposal_evidence"}
     for name in INBOX_TOOLS:
         tool = get_tool(name)
         assert tool is not None
         assert tool.required_role == "STAFF", f"{name} should be STAFF-gated"
-        assert "contactops:inbox.review" in tool.required_scopes
+        expected_scope = "proposal:read" if name in read_tools else "contactops:inbox.review"
+        assert tool.required_scopes == (expected_scope,)
 
 
 def test_list_pending_proposals_readonly():

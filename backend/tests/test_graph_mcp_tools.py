@@ -20,8 +20,8 @@ def test_graph_tools_registered() -> None:
     ):
         tool = get_tool(name)
         assert tool is not None
-        assert tool.required_role == "STAFF"
-        assert tool.required_scopes == ("contactops:graph.read",)
+        assert tool.required_role == "CLIENT"
+        assert tool.required_scopes == ("person:read",)
 
 
 def test_cross_tenant_leak_fixture_uses_distinct_person_ids() -> None:

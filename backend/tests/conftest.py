@@ -38,16 +38,6 @@ _os_module.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:tes
 _TEST_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Session-scoped event loop for session-scoped async fixtures."""
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
 def _asyncpg_url(sync_url: str) -> str:
     """Convert any Postgres URL to postgresql+asyncpg:// scheme."""
     if "postgresql+psycopg" in sync_url:

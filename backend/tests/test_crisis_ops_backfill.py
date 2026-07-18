@@ -247,7 +247,13 @@ def test_cli_dry_run_against_fixture_writes_nothing(
             f"{CASE}:rocky",
         ],
     )
-    exit_code = asyncio.run(backfill._main())
+    # asyncio.run() clears the current pytest-asyncio session loop. Restore it
+    # so subsequent async tests continue using their configured session scope.
+    loop = asyncio.get_event_loop()
+    try:
+        exit_code = asyncio.run(backfill._main())
+    finally:
+        asyncio.set_event_loop(loop)
     assert exit_code == 0
     out = json.loads(capsys.readouterr().out)
     assert out["mode"] == "dry-run"
