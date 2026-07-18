@@ -213,8 +213,11 @@ function ReasonDialog({
  * The fleet kill-switch banner. Calm "Agents active" state with a Pause control
  * when running; a loud "Agents paused" state with the reason / who / when and a
  * Resume control when paused. A non-admin sees an admin-only notice.
+ *
+ * Exported so the money-path smoke test can render the toggle in isolation and
+ * assert that pausing / resuming fires `set_agents_paused`.
  */
-function KillSwitchBanner() {
+export function KillSwitchBanner() {
   const governance = useAgentGovernance();
   const setPaused = useSetAgentsPausedMutation();
   const [pauseOpen, setPauseOpen] = useState(false);
