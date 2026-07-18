@@ -17,6 +17,8 @@ import { ContactMethodList, EmploymentTimeline } from "@/components/domain/Lists
 import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
 import { useAllPeople, useMcpMutation, usePerson, usePhotos, useTags } from "@/hooks/useMcp";
+import { QueryErrorState } from "@/components/dashboard";
+import { isRenderableQueryError } from "@/lib/queryState";
 import { tools } from "@/lib/mcp";
 import { cn, initials } from "@/lib/utils";
 import { AuditList } from "@/routes";
@@ -183,8 +185,11 @@ export function PeopleRoute() {
 
   // Walk every page so the directory shows ALL people (grouped A→Z), not a
   // truncated first 50. ~823 contacts ≈ 9 pages of 100; React Query caches them.
+  // Precise member deps are intentional — depending on the whole `people` query
+  // object would re-run this on every query-state identity change.
   useEffect(() => {
     if (people.hasNextPage && !people.isFetchingNextPage) void people.fetchNextPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [people.hasNextPage, people.isFetchingNextPage, people.data, people.fetchNextPage]);
 
   const items = useMemo(
@@ -192,7 +197,7 @@ export function PeopleRoute() {
     [people.data]
   );
   const visible = hasEmailOnly ? items.filter((person) => Boolean(person.primary_email)) : items;
-  const tagItems = tags.data?.items ?? [];
+  const tagItems = useMemo(() => tags.data?.items ?? [], [tags.data]);
   // Fold case/format variants (e.g. "Friends" + "friends") so each tag appears
   // once in the filter. The data may still hold the variants until Data Quality
   // → Canonicalize tags is run; this just keeps the list clean. The most-used
@@ -350,6 +355,14 @@ export function PeopleRoute() {
                 <PersonCardSkeleton key={index} />
               ))}
             </div>
+          ) : isRenderableQueryError(people) ? (
+            // A backend failure must not masquerade as "No people yet".
+            <QueryErrorState
+              title="Couldn't load people"
+              error={people.error}
+              onRetry={() => void people.refetch()}
+              retrying={people.isRefetching}
+            />
           ) : visible.length ? (
             <div className="flex gap-3">
               {/* A→Z directory with alphabetic section delimiters */}

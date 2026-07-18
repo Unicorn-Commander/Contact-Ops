@@ -33,8 +33,10 @@ import {
   LiveStatusLine,
   OnboardingState,
   ProposalRow,
+  QueryErrorState,
   type GlanceHighlight
 } from "@/components/dashboard";
+import { isRenderableQueryError } from "@/lib/queryState";
 
 type ValidRoute = "/people" | "/orgs" | "/review" | "/settings";
 
@@ -261,6 +263,23 @@ export function DashboardRoute() {
     return <DashboardSkeleton />;
   }
 
+  // A non-401 failure of the core dashboard query must NOT fall through to the
+  // zero-count / onboarding view — that would render a backend outage as an
+  // "empty workspace". Show a recoverable error with a retry instead. (401s
+  // are handled by the hook's signinRedirect and never reach here.)
+  if (isRenderableQueryError(dashboard)) {
+    return (
+      <div className="py-8">
+        <QueryErrorState
+          title="Couldn't load your dashboard"
+          error={dashboard.error}
+          onRetry={() => void dashboard.refetch()}
+          retrying={dashboard.isRefetching}
+        />
+      </div>
+    );
+  }
+
   const peopleCount = dashboard.data?.people.total_count ?? dashboard.data?.people.count ?? 0;
   const orgCount = dashboard.data?.orgs.total_count ?? dashboard.data?.orgs.count ?? 0;
   const toolCount = tools.data?.tools?.length ?? 0;
@@ -424,6 +443,14 @@ export function DashboardRoute() {
                         <Skeleton key={i} className="h-14 w-full rounded-md" />
                       ))}
                     </div>
+                  ) : isRenderableQueryError(proposals) ? (
+                    <QueryErrorState
+                      compact
+                      title="Couldn't load pending proposals"
+                      error={proposals.error}
+                      onRetry={() => void proposals.refetch()}
+                      retrying={proposals.isRefetching}
+                    />
                   ) : recentProposals.length ? (
                     <div className="divide-y divide-border">
                       {recentProposals.map((p) => (
