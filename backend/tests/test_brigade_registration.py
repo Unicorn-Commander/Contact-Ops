@@ -10,7 +10,7 @@ from contact_ops.services.brigade_registration import build_brigade_descriptor
 def test_brigade_descriptor_shape():
     descriptor = build_brigade_descriptor()
     assert descriptor["service_id"] == "contact-ops"
-    assert descriptor["auth"]["pat_format"] == "co_pat_*"
+    assert descriptor["auth"]["prefix"] == "co_pat_"
     assert any(agent["slug"] == "dedup-agent" for agent in descriptor["agents"])
     assert any(tool["name"] == "issue_personal_access_token" for tool in descriptor["tools"])
 
@@ -20,7 +20,6 @@ def test_well_known_mcps_json_is_unauthenticated(monkeypatch):
         return None
 
     monkeypatch.setattr("contact_ops.main.register_with_brigade", _noop)
-    with TestClient(create_application()) as client:
-        response = client.get("/.well-known/mcps.json")
+    response = TestClient(create_application()).get("/.well-known/mcps.json")
     assert response.status_code == 200
     assert response.json()["service_id"] == "contact-ops"

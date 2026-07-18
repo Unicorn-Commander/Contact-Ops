@@ -57,10 +57,22 @@ def _ctx() -> MCPContext:
     )
 
 
+def _stub_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contact_ops.services import agents
+
+    async def _noop_pipeline(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(agents, "run_dedup_agent", _noop_pipeline)
+    monkeypatch.setattr(agents, "run_quality_filter", _noop_pipeline)
+    monkeypatch.setattr(agents, "run_confidence_approver", _noop_pipeline)
+
+
 @pytest.mark.asyncio
 async def test_parse_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     proposed: list[str] = []
     monkeypatch.setattr(import_propose, "emit_person_create_proposal", _capture_emit(proposed))
+    _stub_pipeline(monkeypatch)
 
     result = await propose_vcard_import(ctx=_ctx(), vcard_text=VCARD_ONE + VCARD_TWO)
 
@@ -85,6 +97,7 @@ async def test_parse_error_on_non_vcard() -> None:
 async def test_dedupe_within_upload(monkeypatch: pytest.MonkeyPatch) -> None:
     proposed: list[str] = []
     monkeypatch.setattr(import_propose, "emit_person_create_proposal", _capture_emit(proposed))
+    _stub_pipeline(monkeypatch)
 
     result = await propose_vcard_import(ctx=_ctx(), vcard_text=VCARD_ONE + VCARD_ONE)
 

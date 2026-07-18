@@ -4,7 +4,7 @@ Append-only action_event tests.
 Verifies that:
   - The action_event table has the correct columns per the design doc.
   - The contact_ops_app role can INSERT into action_event.
-  - The contact_ops_app role CANNOT UPDATE or DELETE (append-only enforcement).
+  - The contact_ops_app role can update proposal lifecycle state but cannot DELETE.
   - All expected indexes from migration 0010 exist.
 """
 
@@ -30,6 +30,8 @@ REQUIRED_COLUMNS: set[str] = {
     "parent_proposal_id", "conflict_reason", "agent_version",
     "trust_tier_at_creation", "evidence_pack_id", "trace_id", "span_id",
     "time_to_decide_seconds", "decided_by_user_id", "triggered_by",
+    # Inbox and federation additions.
+    "snoozed_until", "target_tenant_id",
 }
 
 REQUIRED_INDEXES: set[str] = {
@@ -118,10 +120,10 @@ async def test_action_event_insert_as_audit_role_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_action_event_update_as_app_role_fails(
+async def test_action_event_update_as_app_role_succeeds(
     db_engine, db_session_as_app_role: AsyncSession,
 ):
-    """contact_ops_app cannot UPDATE action_event — append-only enforcement."""
+    """contact_ops_app can update lifecycle state; migration 0038 grants UPDATE."""
     await _seed_test_tenant(db_engine)
 
     event_id = _uuid.uuid4()
@@ -146,16 +148,17 @@ async def test_action_event_update_as_app_role_fails(
     )
     await db_session_as_app_role.commit()
 
-    with pytest.raises(ProgrammingError) as exc_info:
-        await db_session_as_app_role.execute(
-            text(
-                "UPDATE action_event SET event_type = 'modified' WHERE event_id = :eid"
-            ),
-            {"eid": event_id},
-        )
-        await db_session_as_app_role.commit()
+    await db_session_as_app_role.execute(
+        text("UPDATE action_event SET event_type = 'modified' WHERE event_id = :eid"),
+        {"eid": event_id},
+    )
+    await db_session_as_app_role.commit()
 
-    assert "42501" in str(exc_info.value) or "permission denied" in str(exc_info.value).lower()
+    result = await db_session_as_app_role.execute(
+        text("SELECT event_type FROM action_event WHERE event_id = :eid"),
+        {"eid": event_id},
+    )
+    assert result.scalar_one() == "modified"
 
 
 @pytest.mark.asyncio

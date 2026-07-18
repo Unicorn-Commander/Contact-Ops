@@ -30,7 +30,6 @@ from starlette.testclient import TestClient
 from contact_ops.core.config import Settings, get_settings
 from contact_ops.main import app
 
-
 # ── helpers ──────────────────────────────────────────────────────────────
 
 
@@ -76,6 +75,13 @@ def _make_token(claims: dict, key_pem: str, headers: dict | None = None) -> str:
 
 VALID_ISSUER = "https://test-keycloak.invalid/realms/uchub"
 VALID_JWKS_URL = "https://test-keycloak.invalid/protocol/openid-connect/certs"
+BRIGADE_JWKS_URL = "https://brigade.unicorncommander.ai/.well-known/jwks.json"
+
+
+def _mock_jwks(mock, keycloak_jwk: dict) -> None:
+    """Mock both JWT verifiers exercised by the application middleware."""
+    mock.get(BRIGADE_JWKS_URL).respond(json={"keys": []})
+    mock.get(VALID_JWKS_URL).respond(json=_jwks_response(keycloak_jwk))
 VALID_AUD = "contact-ops-mcp"
 
 
@@ -133,7 +139,7 @@ def test_valid_signed_jwt_accepted(rsa_keypair):
     token = _make_token(claims, rsa_keypair["private_pem"])
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 200
@@ -158,7 +164,7 @@ def test_expired_token_rejected(rsa_keypair):
     token = _make_token(claims, rsa_keypair["private_pem"])
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 401
@@ -181,7 +187,7 @@ def test_wrong_audience_rejected(rsa_keypair):
     token = _make_token(claims, rsa_keypair["private_pem"])
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 401
@@ -204,7 +210,7 @@ def test_wrong_issuer_rejected(rsa_keypair):
     token = _make_token(claims, rsa_keypair["private_pem"])
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 401
@@ -234,7 +240,7 @@ def test_tampered_signature_rejected(rsa_keypair):
     tampered = ".".join(parts)
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(tampered)
 
     assert resp.status_code == 401
@@ -261,7 +267,7 @@ def test_unsigned_alg_none_rejected(rsa_keypair):
     )
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 401
@@ -288,7 +294,7 @@ def test_kid_not_in_jwks_rejected(rsa_keypair):
     )
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 401
@@ -310,7 +316,7 @@ def test_missing_tenant_id_claim_rejected(rsa_keypair):
     token = _make_token(claims, rsa_keypair["private_pem"])
 
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(VALID_JWKS_URL).respond(json=_jwks_response(rsa_keypair["jwk"]))
+        _mock_jwks(mock, rsa_keypair["jwk"])
         resp = _mcp_post(token)
 
     assert resp.status_code == 401
@@ -339,6 +345,7 @@ def test_no_token_returns_401_not_anonymous():
     assert resp.status_code == 401
 
 
+@pytest.mark.asyncio(loop_scope="function")
 async def test_kc_uc_uid_pinned_to_sub_ignores_divergent_claim(rsa_keypair):
     """A KC token whose uc_uid claim differs from sub resolves uc_uid to sub.
 
@@ -373,6 +380,7 @@ async def test_kc_uc_uid_pinned_to_sub_ignores_divergent_claim(rsa_keypair):
     assert result["uc_uid"] == "kc-subject-abc"
 
 
+@pytest.mark.asyncio(loop_scope="function")
 async def test_kc_uc_uid_falls_back_to_sub_when_absent(rsa_keypair):
     """A KC token with no uc_uid claim resolves uc_uid to sub (unchanged behavior)."""
     from contact_ops.middleware.jwt_validation import JWTValidationMiddleware

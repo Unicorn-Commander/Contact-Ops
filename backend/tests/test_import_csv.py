@@ -72,8 +72,16 @@ def _existing_index(
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, proposed: list[str], **index: Any) -> None:
+    from contact_ops.services import agents
+
+    async def _noop_pipeline(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
     monkeypatch.setattr(import_propose, "emit_person_create_proposal", _capture_emit(proposed))
     monkeypatch.setattr(import_propose, "_load_existing_index", _existing_index(**index))
+    monkeypatch.setattr(agents, "run_dedup_agent", _noop_pipeline)
+    monkeypatch.setattr(agents, "run_quality_filter", _noop_pipeline)
+    monkeypatch.setattr(agents, "run_confidence_approver", _noop_pipeline)
 
 
 # --- format detection -------------------------------------------------------
