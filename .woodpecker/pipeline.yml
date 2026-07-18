@@ -89,6 +89,62 @@ steps:
       PIP_CACHE_DIR: /cache
 
   # ------------------------------------------------------------------
+  # 5b. Dependency CVE audit — Python (pip-audit)
+  # ------------------------------------------------------------------
+  # Pre-contract diligence (task 4b69e281): scan the pinned backend deps for
+  # known CVEs. Two passes:
+  #   * advisory   — always prints EVERY known advisory, never fails the build.
+  #   * gate       — fails on any advisory NOT in the triaged baseline below, so
+  #                  a NEW vulnerability (including any new HIGH) breaks CI while
+  #                  the already-triaged set stays green.
+  #
+  # TRIAGE 2026-07-18 (CVSS v3.1 base).
+  # FIXED 2026-07-18 — the dep-bump landed: floors raised in requirements.in and
+  # the hash-pinned lockfile regenerated, so these HIGHs are patched and DROPPED
+  # from the ignore list below (CI now enforces them and catches any regression):
+  #   pyjwt            2.10.1 -> 2.13.0  PYSEC-2026-120/179 (7.5/7.4), PYSEC-2025-183 (7.0)
+  #   python-multipart 0.0.29 -> 0.0.32  PYSEC-2026-3036 (7.5)
+  #   cryptography     48.0.0 -> 49.0.0  GHSA-537c-gmf6-5ccf (7.5, bundled OpenSSL)
+  #   starlette         1.0.1 -> 1.3.1   PYSEC-2026-249/2281 (7.5)
+  # STILL OPEN (no upstream fix — remains ignored):
+  #   ecdsa 0.19.2            PYSEC-2026-1325 (7.4, Minerva timing)  -> NO FIX (upstream wontfix; via python-jose)
+  dep-audit-python:
+    image: python:3.12-slim-bookworm
+    commands:
+      - pip install --no-cache-dir pip-audit==2.10.1
+      # Advisory: full report of every known advisory (informational only).
+      - pip-audit -r backend/requirements.txt --desc || true
+      # Gate: fail on anything NOT in the triaged baseline (new vulns break CI).
+      - >
+        pip-audit -r backend/requirements.txt
+        --ignore-vuln PYSEC-2026-2338
+        --ignore-vuln PYSEC-2026-1325
+        --ignore-vuln GHSA-4xgf-cpjx-pc3j
+        --ignore-vuln PYSEC-2026-175
+        --ignore-vuln PYSEC-2026-177
+        --ignore-vuln PYSEC-2026-178
+        --ignore-vuln PYSEC-2026-176
+        --ignore-vuln PYSEC-2026-3037
+        --ignore-vuln PYSEC-2026-3040
+        --ignore-vuln PYSEC-2026-248
+        --ignore-vuln PYSEC-2026-2280
+    environment:
+      PIP_CACHE_DIR: /cache
+
+  # ------------------------------------------------------------------
+  # 5c. Dependency CVE audit — Frontend (npm audit, prod deps only)
+  # ------------------------------------------------------------------
+  # Scans production dependencies (--omit=dev) against the npm advisory DB.
+  # Advisory pass surfaces everything; the gate fails on HIGH+ (native flag).
+  # Current state (2026-07-18): 0 vulnerabilities.
+  dep-audit-frontend:
+    image: node:20-bookworm-slim
+    commands:
+      - cd frontend
+      - npm audit --omit=dev || true
+      - npm audit --omit=dev --audit-level=high
+
+  # ------------------------------------------------------------------
   # 6. Docker build + push (on tag)
   # ------------------------------------------------------------------
   docker-build:

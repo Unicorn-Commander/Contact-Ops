@@ -84,6 +84,7 @@ _ENTERPRISE_TOOLS: frozenset[str] = frozenset(
         "export_tenant_data",
         "erase_subject",
         "erase_tenant_account",
+        "offboard_tenant",
     }
 )
 

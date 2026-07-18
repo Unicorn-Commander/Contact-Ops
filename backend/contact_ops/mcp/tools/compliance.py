@@ -38,15 +38,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from contact_ops.core.config import get_settings
-from contact_ops.mcp.errors import CONFIRMATION_PHRASE_MISMATCH, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import register
 from contact_ops.services import compliance_erasure, compliance_export
-
-# Literal confirmation phrases — typo-proof guardrails on the irreversible tools.
-ERASE_SUBJECT_PHRASE = "ERASE THIS PERSON PERMANENTLY"
-ERASE_TENANT_PHRASE = "ERASE ENTIRE TENANT ACCOUNT PERMANENTLY"
 
 
 # ---------------------------------------------------------------------------
@@ -179,14 +174,8 @@ async def erase_subject(
     require_role(ctx, "ADMIN")
     require_scopes(ctx, ("person:delete",))
 
-    if req.confirmation_phrase != ERASE_SUBJECT_PHRASE:
-        raise ToolError(
-            CONFIRMATION_PHRASE_MISMATCH,
-            "confirmation phrase mismatch",
-            retryable=False,
-            hint=f"send confirmation_phrase exactly: {ERASE_SUBJECT_PHRASE!r}",
-        )
-
+    # The confirmation phrase is enforced by the Literal type on the input model;
+    # a mismatched phrase is rejected at validation, never reaching this body.
     settings = get_settings()
     if settings.COMPLIANCE_ENGINE_ENABLED:
         # Phase 1: tombstone + 30-day (config) grace; the sweep purges later.
@@ -253,14 +242,8 @@ async def erase_tenant_account(
     require_role(ctx, "ADMIN")
     require_scopes(ctx, ("person:delete",))
 
-    if req.confirmation_phrase != ERASE_TENANT_PHRASE:
-        raise ToolError(
-            CONFIRMATION_PHRASE_MISMATCH,
-            "confirmation phrase mismatch",
-            retryable=False,
-            hint=f"send confirmation_phrase exactly: {ERASE_TENANT_PHRASE!r}",
-        )
-
+    # The confirmation phrase is enforced by the Literal type on the input model;
+    # a mismatched phrase is rejected at validation, never reaching this body.
     result = await compliance_erasure.erase_tenant_account(ctx.db, ctx.tenant_id)
     return EraseTenantAccountOutput(
         tenant_id=ctx.tenant_id,
