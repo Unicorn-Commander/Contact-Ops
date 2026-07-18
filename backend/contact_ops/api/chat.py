@@ -96,6 +96,20 @@ async def _sse_stream(
         yield _sse({"event": "error", "message": str(exc)})
     finally:
         if session is not None:
+            # Persist any cost_budget_violation rows the guard recorded on this
+            # session (CostGuard writes but never commits — the caller owns the
+            # transaction). Without this the close rolls them back and the burn is
+            # never surfaced. Best-effort: a commit failure must not break the SSE
+            # response that already streamed.
+            try:
+                await session.commit()
+            except Exception as exc:  # noqa: BLE001 — commit is best-effort
+                logger.warning(
+                    "chat_cost_guard_commit_failed",
+                    tenant_id=str(ctx.tenant_id),
+                    error=str(exc),
+                )
+                await session.rollback()
             await session.close()
 
 

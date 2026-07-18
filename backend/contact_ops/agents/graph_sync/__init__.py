@@ -10,6 +10,7 @@ from contact_ops.agents.graph_sync.falkordb_client import (
 from contact_ops.agents.graph_sync.worker import (
     GRAPH_SYNC_WORKER_DEF,
     GraphSyncWorker,
+    drain_edge_events,
     drain_pending_outbox,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "GraphQueryResult",
     "GraphSyncWorker",
     "TenantGraph",
+    "drain_edge_events",
     "drain_pending_outbox",
     "graph_name_for_slug",
     "validate_graph_name",

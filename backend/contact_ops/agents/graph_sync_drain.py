@@ -1,19 +1,26 @@
-"""graph-sync-drain — Celery beat task that drains ``graph_sync_outbox``.
+"""graph-sync-drain — Celery beat task that drains the graph-sync outboxes.
 
 The GraphSyncWorker (``contact_ops.agents.graph_sync``) has always known how to
-drain ``graph_sync_outbox`` into each tenant's FalkorDB graph — it just had no
-runner. Nothing called ``drain_pending_outbox`` outside tests, so a merge that
-enqueued a graph write left a row in the outbox forever. This module is that
-runner: a sync ``@shared_task`` wired into the beat schedule
-(``contact_ops.agents.runtime``) so the outbox actually drains.
+write into each tenant's FalkorDB graph — it just had no runner. Two sources feed
+those graphs and both accumulated forever without one:
 
-CROSS-TENANT UNDER THE ADMIN DSN: ``graph_sync_outbox`` is RLS-protected, and
-the drain is inherently cross-tenant (it claims whatever is pending and each row
-carries its own ``tenant_id`` + ``graph_name``). The runtime role is NOBYPASSRLS
-so with no GUC bound it sees ZERO rows — so the drain runs under the admin/
-migration DSN (``MIGRATION_DATABASE_URL``, BYPASSRLS), exactly like the global
-calibration pass. The FalkorDB write still lands in the correct per-tenant graph
-because ``drain_pending_outbox`` reads ``graph_name`` from each row. Shape mirrors
+* ``event_outbox`` edge channels (``falkordb.edge.create`` from the dedup merge
+  tools, ``graph.sync_edge`` from the voice-match resolver) — the rows that
+  actually pile up on this branch. ``drain_edge_events`` applies them.
+* ``graph_sync_outbox`` — no producer on this branch (kept for any future one).
+  ``drain_pending_outbox`` claims it and no-ops when empty.
+
+This module is the runner for both: a sync ``@shared_task`` wired into the beat
+schedule (``contact_ops.agents.runtime``) so the outboxes actually drain.
+
+CROSS-TENANT UNDER THE ADMIN DSN: both outboxes are RLS-protected, and the drain
+is inherently cross-tenant (it claims whatever is pending and each row carries its
+own ``tenant_id``). The runtime role is NOBYPASSRLS so with no GUC bound it sees
+ZERO rows — so the drain runs under the admin/migration DSN
+(``MIGRATION_DATABASE_URL``, BYPASSRLS), exactly like the global calibration pass.
+The FalkorDB write still lands in the correct per-tenant graph because each row's
+target graph is resolved from its ``tenant_id`` (event_outbox) or inline
+``graph_name`` (graph_sync_outbox). Shape mirrors
 ``contact_ops.agents.retention_sweep``: enumerate/act under the admin DSN, one
 ``asyncio.run`` per tick, structlog telemetry.
 
@@ -77,7 +84,7 @@ async def _drain_async(settings: Settings) -> dict[str, int]:
     # Lazy import: the graph_sync package pulls the FalkorDB client (redis). Keep
     # it out of the module top so the beat scheduler can import this module to
     # register the task without those deps loading at schedule-build time.
-    from contact_ops.agents.graph_sync import drain_pending_outbox
+    from contact_ops.agents.graph_sync import drain_edge_events, drain_pending_outbox
 
     engine = create_async_engine(admin_url)
     sessions = async_sessionmaker(
@@ -85,13 +92,16 @@ async def _drain_async(settings: Settings) -> dict[str, int]:
     )
     try:
         async with sessions() as db:
-            drained = await drain_pending_outbox(
-                db=db, batch_size=int(settings.GRAPH_SYNC_DRAIN_BATCH_LIMIT)
-            )
+            batch = int(settings.GRAPH_SYNC_DRAIN_BATCH_LIMIT)
+            # ``graph_sync_outbox`` (kept for any future producer; empty today) and
+            # the real accumulating source: the ``event_outbox`` edge channels the
+            # dedup + voice-match tools publish to.
+            drained = await drain_pending_outbox(db=db, batch_size=batch)
+            edges = await drain_edge_events(db=db, batch_size=batch)
     finally:
         await engine.dispose()
 
-    return {"drained": int(drained)}
+    return {"drained": int(drained), "edges": int(edges)}
 
 
 @shared_task(  # type: ignore[misc]
@@ -113,7 +123,7 @@ def run_graph_sync(self: Any, agent_slug: str = "graph-sync-worker") -> dict[str
         return {"drained": 0}
 
     summary = asyncio.run(_drain_async(settings))
-    if summary["drained"]:
+    if summary.get("drained") or summary.get("edges"):
         logger.info("graph_sync_drain_complete", **summary)
     return summary
 

@@ -157,3 +157,69 @@ def build_write(entity_kind: str, op: str, payload: dict[str, Any]) -> CypherWri
         return CypherWrite(templates[entity_kind], payload)
     except KeyError as exc:
         raise ValueError(f"unsupported graph outbox entity_kind: {entity_kind}") from exc
+
+
+# ---- event_outbox edge-sync channels --------------------------------------------
+# The dedup merge tools (mcp/tools/data_quality.py) and the voice-match resolver
+# (agents/voice_match.py, mcp/tools/voice_match_admin.py) publish edge operations
+# to ``event_outbox`` — not ``graph_sync_outbox`` — under two channels. These build
+# the Cypher the drain applies for each. Every write is a MERGE/DELETE so replaying
+# a claimed-but-unmarked row is a no-op (idempotent).
+
+_DEDUP_ENTITY_LABELS = {"person": "Person", "organization": "Organization"}
+
+
+def _dedup_alias_edge_write(payload: dict[str, Any]) -> CypherWrite:
+    """Translate a ``falkordb.edge.create`` dedup payload into an alias-edge write.
+
+    Payload shape (see ``data_quality._enqueue_{person,org}_graph_sync``)::
+
+        {"type": <op>, "entity": "person"|"organization",
+         "survivor_id": ..., "alias_id": ..., "edge_label": "dedup:alias_of"}
+
+    A ``*_merge_applied`` op MERGEs an ``ALIAS_OF`` edge from the loser to the
+    survivor; a ``*_unmerge`` op deletes it.
+    """
+    entity = str(payload.get("entity") or "")
+    label = _DEDUP_ENTITY_LABELS.get(entity)
+    if label is None:
+        raise ValueError(f"unsupported dedup edge entity: {entity!r}")
+    op_type = str(payload.get("type") or "")
+    params = {
+        "survivor_id": str(payload["survivor_id"]),
+        "alias_id": str(payload["alias_id"]),
+        "edge_label": payload.get("edge_label"),
+    }
+    # ``label`` is whitelisted above, so the inline interpolation is injection-safe;
+    # ids + edge_label ride through as bound Cypher params.
+    if op_type.endswith("unmerge"):
+        cypher = (
+            f"MATCH (alias:{label} {{id: $alias_id}})"
+            f"-[r:ALIAS_OF]->(survivor:{label} {{id: $survivor_id}}) "
+            f"DELETE r"
+        )
+    else:
+        cypher = (
+            f"MATCH (survivor:{label} {{id: $survivor_id}}) "
+            f"MATCH (alias:{label} {{id: $alias_id}}) "
+            f"MERGE (alias)-[r:ALIAS_OF]->(survivor) "
+            f"SET r.edge_label = $edge_label"
+        )
+    return CypherWrite(cypher, params)
+
+
+def build_edge_event_write(channel: str, payload: dict[str, Any]) -> CypherWrite:
+    """Build the Cypher write for an ``event_outbox`` edge-sync row.
+
+    ``graph.sync_edge`` rows carry a ready ``cypher_template`` + ``params`` (the
+    voice-match resolver already writes Cypher); ``falkordb.edge.create`` rows are
+    dedup alias edges translated by ``_dedup_alias_edge_write``.
+    """
+    if channel == "graph.sync_edge":
+        cypher = payload.get("cypher_template")
+        if not cypher:
+            raise ValueError("graph.sync_edge payload missing cypher_template")
+        return CypherWrite(str(cypher), dict(payload.get("params") or {}))
+    if channel == "falkordb.edge.create":
+        return _dedup_alias_edge_write(payload)
+    raise ValueError(f"unsupported edge-sync channel: {channel!r}")
