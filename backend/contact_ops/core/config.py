@@ -279,12 +279,21 @@ class Settings(BaseSettings):
     LAGO_API_URL: str = ""  # e.g. http://unicorn-lago-api:3000 (internal)
     LAGO_API_KEY: str = ""  # CO-scoped suite Lago key; empty = Lago leg inert
     BILLING_QUOTA_ENFORCED: bool = False
-    # Shared secret authenticating inbound Lago webhooks (subscription.created /
-    # terminated -> plan_tier). The POST /api/webhooks/lago endpoint FAILS CLOSED
-    # when this is blank (503) and rejects any request whose signature header does
-    # not match (constant-time). This is a MONEY path — an unauthenticated caller
-    # must NEVER be able to move a tenant's entitlement, so there is no default.
-    LAGO_WEBHOOK_SECRET: str = ""
+    # Authenticating inbound Lago webhooks (subscription.created / terminated ->
+    # plan_tier). This is a MONEY path — an unauthenticated caller must NEVER be
+    # able to move a tenant's entitlement, so POST /api/webhooks/lago FAILS CLOSED
+    # (503) until it can verify a signature. Real Lago signs every delivery with a
+    # per-payload RS256 JWT and publishes its public key at
+    # {LAGO_API_URL}/webhooks/public_key; the DEFAULT auth path fetches+caches
+    # that key (or uses LAGO_WEBHOOK_PUBLIC_KEY, a raw or base64-encoded PEM, to
+    # skip the fetch) and verifies the X-Lago-Signature JWT, rejecting an invalid
+    # signature (401). LAGO_WEBHOOK_STATIC_SECRET is an OPT-IN escape hatch: when
+    # set, the endpoint constant-time-compares that shared secret against the
+    # X-Lago-Signature header INSTEAD of JWT verification — only for deployments
+    # where a trusted proxy/sidecar already validated the real signature and
+    # injects the secret. Blank (default) => real JWT verification.
+    LAGO_WEBHOOK_PUBLIC_KEY: str = ""
+    LAGO_WEBHOOK_STATIC_SECRET: str = ""
 
     # GDPR compliance engine (P-00075). DORMANT master switch for the Art.17
     # erasure + Art.15 export tools. With COMPLIANCE_ENGINE_ENABLED False the

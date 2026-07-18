@@ -361,9 +361,11 @@ def create_application() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(connectors_router)
     # Lago billing webhook (subscription.created / terminated -> plan_tier).
-    # Authenticated inline by a shared secret (LAGO_WEBHOOK_SECRET); the JWT
-    # middleware skips /api/webhooks via SKIP_PREFIXES — see
-    # middleware/jwt_validation.py. Fails closed (503) until the secret is set.
+    # Authenticated inline by verifying Lago's per-payload RS256 signature JWT
+    # against its public key (or an opt-in LAGO_WEBHOOK_STATIC_SECRET for
+    # proxy-injected deploys); the JWT middleware skips /api/webhooks via
+    # SKIP_PREFIXES — see middleware/jwt_validation.py. Fails closed (503) until a
+    # signature can be verified.
     app.include_router(webhooks_router)
     app.include_router(import_vcard_router)
     app.include_router(import_csv_router)

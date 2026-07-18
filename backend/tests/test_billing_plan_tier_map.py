@@ -3,7 +3,8 @@
 These exercise the MONEY-critical decision logic without a database:
   * the Lago plan-code -> tier reverse map and its integrity vs PLAN_CATALOG;
   * the webhook's event -> tier resolution (activation / termination / unknown);
-  * the webhook's shared-secret authentication (fail-closed + constant-time);
+  * the webhook's authentication — RS256 signature verification against Lago's
+    public key (default, fail-closed) + the opt-in static-secret path;
   * that Lago customer provisioning delegates to the provider and never raises.
 
 The DB-backed transitions (operator move, webhook flip writing an audit row) live
@@ -15,6 +16,9 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jose import jwt as jose_jwt
 
 from contact_ops.billing.catalog import (
     DEFAULT_TIER,
@@ -95,43 +99,191 @@ class _FakeRequest:
 _TEST_WH_SECRET = "s3cr3t"  # noqa: S105 — obvious test fixture value
 
 
-def _fake_settings(secret: str):
-    """Return a stand-in Settings exposing only LAGO_WEBHOOK_SECRET."""
+@pytest.fixture(scope="module")
+def lago_keypair():
+    """An RS256 keypair standing in for Lago's webhook signing key.
+
+    Returns the private PEM (Lago signs deliveries with it) and the public PEM
+    (Contact-Ops verifies with it via LAGO_WEBHOOK_PUBLIC_KEY).
+    """
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        private_key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode()
+    )
+    return {"private_pem": private_pem, "public_pem": public_pem}
+
+
+def _sign_lago_jwt(private_pem: str, body: dict | None = None) -> str:
+    """Sign a webhook body the way real Lago does (RS256, ``data`` claim)."""
+    import json as _json
+
+    return jose_jwt.encode(
+        {"data": _json.dumps(body or {}), "iss": "http://lago"},
+        private_pem,
+        algorithm="RS256",
+    )
+
+
+def _fake_settings(
+    *,
+    static_secret: str = "",
+    public_key: str = "",
+    api_url: str = "",
+):
+    """Return a stand-in Settings exposing the Lago webhook auth knobs.
+
+    ``static_secret`` populates LAGO_WEBHOOK_STATIC_SECRET (opt-in proxy path);
+    ``public_key`` populates LAGO_WEBHOOK_PUBLIC_KEY (default JWT path); ``api_url``
+    populates LAGO_API_URL (fetch path — unused in these no-network tests).
+    """
 
     class _S:
-        LAGO_WEBHOOK_SECRET = ""
+        LAGO_WEBHOOK_STATIC_SECRET = ""
+        LAGO_WEBHOOK_PUBLIC_KEY = ""
+        LAGO_API_URL = ""
 
-    # Assigning a variable (not a string literal) avoids bandit's S105.
-    _S.LAGO_WEBHOOK_SECRET = secret
+    _S.LAGO_WEBHOOK_STATIC_SECRET = static_secret
+    _S.LAGO_WEBHOOK_PUBLIC_KEY = public_key
+    _S.LAGO_API_URL = api_url
     return _S()
 
 
-def test_authenticate_accepts_matching_signature_header():
+# --- default path: RS256 JWT signature verification -------------------------
+
+
+def test_authenticate_jwt_accepts_valid_lago_signature(lago_keypair):
     from contact_ops.api.webhooks import _authenticate
 
-    req = _FakeRequest({"X-Lago-Signature": _TEST_WH_SECRET}, {})
-    # Should not raise.
-    _authenticate(req, _TEST_WH_SECRET)
+    body = {"webhook_type": "subscription.created"}
+    token = _sign_lago_jwt(lago_keypair["private_pem"], body)
+    settings = _fake_settings(public_key=lago_keypair["public_pem"])
+
+    # A genuine Lago-signed delivery must NOT raise.
+    _authenticate(_FakeRequest({"X-Lago-Signature": token}, body), settings)
 
 
-def test_authenticate_accepts_matching_bearer():
+def test_authenticate_jwt_accepts_base64_encoded_public_key(lago_keypair):
+    """Lago's /webhooks/public_key returns a base64-encoded PEM — accept it."""
+    import base64
+
     from contact_ops.api.webhooks import _authenticate
 
-    req = _FakeRequest({"Authorization": f"Bearer {_TEST_WH_SECRET}"}, {})
-    _authenticate(req, _TEST_WH_SECRET)
+    token = _sign_lago_jwt(lago_keypair["private_pem"], {})
+    b64_pem = base64.b64encode(lago_keypair["public_pem"].encode()).decode()
+    settings = _fake_settings(public_key=b64_pem)
+
+    _authenticate(_FakeRequest({"X-Lago-Signature": token}, {}), settings)
 
 
-def test_authenticate_rejects_wrong_or_missing_secret():
+def test_authenticate_jwt_rejects_signature_from_wrong_key(lago_keypair):
+    from fastapi import HTTPException
+
+    from contact_ops.api.webhooks import _authenticate
+
+    # Token signed by a DIFFERENT (attacker) private key.
+    attacker = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    attacker_pem = attacker.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    forged = _sign_lago_jwt(attacker_pem, {"webhook_type": "subscription.created"})
+    settings = _fake_settings(public_key=lago_keypair["public_pem"])
+
+    with pytest.raises(HTTPException) as ei:
+        _authenticate(_FakeRequest({"X-Lago-Signature": forged}, {}), settings)
+    assert ei.value.status_code == 401
+
+
+def test_authenticate_jwt_rejects_garbage_and_missing_signature(lago_keypair):
+    from fastapi import HTTPException
+
+    from contact_ops.api.webhooks import _authenticate
+
+    settings = _fake_settings(public_key=lago_keypair["public_pem"])
+
+    with pytest.raises(HTTPException) as ei:
+        _authenticate(_FakeRequest({"X-Lago-Signature": "not-a-jwt"}, {}), settings)
+    assert ei.value.status_code == 401
+
+    with pytest.raises(HTTPException) as ei2:
+        _authenticate(_FakeRequest({}, {}), settings)
+    assert ei2.value.status_code == 401
+
+
+def test_authenticate_jwt_rejects_alg_none(lago_keypair):
+    """An unsigned (alg:none) token must never validate against the public key."""
+    import base64 as _b64
+    import json as _json
+
+    from fastapi import HTTPException
+
+    from contact_ops.api.webhooks import _authenticate
+
+    def _seg(obj: dict) -> str:
+        return _b64.urlsafe_b64encode(_json.dumps(obj).encode()).rstrip(b"=").decode()
+
+    # jose refuses to *encode* alg:none, so craft the token by hand: our verifier
+    # must reject it at the alg allow-list before any signature check.
+    unsigned = f"{_seg({'alg': 'none', 'typ': 'JWT'})}.{_seg({'data': '{}'})}."
+    settings = _fake_settings(public_key=lago_keypair["public_pem"])
+
+    with pytest.raises(HTTPException) as ei:
+        _authenticate(_FakeRequest({"X-Lago-Signature": unsigned}, {}), settings)
+    assert ei.value.status_code == 401
+
+
+def test_authenticate_unconfigured_fails_closed():
+    """No public key AND no static secret => endpoint disabled (503)."""
     from fastapi import HTTPException
 
     from contact_ops.api.webhooks import _authenticate
 
     with pytest.raises(HTTPException) as ei:
-        _authenticate(_FakeRequest({"X-Lago-Signature": "nope"}, {}), _TEST_WH_SECRET)
+        _authenticate(_FakeRequest({"X-Lago-Signature": "x"}, {}), _fake_settings())
+    assert ei.value.status_code == 503
+
+
+# --- opt-in static-secret path (proxy-injected deployments) -----------------
+
+
+def test_authenticate_static_accepts_matching_signature_header():
+    from contact_ops.api.webhooks import _authenticate
+
+    req = _FakeRequest({"X-Lago-Signature": _TEST_WH_SECRET}, {})
+    # Should not raise.
+    _authenticate(req, _fake_settings(static_secret=_TEST_WH_SECRET))
+
+
+def test_authenticate_static_accepts_matching_bearer():
+    from contact_ops.api.webhooks import _authenticate
+
+    req = _FakeRequest({"Authorization": f"Bearer {_TEST_WH_SECRET}"}, {})
+    _authenticate(req, _fake_settings(static_secret=_TEST_WH_SECRET))
+
+
+def test_authenticate_static_rejects_wrong_or_missing_secret():
+    from fastapi import HTTPException
+
+    from contact_ops.api.webhooks import _authenticate
+
+    settings = _fake_settings(static_secret=_TEST_WH_SECRET)
+    with pytest.raises(HTTPException) as ei:
+        _authenticate(_FakeRequest({"X-Lago-Signature": "nope"}, {}), settings)
     assert ei.value.status_code == 401
 
     with pytest.raises(HTTPException) as ei2:
-        _authenticate(_FakeRequest({}, {}), _TEST_WH_SECRET)
+        _authenticate(_FakeRequest({}, {}), settings)
     assert ei2.value.status_code == 401
 
 
@@ -142,7 +294,7 @@ def test_authenticate_rejects_wrong_or_missing_secret():
 async def test_webhook_unconfigured_secret_fails_closed(monkeypatch):
     import contact_ops.api.webhooks as wh
 
-    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(""))
+    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings())
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as ei:
@@ -167,7 +319,7 @@ async def test_webhook_activation_dispatches_expected_tier(monkeypatch):
 
         return _Change()
 
-    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(_TEST_WH_SECRET))
+    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(static_secret=_TEST_WH_SECRET))
     monkeypatch.setattr(wh, "set_tenant_plan_tier", _fake_set)
 
     tenant_id = "11111111-1111-1111-1111-111111111111"
@@ -197,7 +349,7 @@ async def test_webhook_unknown_plan_code_makes_no_change(monkeypatch):
     async def _fake_set(**kwargs):  # pragma: no cover — must NOT run
         called["n"] += 1
 
-    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(_TEST_WH_SECRET))
+    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(static_secret=_TEST_WH_SECRET))
     monkeypatch.setattr(wh, "set_tenant_plan_tier", _fake_set)
 
     body = {
@@ -223,7 +375,7 @@ async def test_webhook_bad_customer_id_is_ignored(monkeypatch):
     async def _fake_set(**kwargs):  # pragma: no cover — must NOT run
         called["n"] += 1
 
-    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(_TEST_WH_SECRET))
+    monkeypatch.setattr(wh, "get_settings", lambda: _fake_settings(static_secret=_TEST_WH_SECRET))
     monkeypatch.setattr(wh, "set_tenant_plan_tier", _fake_set)
 
     body = {
