@@ -9,6 +9,8 @@ export { OnboardingState } from "./OnboardingState";
 export type { ImportSourceId, OnboardingStateProps } from "./OnboardingState";
 export { ProposalRow } from "./ProposalRow";
 export type { ProposalRowProps } from "./ProposalRow";
+export { QueryErrorState, errorDetail } from "./QueryErrorState";
+export type { QueryErrorStateProps } from "./QueryErrorState";
 export { Sparkline } from "./Sparkline";
 export { StatTile, statToneClasses } from "./StatTile";
 export type { StatTone, StatTrend, StatTileProps } from "./StatTile";

@@ -47,6 +47,8 @@ import {
 } from "@/components/inbox/QualityFilterChips";
 import { CommandPalette } from "@/components/inbox/CommandPalette";
 import { EmptyStateInboxZero } from "@/components/inbox/EmptyStateInboxZero";
+import { QueryErrorState } from "@/components/dashboard";
+import { isRenderableQueryError } from "@/lib/queryState";
 import { EvidencePanel } from "@/components/inbox/EvidencePanel";
 import { StructuredDiff, entriesFromPayload } from "@/components/inbox/StructuredDiff";
 import { TieredApproveButton } from "@/components/inbox/TieredApproveButton";
@@ -755,7 +757,16 @@ function InboxCockpit() {
               hasNextPage={Boolean(list.hasNextPage)}
               onLoadMore={() => list.fetchNextPage()}
               emptyState={
-                visibleProposals.length === 0 && !list.isPending ? (
+                isRenderableQueryError(list) ? (
+                  // A backend failure must read as an error with a retry — NOT
+                  // as "inbox zero". (401s redirect to login and never land here.)
+                  <QueryErrorState
+                    title="Couldn't load the review queue"
+                    error={list.error}
+                    onRetry={() => void list.refetch()}
+                    retrying={list.isRefetching}
+                  />
+                ) : visibleProposals.length === 0 && !list.isPending ? (
                   !qualityFilterIsEmpty(qualityFilter) && focusFiltered.length > 0 ? (
                     <p className="px-co-12 py-co-8 text-13 text-muted-foreground">
                       No proposals match these filters.
@@ -827,7 +838,14 @@ function InboxCockpit() {
 
       {/* Mobile single-pane (≤ lg) */}
       <div className="co-scrollbar flex-1 overflow-y-auto p-co-12 lg:hidden">
-        {visibleProposals.length === 0 && !list.isPending ? (
+        {isRenderableQueryError(list) ? (
+          <QueryErrorState
+            title="Couldn't load the review queue"
+            error={list.error}
+            onRetry={() => void list.refetch()}
+            retrying={list.isRefetching}
+          />
+        ) : visibleProposals.length === 0 && !list.isPending ? (
           !qualityFilterIsEmpty(qualityFilter) && focusFiltered.length > 0 ? (
             <p className="text-13 text-muted-foreground">
               No proposals match these filters.

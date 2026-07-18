@@ -78,6 +78,24 @@ steps:
       PIP_CACHE_DIR: /cache
 
   # ------------------------------------------------------------------
+  # 4b. Frontend — typecheck+build, lint, and unit/component tests
+  #     (previously the pipeline was backend-only: tsc ran only inside the
+  #      local build and eslint never ran in CI. This gates the SPA.)
+  # ------------------------------------------------------------------
+  frontend:
+    image: node:20-bookworm-slim
+    commands:
+      - cd frontend
+      - npm ci
+      - npm run build   # tsc --noEmit && vite build
+      - npm run lint    # eslint --max-warnings 0
+      - npm run test    # vitest run
+    environment:
+      CI: "true"
+      # Keep vite/rollup memory bounded on the shared runner.
+      NODE_OPTIONS: "--max-old-space-size=2048"
+
+  # ------------------------------------------------------------------
   # 5. Security scan (bandit)
   # ------------------------------------------------------------------
   security-scan:

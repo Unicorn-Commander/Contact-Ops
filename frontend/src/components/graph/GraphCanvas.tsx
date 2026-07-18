@@ -171,7 +171,7 @@ export function GraphCanvas({
   // the import to post-mount lets the module fully initialise first.
   // Typed `any` like the sibling apps' dynamic-loaded force graph — the props
   // below are the same ones the static <ForceGraph3D> type-checked.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // (`no-explicit-any` is disabled repo-wide, so no inline directive is needed.)
   const [FG3D, setFG3D] = useState<any>(null);
   useEffect(() => {
     let alive = true;
