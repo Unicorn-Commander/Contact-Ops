@@ -7,11 +7,18 @@ DB-backed integration tests (full resolve_principal flow) live in
 from __future__ import annotations
 
 import base64
+import uuid
 
 import bcrypt
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from contact_ops.carddav.auth import (
     WWW_AUTHENTICATE_HEADER,
+    _stamp_last_used,
+    _verify_password_any_tenant,
     hash_app_password,
     is_rate_limited,
     parse_basic_auth_header,
@@ -20,6 +27,83 @@ from contact_ops.carddav.auth import (
     reset_rate_limits,
     verify_app_password,
 )
+
+TENANT_ID = "0ffe658a-0000-4000-8000-000000000001"
+APP_CREDENTIAL_ID = "0ffe658a-0000-4000-8000-000000000002"
+USER_ID = "uc-carddav-0ffe658a"
+PLAINTEXT = "correct-horse-carddav"
+
+
+def _sync_url(asyncpg_url: str) -> str:
+    return asyncpg_url.replace("postgresql+asyncpg://", "postgresql://")
+
+
+def _runtime_async_url(asyncpg_url: str) -> str:
+    return asyncpg_url.replace("postgres:test@", "contact_ops_runtime:rtpw@")
+
+
+def _ensure_runtime_role(postgres_container: str) -> None:
+    eng = create_engine(_sync_url(postgres_container), future=True)
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                "DO $$ BEGIN CREATE ROLE contact_ops_runtime LOGIN PASSWORD 'rtpw' "
+                "NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+            )
+        )
+        conn.execute(text("GRANT contact_ops_app TO contact_ops_runtime"))
+    eng.dispose()
+
+
+def _seed_carddav_password(postgres_container: str) -> None:
+    eng = create_engine(_sync_url(postgres_container), future=True)
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO tenants (
+                    id, slug, kind, display_name, owner_user_id,
+                    qdrant_namespace, garage_bucket_prefix
+                )
+                VALUES (
+                    CAST(:tenant_id AS uuid), 'carddav-rls', 'brand',
+                    'CardDAV RLS', CAST(:tenant_id AS uuid), 'carddav-rls-ns',
+                    'carddav-rls-bkt'
+                )
+                """
+            ),
+            {"tenant_id": TENANT_ID},
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO user_tenant_membership (user_uc_uid, tenant_id, role, status)
+                VALUES (:user_id, CAST(:tenant_id AS uuid), 'member', 'active')
+                """
+            ),
+            {"user_id": USER_ID, "tenant_id": TENANT_ID},
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO carddav_app_passwords (
+                    id, tenant_id, user_id, device_label, password_hash, last_4_chars
+                )
+                VALUES (
+                    CAST(:app_credential_id AS uuid), CAST(:tenant_id AS uuid),
+                    :user_id, 'iPhone', :password_hash, :last_4
+                )
+                """
+            ),
+            {
+                "app_credential_id": APP_CREDENTIAL_ID,
+                "tenant_id": TENANT_ID,
+                "user_id": USER_ID,
+                "password_hash": hash_app_password(PLAINTEXT),
+                "last_4": PLAINTEXT[-4:],
+            },
+        )
+    eng.dispose()
 
 
 # ---------- header parsing ----------
@@ -88,6 +172,85 @@ def test_hash_app_password_uses_high_cost_factor() -> None:
     # bcrypt format: $2b$<cost>$<22-char-salt><31-char-digest>
     cost = int(h.split("$")[2])
     assert cost >= 10
+
+
+@pytest.mark.asyncio
+async def test_carddav_lookup_and_stamp_work_as_unbound_runtime_role(
+    postgres_container: str,
+) -> None:
+    """CardDAV auth resolves before tenant binding without weakening table RLS."""
+
+    _ensure_runtime_role(postgres_container)
+    _seed_carddav_password(postgres_container)
+
+    engine = create_async_engine(
+        _runtime_async_url(postgres_container),
+        poolclass=NullPool,
+        echo=False,
+    )
+    session_maker = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+    async with engine.connect() as conn:
+        trans = await conn.begin()
+        try:
+            raw_count = await conn.scalar(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM carddav_app_passwords
+                    WHERE user_id = :user_id
+                    """
+                ),
+                {"user_id": USER_ID},
+            )
+            assert raw_count == 0
+
+            session = session_maker(bind=conn, join_transaction_mode="create_savepoint")
+            try:
+                row, tenant = await _verify_password_any_tenant(
+                    session,
+                    username=USER_ID,
+                    password=PLAINTEXT,
+                )
+                assert row is not None
+                assert tenant is not None
+                assert row.id == uuid.UUID(APP_CREDENTIAL_ID)
+                assert tenant.id == uuid.UUID(TENANT_ID)
+                assert tenant.slug == "carddav-rls"
+
+                await _stamp_last_used(
+                    session,
+                    row=row,
+                    tenant_id=tenant.id,
+                    user_agent="pytest-carddav",
+                    source_ip="203.0.113.10",
+                )
+                stamped = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT last_used_at, last_used_user_agent,
+                                   last_used_ip::text AS last_used_ip
+                            FROM carddav_app_passwords
+                            WHERE id = CAST(:app_password_id AS uuid)
+                            """
+                        ),
+                        {"app_password_id": APP_CREDENTIAL_ID},
+                    )
+                ).mappings().one()
+                assert stamped["last_used_at"] is not None
+                assert stamped["last_used_user_agent"] == "pytest-carddav"
+                assert stamped["last_used_ip"] == "203.0.113.10/32"
+            finally:
+                await session.close()
+        finally:
+            await trans.rollback()
+    await engine.dispose()
 
 
 # ---------- rate limiter ----------
