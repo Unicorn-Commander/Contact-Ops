@@ -415,8 +415,46 @@ async def onboard(request: Request) -> OnboardResponse:
 
     if not provisioned:
         # Idempotent replay: the user already had an active membership. We do NOT
-        # create a second workspace, touch Keycloak, or emit a provision audit
-        # event. A replay must be side-effect free.
+        # create a second workspace or emit a provision audit event. BUT we DO
+        # backfill the Keycloak tenant attribute when the caller's token carries
+        # no tenant_id at all (a legacy user whose home workspace predates the
+        # KC-attribute mechanism, or whose attribute was cleared). Without this
+        # they are stuck forever: /mcp fail-closes on a missing tenant_id claim,
+        # and the provision path that writes the attribute never runs for an
+        # already-provisioned user. We only backfill when the claim is ABSENT,
+        # never overwriting a workspace the user actively switched into. Same
+        # configured-guard + KC-failure posture as the provision path below.
+        if not claims.get("tenant_id"):
+            if not settings.KEYCLOAK_SWITCH_CLIENT_SECRET:
+                logger.warning("onboard_backfill_not_configured", uc_uid=uc_uid)
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="onboarding not configured",
+                )
+            try:
+                await _set_keycloak_tenant_attributes(
+                    settings,
+                    uc_uid=uc_uid,
+                    tenant_id=tenant_id_str,
+                    tenant_slug=new_slug,
+                )
+                logger.info(
+                    "onboard_kc_attribute_backfilled",
+                    uc_uid=uc_uid,
+                    tenant_id=tenant_id_str,
+                )
+            except _KeycloakError as exc:
+                logger.warning(
+                    "onboard_kc_backfill_failed",
+                    uc_uid=uc_uid,
+                    tenant_id=tenant_id_str,
+                    stage=exc.stage,
+                    detail=exc.detail,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="identity provider update failed",
+                ) from exc
         logger.info(
             "onboard_idempotent_replay", uc_uid=uc_uid, tenant_id=tenant_id_str
         )

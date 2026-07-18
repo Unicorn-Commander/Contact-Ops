@@ -609,13 +609,21 @@ async def test_onboard_uc_uid_comes_from_token_not_body(db_session, monkeypatch)
 
 
 async def test_onboard_existing_member_returns_provisioned_false(db_session, monkeypatch):
-    """An already-member call is an idempotent replay: provisioned=false, the
-    EXISTING home tenant returned, no second workspace, and NO Keycloak write."""
+    """A fully-provisioned member replay is idempotent: provisioned=false, the
+    EXISTING home tenant returned, no second workspace, and NO Keycloak write.
+
+    The caller's token ALREADY carries its tenant_id (the normal steady state
+    once onboarding + the KC attribute write have run), so there is nothing to
+    backfill: the replay must be entirely side-effect free — no second workspace
+    and, even with a secret configured, no Keycloak admin call. (The distinct
+    LEGACY case — a member whose token carries NO tenant_id, which DOES trigger a
+    one-shot KC backfill — is covered by
+    ``test_onboard_existing_member_without_tenant_claim_backfills_kc`` below.)"""
     from contact_ops.api import auth as auth_mod
 
     s = get_settings()
     monkeypatch.setattr(s, "KEYCLOAK_ISSUER", VALID_ISSUER, raising=False)
-    # Even if a secret IS configured, the idempotent path must NOT call KC.
+    # Even if a secret IS configured, this idempotent path must NOT call KC.
     monkeypatch.setattr(s, "KEYCLOAK_SWITCH_CLIENT_SECRET", "test-secret", raising=False)
     monkeypatch.setattr(auth_mod, "async_session_maker", _session_factory(db_session))
 
@@ -628,15 +636,65 @@ async def test_onboard_existing_member_returns_provisioned_false(db_session, mon
 
     existing = await _seed_membership(db_session, uc_uid=UC_A, tenant_slug="aaron-existing")
 
-    claims = _kc_claims(sub=UC_A, tenant_id=None, username="aaron")
+    # A steady-state member: the token already carries the home tenant_id, so the
+    # backfill guard (`if not claims.get("tenant_id")`) is skipped.
+    claims = _kc_claims(sub=UC_A, tenant_id=str(existing), username="aaron")
     resp = await auth_mod.onboard(_fake_request(claims))
 
     assert resp.provisioned is False, "already-member call must report provisioned=false"
     assert resp.tenant_id == existing, "must return the EXISTING home tenant"
     assert resp.tenant_slug == "aaron-existing"
-    assert kc_called["n"] == 0, "idempotent replay must not touch Keycloak"
+    assert kc_called["n"] == 0, "a fully-provisioned member replay must not touch Keycloak"
 
     # No second workspace was materialized for this user.
+    tcount = await db_session.execute(
+        text("SELECT count(*) FROM tenants WHERE owner_user_id = CAST(:u AS uuid)"),
+        {"u": UC_A},
+    )
+    assert tcount.scalar() == 1
+
+
+async def test_onboard_existing_member_without_tenant_claim_backfills_kc(db_session, monkeypatch):
+    """A LEGACY member whose token carries NO tenant_id is an idempotent replay
+    for the workspace (provisioned=false, existing tenant returned, no second
+    workspace) BUT it DOES backfill the Keycloak tenant attribute exactly once so
+    the user is no longer stuck: /mcp fail-closes on a missing tenant_id claim,
+    and the provision path that writes the attribute never runs for an
+    already-provisioned user. This asserts the backfill's intended real behavior;
+    it must never be regressed away (deleting it strands legacy users)."""
+    from contact_ops.api import auth as auth_mod
+
+    s = get_settings()
+    monkeypatch.setattr(s, "KEYCLOAK_ISSUER", VALID_ISSUER, raising=False)
+    monkeypatch.setattr(s, "KEYCLOAK_SWITCH_CLIENT_SECRET", "test-secret", raising=False)
+    monkeypatch.setattr(auth_mod, "async_session_maker", _session_factory(db_session))
+
+    kc_calls: list[dict] = []
+
+    async def _fake_kc(settings, *, uc_uid, tenant_id, tenant_slug):  # type: ignore[no-untyped-def]
+        kc_calls.append({"uc_uid": uc_uid, "tenant_id": tenant_id, "tenant_slug": tenant_slug})
+
+    monkeypatch.setattr(auth_mod, "_set_keycloak_tenant_attributes", _fake_kc)
+
+    existing = await _seed_membership(db_session, uc_uid=UC_A, tenant_slug="aaron-legacy")
+
+    # Legacy token: NO tenant_id claim at all -> the backfill guard fires.
+    claims = _kc_claims(sub=UC_A, tenant_id=None, username="aaron")
+    resp = await auth_mod.onboard(_fake_request(claims))
+
+    # Still an idempotent replay for the workspace itself.
+    assert resp.provisioned is False, "already-member call must report provisioned=false"
+    assert resp.tenant_id == existing, "must return the EXISTING home tenant"
+    assert resp.tenant_slug == "aaron-legacy"
+
+    # ...but the KC attribute was backfilled EXACTLY once, for the token sub, with
+    # the existing home tenant's id + slug.
+    assert len(kc_calls) == 1, "a tenant-less legacy replay must backfill KC exactly once"
+    assert kc_calls[0]["uc_uid"] == UC_A
+    assert kc_calls[0]["tenant_id"] == str(existing)
+    assert kc_calls[0]["tenant_slug"] == "aaron-legacy"
+
+    # No second workspace was materialized despite the KC write.
     tcount = await db_session.execute(
         text("SELECT count(*) FROM tenants WHERE owner_user_id = CAST(:u AS uuid)"),
         {"u": UC_A},
