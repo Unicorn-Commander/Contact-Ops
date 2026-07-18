@@ -1,7 +1,7 @@
 # CLAUDE.md: Contact-Ops AI agent orientation
 
-**Date**: 2026-05-21
-**Status**: Phase 0 (scaffold)
+**Date**: 2026-07-18
+**Status**: v2.19.x (shipped through `phase-6-complete`; MCP tool surface live, ~95 tools)
 **Read this first.** Every Claude / Cursor / opencode / Codex agent that opens this repo should treat this file as the canonical map of what Contact-Ops is, what the quality bar is, and what NOT to do.
 
 ---
@@ -12,7 +12,7 @@ Contact-Ops is an **agent-first, MCP-native canonical contact + organization reg
 
 Contact-Ops is **federated with Data Intel** (`verify.centerdeep.online`). Contact-Ops manages contacts you actively curate. Data Intel is the passive verification / B2B intelligence DB. Same infrastructure, separate codebases, separate databases. RFC 8693 token-exchange OBO connects them. Neither owns the other.
 
-The full design lives at `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md` (5,685 lines). **It is the source of truth for every architectural fact.** When this file or any sibling doc disagrees with the design doc, the design doc wins. When the design doc itself has open questions, they go in `/Users/aaronstransky/Documents/Contact-Ops-Open-Questions.md` for Aaron to resolve.
+The architecture summary lives in-repo at `ARCHITECTURE.md`. **The `backend/` implementation is the source of truth for every architectural fact.** When a doc disagrees with the code, the code wins. When something is genuinely undecided, it goes in `/Users/aaronstransky/Documents/Contact-Ops-Open-Questions.md` for Aaron to resolve.
 
 The original brief (`/Users/aaronstransky/Documents/Contact-Ops-Build-Brief.md`) and the Codex build prompt (`/Users/aaronstransky/Documents/Contact-Ops-Codex-Prompt.md`) are historical context only. Treat the MCP-Design doc as current truth.
 
@@ -88,7 +88,7 @@ Contact-Ops/
 │   │   └── services/            # Domain services (no tools yet in Phase 0)
 │   ├── tests/                   # pytest, asyncio_mode = auto
 │   └── requirements.txt         # Pinned versions, no `>=`
-├── frontend/                    # Next.js human UI (Phase 1+)
+├── frontend/                    # React/Vite human UI
 └── .woodpecker/
     └── pipeline.yml             # CI
 ```
@@ -162,7 +162,7 @@ Full plan in design doc §9. Summary:
 
 | Phase | Goal |
 |-------|------|
-| **0 (now)** | Fork from centerdeep-data-intel. Rename `app/` → `contact_ops/`. Add migrations 0001-0015. Land MCP server scaffold that answers JSON-RPC handshake (no tools registered yet). Set up Keycloak OIDC clients (`contact-ops-app`, `contact-ops-mcp`, `contact-ops-carddav`, `contact-ops-publisher`, `contact-ops-bridge-inbound`). DNS + Traefik routing for `contacts.magicunicorn.dev`, `mcp.contacts.magicunicorn.dev`, `carddav.contacts.magicunicorn.dev`. |
+| **0** | Fork from centerdeep-data-intel. Rename `app/` → `contact_ops/`. Add migrations 0001-0015. Land MCP server scaffold that answers JSON-RPC handshake (no tools registered yet). Set up Keycloak OIDC clients (`contact-ops-app`, `contact-ops-mcp`, `contact-ops-carddav`, `contact-ops-publisher`, `contact-ops-bridge-inbound`). DNS + Traefik routing for `contacts.magicunicorn.dev`, `mcp.contacts.magicunicorn.dev`, `carddav.contacts.magicunicorn.dev`. |
 | **1** | Core MCP tools for People, Orgs, Employment, Identifiers, Emails, Phones, Addresses, Tags, Search. Confidence-driven propose-vs-apply baseline. action_event writes. field_provenance projection. |
 | **2** | Tenancy + Visibility/ACL + CardDAV + Photos. iOS/macOS Contacts sync end-to-end. HIPAA mode enforced at all three layers. |
 | **3** | Agent fleet: Dedup, Enrichment, Voice Match, Tag, Lifecycle + Approval Inbox UI. Calibration loop. |
@@ -272,7 +272,7 @@ These live in `/Users/aaronstransky/.claude/projects/-Users-aaronstransky/memory
 
 ## When in doubt
 
-1. **Check the design doc** (`/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md`). It is 5,685 lines because every important question is answered somewhere in it.
+1. **Check the code and `ARCHITECTURE.md`.** The `backend/` implementation is authoritative; the architecture summary is the map.
 2. **Check the relevant Aaron memory note** in the table above.
 3. **Append to Contact-Ops-Open-Questions.md** if you still don't have an answer. Do not guess.
 4. **Run the thing.** Don't ship code you haven't seen work end-to-end against a real Postgres.

@@ -1,9 +1,9 @@
 # Contact-Ops Developer Guide
 
-**Date**: 2026-05-21
+**Date**: 2026-07-18
 **Audience**: Engineers (human or agent) working on the Contact-Ops codebase itself.
 
-For the canonical design doc see `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md`.
+For the architecture summary see `ARCHITECTURE.md`.
 For AI agent orientation see `CLAUDE.md`.
 For ecosystem app integration see `INTEGRATION_GUIDE.md`.
 
@@ -95,7 +95,7 @@ Contact-Ops/
 │       ├── test_alias_rewrite.py
 │       ├── test_jwt_middleware.py
 │       └── test_mcp_handshake.py
-├── frontend/                      # Next.js (Phase 1+)
+├── frontend/                      # React/Vite
 └── ops-center-integration/        # Legacy: Ops-Center settings page; TBD relocate
 ```
 
@@ -141,7 +141,7 @@ Default ports:
 | Service | Port |
 |---------|------|
 | contact-ops-backend (FastAPI + MCP) | 8501 |
-| contact-ops-frontend (Next.js) | 8502 |
+| contact-ops-frontend (React/Vite) | 8502 |
 | OAuth2 proxy (prod only) | 8503 |
 
 The MCP endpoint is at `http://localhost:8501/mcp` in dev, `https://mcp.contacts.magicunicorn.dev/mcp` in prod.
@@ -662,7 +662,7 @@ Repeated from `CLAUDE.md` because they're load-bearing:
 ## 10. Where to ask questions
 
 - **Open questions for Aaron**: append to `/Users/aaronstransky/Documents/Contact-Ops-Open-Questions.md`.
-- **Design questions**: re-read the design doc at `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md`.
+- **Design questions**: re-read `ARCHITECTURE.md` and the `backend/` implementation.
 - **Memory notes**: check `/Users/aaronstransky/.claude/projects/-Users-aaronstransky/memory/` for the relevant Aaron note (see CLAUDE.md table).
 - **Status reports**: write to `/Users/aaronstransky/Documents/Contact-Ops-Track-<X>-<topic>-Report.md` when you finish a track.
 - **ADRs**: significant decisions go in `docs/decisions/NNNN-<slug>.md`.

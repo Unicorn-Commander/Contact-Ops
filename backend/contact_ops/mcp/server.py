@@ -5,9 +5,8 @@ Per-request server instance bound to the calling user's tenant. Tenant is
 resolved from the JWT claim (`request.state.jwt_claims["tenant_id"]`), NEVER
 from request headers — the JWT middleware is the only trusted source.
 
-Phase 0: scaffold only — no tools registered. `tools/list` returns an empty
-list; `tools/call` returns an MCP `isError: true` response. Phase 1 lands the
-first ~30 tools per design doc §5.
+95 tools registered across 23 domains. `tools/list` returns the full tool
+surface; `tools/call` executes the requested tool.
 
 Spec compliance notes:
 - `initialize` response: `{ protocolVersion, capabilities, serverInfo }` only —

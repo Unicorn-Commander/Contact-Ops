@@ -1,7 +1,7 @@
 # Contact-Ops
 
-**Status**: Phase 0 (scaffold only, no MCP tools registered yet)
-**Date**: 2026-05-21
+**Status**: v2.19.x — shipped through `phase-6-complete`. MCP tool surface live (~95 tools across 23 domains). License: Apache-2.0.
+**Date**: 2026-07-18
 
 Contact-Ops is Magic Unicorn's canonical person and organization registry. It is an agent-first, MCP-native platform: the MCP server is the product, and every consumer (human UI, CardDAV server, iOS/macOS sync, agent inboxes, ecosystem apps like Listing-Ops, Crisis-Ops, Project-Ops, Meeting-Ops, Stable, Brigade) composes from a single tool surface. Forked from `centerdeep-data-intel`, which contributes the FastAPI + SQLAlchemy 2.0 async + Postgres + Qdrant + Keycloak `uchub` foundation.
 
@@ -11,17 +11,15 @@ Contact-Ops manages the contacts you actively curate. Data Intel (`verify.center
 
 | What | Where |
 |------|-------|
-| Canonical design doc | `/Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md` (5,685 lines, the source of truth for every fact in this repo) |
 | AI agent orientation | `CLAUDE.md` |
 | Architecture overview | `ARCHITECTURE.md` |
 | Ecosystem integration guide | `INTEGRATION_GUIDE.md` |
 | Developer workflow | `docs/DEVELOPER_GUIDE.md` |
 | End-user guide | `docs/USER_GUIDE.md` |
-| Open questions for Aaron | `/Users/aaronstransky/Documents/Contact-Ops-Open-Questions.md` |
 
 ## Quickstart (local dev)
 
-Track C is still landing the docker-compose Postgres service and migrations runtime. Once those merge, the workflow is:
+Local dev workflow:
 
 ```bash
 # 1. Bring up Postgres + Redis + Qdrant on the unicorn-network
@@ -37,22 +35,22 @@ pytest
 uvicorn contact_ops.main:app --reload --port 8501
 
 # 5. Call MCP tools via Claude Code or any MCP client
-#    (Phase 0 has NO tools registered, only the JSON-RPC handshake works)
+#    (~95 tools are registered across 23 domains)
 ```
 
-Production endpoints (Phase 1+):
+Production endpoints:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `contacts.magicunicorn.dev` | Human Next.js UI |
+| `contacts.magicunicorn.dev` | Human UI (React/Vite) |
 | `mcp.contacts.magicunicorn.dev` | MCP HTTP+SSE endpoint (OAuth 2.1 + RFC 8707) |
-| `carddav.contacts.magicunicorn.dev` | CardDAV endpoint for iOS / macOS / Thunderbird (Phase 2) |
+| `carddav.contacts.magicunicorn.dev` | CardDAV endpoint for iOS / macOS / Thunderbird |
 
 ## Phase plan (from design doc §9)
 
 | Phase | Goal | Duration |
 |-------|------|----------|
-| 0 (now) | Fork + rename + additive migrations + MCP scaffold | 1-2 weeks |
+| 0 | Fork + rename + additive migrations + MCP scaffold | 1-2 weeks |
 | 1 | Core MCP tools (people, orgs, employment, identifiers, emails, phones, addresses, tags, search) | 3-4 weeks |
 | 2 | Tenancy + ACL + CardDAV + photos | 2-3 weeks |
 | 3 | Agents (Dedup, Enrichment, Voice Match, Tag, Lifecycle) + Approval Inbox | 3-4 weeks |
@@ -62,13 +60,8 @@ Production endpoints (Phase 1+):
 
 ## Status
 
-Phase 0 is the scaffold. The Postgres schema (35 tables, 200+ indexes, RLS, HIPAA fence, append-only `action_event`) is in `backend/alembic/`. The MCP server in `backend/contact_ops/mcp/server.py` answers the JSON-RPC handshake but registers no tools yet. Tool surface lands in Phase 1.
-
-The Phase 0 review tracker, blockers, and per-track work threads are in:
-- `/Users/aaronstransky/Documents/Contact-Ops-Phase-0-Review.md`
-- `/Users/aaronstransky/Documents/Contact-Ops-Track-B-Codex-Prompt.md`
-- `/Users/aaronstransky/Documents/Contact-Ops-Track-C-DeepSeek-Prompt.md`
+Shipped through `phase-6-complete` (v2.19.x). The Postgres schema (RLS, HIPAA fence, append-only `action_event`) is in `backend/alembic/` (migrations 0001-0045). The MCP server in `backend/contact_ops/mcp/server.py` registers the full tool surface (~95 tools across 23 domains) over the JSON-RPC handshake. The human UI, CardDAV, agent fleet, and FalkorDB graph sync are all live.
 
 ## License
 
-TBD. Treat as Magic Unicorn proprietary until Aaron decides on a public license.
+Apache-2.0 (see `LICENSE`).

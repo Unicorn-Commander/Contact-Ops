@@ -1,8 +1,8 @@
 """Contact-Ops FastAPI application.
 
-Phase 0 surface: health endpoints + MCP scaffold (JSON-RPC) only. No Data Intel
-catalogue/verify endpoints carried over — those live in the upstream Data Intel
-service at `verify.centerdeep.online`.
+Hosts the MCP server (JSON-RPC, ~95 tools across 23 domains) plus health
+endpoints. No Data Intel catalogue/verify endpoints carried over — those live in
+the upstream Data Intel service at `verify.centerdeep.online`.
 
 Middleware order matters: CORS first (handles preflight), then JWT validation
 (rejects unauthenticated requests), then audit (records every authenticated
@@ -280,8 +280,8 @@ def create_application() -> FastAPI:
         description=(
             "Contact-Ops — agent-first, MCP-native canonical contact + organization "
             "registry. The MCP server is the product; this FastAPI app hosts it plus "
-            "health probes. See /Users/aaronstransky/Documents/Contact-Ops-MCP-Design.md "
-            "for the design contract."
+            "health probes. See ARCHITECTURE.md and INTEGRATION_GUIDE.md for the "
+            "design and integration contracts."
         ),
         version=settings.APP_VERSION,
         docs_url="/docs" if settings.is_development else None,
