@@ -21,6 +21,7 @@ ignore = ["S101", "S104"]
 [tool.ruff.lint.per-file-ignores]
 # CLI tools legitimately need to print to stdout.
 "contact_ops/agents/cli.py" = ["T201"]
+"contact_ops/billing/plan_cli.py" = ["T201"]
 # Test fixtures + tests can re-export and use leading-underscore helpers.
 "tests/**" = ["F401"]
 

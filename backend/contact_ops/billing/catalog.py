@@ -107,3 +107,36 @@ def plan_for_tier(tier: str) -> PlanSpec:
     billable metrics), never to a more-permissive plan.
     """
     return PLAN_CATALOG.get(tier, PLAN_CATALOG[DEFAULT_TIER])
+
+
+# --- Reverse map: Lago plan code -> tier ------------------------------------
+# Built ONCE from PLAN_CATALOG so the webhook that turns a payment event into an
+# entitlement can never drift from the forward mapping the metering provider uses.
+# We assert every plan code is unique: if two tiers ever share a Lago plan code
+# the reverse direction would be ambiguous (which tier does 'trial' grant?), and
+# for a MONEY path an ambiguous map must fail loudly at import, not silently pick.
+_LAGO_PLAN_CODE_TO_TIER: dict[str, str] = {}
+for _spec in PLAN_CATALOG.values():
+    if _spec.lago_plan_code in _LAGO_PLAN_CODE_TO_TIER:
+        raise RuntimeError(
+            "PLAN_CATALOG has a duplicate lago_plan_code "
+            f"{_spec.lago_plan_code!r}; the plan-code -> tier reverse map "
+            "(used by the Lago webhook) would be ambiguous."
+        )
+    _LAGO_PLAN_CODE_TO_TIER[_spec.lago_plan_code] = _spec.tier
+del _spec
+
+
+def tier_for_lago_plan_code(plan_code: str) -> str | None:
+    """Reverse of ``PlanSpec.lago_plan_code``: the tier a Lago plan grants.
+
+    This is the map a Lago ``subscription.created`` webhook uses to translate a
+    payment event into an entitlement tier. Returns ``None`` for a plan code we
+    do not recognise — the webhook then makes NO change (fails SAFE: an unknown
+    or mistyped code must never silently move a tenant's entitlement, up OR
+    down). This is a MONEY path, so "unknown → do nothing + log" is the only
+    safe default.
+    """
+    if not plan_code:
+        return None
+    return _LAGO_PLAN_CODE_TO_TIER.get(plan_code)

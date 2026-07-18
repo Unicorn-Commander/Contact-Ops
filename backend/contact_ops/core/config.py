@@ -279,6 +279,12 @@ class Settings(BaseSettings):
     LAGO_API_URL: str = ""  # e.g. http://unicorn-lago-api:3000 (internal)
     LAGO_API_KEY: str = ""  # CO-scoped suite Lago key; empty = Lago leg inert
     BILLING_QUOTA_ENFORCED: bool = False
+    # Shared secret authenticating inbound Lago webhooks (subscription.created /
+    # terminated -> plan_tier). The POST /api/webhooks/lago endpoint FAILS CLOSED
+    # when this is blank (503) and rejects any request whose signature header does
+    # not match (constant-time). This is a MONEY path — an unauthenticated caller
+    # must NEVER be able to move a tenant's entitlement, so there is no default.
+    LAGO_WEBHOOK_SECRET: str = ""
 
     # GDPR compliance engine (P-00075). DORMANT master switch for the Art.17
     # erasure + Art.15 export tools. With COMPLIANCE_ENGINE_ENABLED False the

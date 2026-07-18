@@ -87,11 +87,17 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     # ``state`` parameter that was issued at oauth-start time and stored
     # in ``oauth_pending`` (or short-TTL Redis); see
     # :mod:`contact_ops.connectors.oauth_state`.
+    # Inbound billing webhooks (Lago) cannot send a bearer JWT; they are
+    # authenticated inline by a shared secret (LAGO_WEBHOOK_SECRET) in
+    # :mod:`contact_ops.api.webhooks`, which FAILS CLOSED when the secret is
+    # unset. Bypassing JWT here does NOT make the route open — the shared-secret
+    # check is mandatory and constant-time.
     SKIP_PREFIXES: tuple[str, ...] = (
         "/carddav",
         "/.well-known/carddav",
         "/api/connectors/m365/oauth/callback",
         "/api/connectors/gmail/oauth/callback",
+        "/api/webhooks/lago",
     )
 
     def __init__(self, app: Any, settings: Settings) -> None:
