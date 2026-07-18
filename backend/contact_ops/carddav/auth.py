@@ -12,9 +12,9 @@ This module is the verification path called by the CardDAV router on
 every request. It:
 
   * Decodes the ``Authorization: Basic`` header
-  * Looks up any active app-password row whose username (= ``uc_uid``)
-    matches — the RLS policy on ``carddav_app_passwords`` permits this
-    cross-tenant SELECT only when the tenant GUC is unset
+  * Looks up active app-password rows for the username (= ``uc_uid``)
+    through a SECURITY DEFINER function that is scoped by user_id and
+    active workspace membership
   * Verifies the bcrypt hash against the supplied password
   * Re-binds the tenant GUC, stamps ``last_used_*``, returns a
     :class:`CarddavPrincipal`
@@ -30,7 +30,7 @@ import base64
 import binascii
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -38,13 +38,12 @@ from typing import Any
 import bcrypt
 import structlog
 from fastapi import HTTPException, Request, status
-from sqlalchemy import select, text, update
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from contact_ops.core.config import Settings, get_settings
 from contact_ops.core.database import bind_session_context
-from contact_ops.models import Tenant
 from contact_ops.models.carddav_app_password import CarddavAppPassword
 
 logger = structlog.get_logger(__name__)
@@ -63,6 +62,22 @@ class CarddavPrincipal:
     tenant_hipaa: bool
     scopes: tuple[str, ...]
     app_password_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class _CarddavAuthPassword:
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    user_id: str
+    password_hash: str
+    scopes: list[str]
+
+
+@dataclass(frozen=True)
+class _CarddavAuthTenant:
+    id: uuid.UUID
+    slug: str
+    hipaa_mode: bool
 
 
 # ---------- engine + sessions ----------
@@ -305,30 +320,45 @@ async def _verify_password_any_tenant(
     *,
     username: str,
     password: str,
-) -> tuple[CarddavAppPassword | None, Tenant | None]:
+) -> tuple[_CarddavAuthPassword | None, _CarddavAuthTenant | None]:
     """Find an active app-password row whose bcrypt matches ``password``.
 
-    The RLS policy on ``carddav_app_passwords`` permits cross-tenant
-    SELECT when ``current_tenant_id()`` is NULL — which is exactly the
-    state during this initial lookup. After this call, the router sets
-    the tenant GUC for the resolved tenant before any further queries.
+    The initial CardDAV Basic-auth lookup runs before a tenant can be
+    bound. A SECURITY DEFINER function resolves candidate rows by
+    ``user_id`` and active membership; bcrypt verification remains in
+    Python so plaintext password material never enters SQL.
     """
 
-    stmt = (
-        select(CarddavAppPassword, Tenant)
-        .join(Tenant, Tenant.id == CarddavAppPassword.tenant_id)
-        .where(
-            CarddavAppPassword.user_id == username,
-            CarddavAppPassword.revoked_at.is_(None),
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT app_password_id, tenant_id, user_id, password_hash,
+                       scopes, tenant_slug, tenant_hipaa
+                FROM lookup_carddav_app_passwords(:username)
+                """
+            ),
+            {"username": username},
         )
-    )
-    rows = (await session.execute(stmt)).all()
+    ).mappings().all()
 
     candidate = password.encode("utf-8")
-    for app_password, tenant in rows:
+    for found in rows:
         try:
-            stored = app_password.password_hash.encode("utf-8")
+            stored = str(found["password_hash"]).encode("utf-8")
             if bcrypt.checkpw(candidate, stored):
+                app_password = _CarddavAuthPassword(
+                    id=found["app_password_id"],
+                    tenant_id=found["tenant_id"],
+                    user_id=str(found["user_id"]),
+                    password_hash=str(found["password_hash"]),
+                    scopes=list(found["scopes"] or []),
+                )
+                tenant = _CarddavAuthTenant(
+                    id=found["tenant_id"],
+                    slug=str(found["tenant_slug"]),
+                    hipaa_mode=bool(found["tenant_hipaa"]),
+                )
                 return app_password, tenant
         except ValueError:
             # Malformed hash on disk — skip silently; do not leak via timing.
@@ -339,7 +369,7 @@ async def _verify_password_any_tenant(
 async def _stamp_last_used(
     session: AsyncSession,
     *,
-    row: CarddavAppPassword,
+    row: _CarddavAuthPassword,
     tenant_id: uuid.UUID,
     user_agent: str | None,
     source_ip: str | None,
