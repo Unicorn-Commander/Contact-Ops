@@ -18,15 +18,17 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_, select, text
 
 from contact_ops.core.config import get_settings
 from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.errors import (
+    CONFIRMATION_PHRASE_MISMATCH,
     INSUFFICIENT_ROLE,
     PERSON_NOT_FOUND,
     TENANT_MISMATCH,
@@ -45,7 +47,9 @@ from contact_ops.models import (
     Tenant,
 )
 from contact_ops.models.enums import ConsentBasis, TenantKind
-from contact_ops.services import keycloak_admin
+from contact_ops.services import compliance_erasure, keycloak_admin
+
+logger = structlog.get_logger(__name__)
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
 TENANT_NOT_FOUND = "TENANT_NOT_FOUND"
@@ -1237,6 +1241,225 @@ async def set_organization_tenant_membership(
 
 
 # ---------------------------------------------------------------------------
+# offboard_tenant (tenant lifecycle — DESTRUCTIVE, ADMIN-only)
+# ---------------------------------------------------------------------------
+
+OFFBOARD_TENANT_PHRASE = "OFFBOARD TENANT PERMANENTLY"
+
+
+async def _purge_tenant_external_best_effort(
+    *, slug: str, graph_name: str | None
+) -> dict[str, Any]:
+    """Purge the tenant's WHOLE external data planes; swallow every error.
+
+    Deletes the tenant's per-tenant Garage buckets and drops its FalkorDB graph
+    outright (not per-node). A missing / unhealthy / operator-owned external
+    store must never fail an offboard — the operational rows are already gone
+    from Postgres, the legal source of truth. Each backend is lazy-imported so
+    this module carries no import-time dependency on them (mirrors the
+    best-effort pattern in ``compliance_erasure``).
+    """
+    out: dict[str, Any] = {"garage": "skipped", "falkordb": "skipped"}
+
+    # --- Garage: delete every per-tenant bucket ------------------------------
+    try:
+        from contact_ops.services.garage_lifecycle import delete_tenant_buckets
+
+        out["garage"] = await delete_tenant_buckets(tenant_slug=slug)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("offboard.garage_failed", slug=slug, error=str(exc))
+        out["garage"] = {"error": str(exc)}
+
+    # --- FalkorDB: drop the whole tenant graph -------------------------------
+    if graph_name:
+        try:
+            from contact_ops.agents.graph_sync.falkordb_client import (
+                FalkorDBGraphClient,
+            )
+
+            client = FalkorDBGraphClient()
+            try:
+                deleted = await client.delete_graph(graph_name)
+                out["falkordb"] = {"graph_deleted": bool(deleted)}
+            finally:
+                await client.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "offboard.falkordb_failed", graph=graph_name, error=str(exc)
+            )
+            out["falkordb"] = {"error": str(exc)}
+
+    return out
+
+
+class OffboardTenantInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_phrase: Literal["OFFBOARD TENANT PERMANENTLY"]
+    reason: str = Field(min_length=1, max_length=2000)
+    idempotency_key: uuid.UUID | None = None
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class OffboardTenantOutput(ToolOutput):
+    tenant_id: uuid.UUID
+    slug: str
+    persons_purged: int
+    ledger_anonymized: int
+    memberships_revoked: int
+    external: dict[str, Any]
+    already_offboarded: bool
+    status: str
+    event_id: uuid.UUID | None = None
+
+
+async def offboard_tenant(
+    ctx: MCPContext, req: OffboardTenantInput
+) -> OffboardTenantOutput:
+    """Offboard the caller's CURRENT tenant: purge rows + external planes.
+
+    Operates on ``ctx.tenant_id`` (the RLS-bound workspace), NOT an arbitrary
+    target — the runtime role is NOBYPASSRLS, so a cross-tenant offboard would
+    silently see nothing. To offboard a different tenant, platform binds their
+    session to it (the established switch pattern), exactly like
+    ``erase_tenant_account`` / the workspace-member tools.
+
+    Steps (each safe to re-run):
+      1. purge every person + anonymize the hash-chained ledger in place
+         (delegates to ``compliance_erasure.erase_tenant_account``);
+      2. revoke every active workspace membership for the tenant;
+      3. best-effort delete the tenant's Garage buckets + drop its FalkorDB
+         graph (never fails the offboard);
+      4. stamp the tenant deprecated + an ``offboarded_at`` retention marker;
+      5. append a ``tenant.offboard`` action_event.
+
+    Idempotent two ways: an in-memory idempotency_key replays the prior result,
+    and a durable ``offboarded_at`` marker short-circuits a re-run to a no-op.
+    Guarded by the literal phrase ``OFFBOARD TENANT PERMANENTLY``. ADMIN only.
+    """
+    require_role(ctx, "ADMIN")
+    require_scopes(ctx, ["tenant:write", "person:delete"])
+
+    if req.confirmation_phrase != OFFBOARD_TENANT_PHRASE:
+        raise ToolError(
+            CONFIRMATION_PHRASE_MISMATCH,
+            "confirmation phrase mismatch",
+            retryable=False,
+            hint=f"send confirmation_phrase exactly: {OFFBOARD_TENANT_PHRASE!r}",
+        )
+
+    cached = await check_or_register(
+        ctx,
+        idempotency_key=str(req.idempotency_key) if req.idempotency_key else None,
+        tool_name="offboard_tenant",
+        stable_args_hash=stable_hash(req),
+    )
+    if cached is not None:
+        return OffboardTenantOutput.model_validate(cached)
+
+    tenant = await _load_tenant(ctx, ctx.tenant_id)
+    slug = tenant.slug
+
+    # Durable idempotency: an already-offboarded tenant short-circuits to a no-op
+    # so a retry (or a second operator) can never double-purge or re-emit.
+    marker = dict(tenant.retention_policy or {})
+    if marker.get("offboarded_at"):
+        result = OffboardTenantOutput(
+            tenant_id=tenant.id,
+            slug=slug,
+            persons_purged=0,
+            ledger_anonymized=0,
+            memberships_revoked=0,
+            external={"note": "tenant already offboarded"},
+            already_offboarded=True,
+            status="applied",
+        )
+        if req.idempotency_key:
+            await store_result(
+                ctx, str(req.idempotency_key), result.model_dump(mode="json")
+            )
+        return result
+
+    # (1) Purge persons + anonymize the ledger in place (RLS-scoped to ctx tenant).
+    erase = await compliance_erasure.erase_tenant_account(ctx.db, str(ctx.tenant_id))
+
+    # (2) Revoke every active workspace membership (utm_tenant_scope RLS confines
+    #     this to the current tenant regardless of the WHERE clause).
+    rev = await ctx.db.execute(
+        text(
+            """
+            UPDATE user_tenant_membership
+            SET status = 'revoked', updated_at = now()
+            WHERE tenant_id = :t AND status = 'active'
+            """
+        ),
+        {"t": str(ctx.tenant_id)},
+    )
+    memberships_revoked = rev.rowcount or 0
+
+    # (3) Best-effort external teardown — whole buckets + whole graph.
+    external = await _purge_tenant_external_best_effort(
+        slug=slug, graph_name=tenant.graph_name
+    )
+
+    # (4) Stamp the tenant offboarded (deprecated + retention marker). Reassign a
+    #     new dict so SQLAlchemy detects the JSONB mutation.
+    now = datetime.now(UTC)
+    marker.update(
+        {
+            "offboarded_at": now.isoformat(),
+            "offboarded_by": str(ctx.user_id),
+            "offboard_reason": req.reason,
+        }
+    )
+    tenant.retention_policy = marker
+    # tenants.deprecated_at is a naive TIMESTAMP column — strip tzinfo so asyncpg
+    # doesn't reject a tz-aware value (the ISO marker above keeps the offset).
+    tenant.deprecated_at = now.replace(tzinfo=None)
+    await ctx.db.flush()
+
+    persons_purged = int(erase.get("persons_purged", 0) or 0)
+    ledger_anonymized = int(erase.get("ledger_anonymized", 0) or 0)
+
+    # (5) Append the offboard action_event (non-PII summary; never redacted).
+    event_id = await emit_action_event(
+        ctx,
+        event_type="tenant.offboard",
+        aggregate_type="tenant",
+        aggregate_id=tenant.id,
+        payload_before=None,
+        payload_after={
+            "tenant_id": str(tenant.id),
+            "slug": slug,
+            "reason": req.reason,
+            "persons_purged": persons_purged,
+            "ledger_anonymized": ledger_anonymized,
+            "memberships_revoked": memberships_revoked,
+            "external": external,
+            "offboarded_at": now.isoformat(),
+        },
+        confidence=req.confidence,
+    )
+
+    result = OffboardTenantOutput(
+        tenant_id=tenant.id,
+        slug=slug,
+        persons_purged=persons_purged,
+        ledger_anonymized=ledger_anonymized,
+        memberships_revoked=memberships_revoked,
+        external=external,
+        already_offboarded=False,
+        status="applied",
+        event_id=event_id,
+    )
+    if req.idempotency_key:
+        await store_result(
+            ctx, str(req.idempotency_key), result.model_dump(mode="json")
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Registrations
 # ---------------------------------------------------------------------------
 
@@ -1455,6 +1678,30 @@ def register_tenancy_tools() -> None:
         annotations={
             "readOnlyHint": False,
             "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        idempotency="natural-key",
+    )
+    register(
+        name="offboard_tenant",
+        description=(
+            "Offboard the caller's current tenant: purge every person, "
+            "anonymize the hash-chained ledger in place, revoke all workspace "
+            "memberships, and best-effort delete the tenant's Garage buckets + "
+            "drop its FalkorDB graph. Stamps the tenant deprecated and appends a "
+            "tenant.offboard event. Irreversible; idempotent (a re-run no-ops). "
+            "Requires the literal confirmation phrase 'OFFBOARD TENANT "
+            "PERMANENTLY'. ADMIN only; requires tenant:write + person:delete."
+        ),
+        input_model=OffboardTenantInput,
+        output_model=OffboardTenantOutput,
+        handler=offboard_tenant,
+        required_role="ADMIN",
+        required_scopes=("tenant:write", "person:delete"),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
             "idempotentHint": True,
             "openWorldHint": False,
         },

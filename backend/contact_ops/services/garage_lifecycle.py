@@ -148,6 +148,31 @@ class GarageAdmin:
 
         await self._apply_retention(bucket_id=existing, policy=retention)
 
+    async def delete_bucket(self, *, name: str) -> str:
+        """Delete a bucket by its global alias. Idempotent + best-effort.
+
+        Returns ``"deleted"`` when the bucket existed and was removed,
+        ``"absent"`` when it was already gone (a re-run of tenant offboard),
+        so the caller can report a per-bucket disposition. A non-2xx/404 from
+        Garage (e.g. a non-empty bucket) raises so the caller can record the
+        error — offboard swallows it to a per-bucket warning rather than
+        aborting the sweep.
+        """
+        bucket_id = await self._bucket_id(name)
+        if bucket_id is None:
+            return "absent"
+        resp = await self._client.delete(
+            f"{self.endpoint}/v1/bucket?id={bucket_id}",
+            headers=self._auth_headers(),
+        )
+        if resp.status_code in (200, 204):
+            logger.info("garage_bucket_deleted", bucket=name)
+            return "deleted"
+        if resp.status_code == 404:
+            return "absent"
+        resp.raise_for_status()
+        return "deleted"
+
     async def grant_access(
         self, *, bucket: str, access_key_id: str, read: bool = True, write: bool = True
     ) -> None:
@@ -271,6 +296,47 @@ async def provision_tenant_buckets(
     return names
 
 
+async def delete_tenant_buckets(
+    *,
+    tenant_slug: str,
+    settings: Settings | None = None,
+) -> dict[str, object]:
+    """Delete every per-tenant Garage bucket at OFFBOARD — best-effort + idempotent.
+
+    Mirrors :func:`provision_tenant_buckets` in reverse: it is the control-plane
+    half of tenant offboarding. No-ops (returns a ``{"skipped": ...}`` reason)
+    when Garage is not something we control — self_host mode (the operator owns
+    Garage), STANDALONE/local-fs, or when the admin endpoint/token is absent — so
+    the offboard tool can always call it safely. Each bucket delete is guarded so
+    one non-empty / erroring bucket never aborts the sweep; the per-bucket
+    disposition is returned for the audit event.
+    """
+    settings = settings or get_settings()
+
+    if getattr(settings, "DEPLOYMENT_MODE", "hosted") == "self_host":
+        return {"skipped": "self_host (operator owns Garage)"}
+    if getattr(settings, "STANDALONE_MODE", False):
+        return {"skipped": "standalone/local-fs backend"}
+    admin_token = getattr(settings, "GARAGE_ADMIN_TOKEN", "")
+    if not settings.GARAGE_ADMIN_ENDPOINT or not admin_token:
+        return {"skipped": "admin endpoint/token absent"}
+
+    results: dict[str, str] = {}
+    async with GarageAdmin(settings=settings) as admin:
+        for name in all_bucket_names(tenant_slug=tenant_slug):
+            try:
+                results[name] = await admin.delete_bucket(name=name)
+            except Exception as exc:  # noqa: BLE001 — per-bucket best effort
+                logger.warning(
+                    "garage_bucket_delete_failed", bucket=name, error=str(exc)
+                )
+                results[name] = f"error: {exc}"
+    logger.info(
+        "garage_tenant_buckets_deleted", tenant=tenant_slug, buckets=len(results)
+    )
+    return {"buckets": results}
+
+
 # Prod ships GARAGE_ACCESS_KEY="PLACEHOLDER_NEED_GARAGE_KEY" until a real key is
 # provisioned; granting that sentinel would be meaningless, so we skip the grant.
 _PLACEHOLDER_ACCESS_KEY = "PLACEHOLDER_NEED_GARAGE_KEY"
@@ -374,6 +440,7 @@ __all__ = [
     "RetentionPolicy",
     "all_bucket_names",
     "bucket_name",
+    "delete_tenant_buckets",
     "provision_tenant_buckets",
     "provision_tenant_storage",
     "retention_for_bucket",

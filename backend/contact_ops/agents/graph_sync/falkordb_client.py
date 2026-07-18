@@ -15,6 +15,7 @@ from uuid import UUID
 
 import redis.asyncio as redis
 import structlog
+from redis.exceptions import ResponseError
 
 from contact_ops.core.config import Settings, get_settings
 
@@ -125,6 +126,27 @@ class FalkorDBGraphClient:
         ]
         raw = await cast(Any, self._redis.execute_command)(*args)
         return self._parse_result(raw)
+
+    async def delete_graph(self, graph_name: str) -> bool:
+        """Drop an ENTIRE tenant graph (``GRAPH.DELETE``) — used at offboard.
+
+        Unlike :meth:`query`'s per-node ``DETACH DELETE``, this removes the whole
+        graph key in one shot. Idempotent: FalkorDB raises when the graph key is
+        absent (already dropped / never created), which we treat as "nothing to
+        delete" and return ``False`` rather than propagating. Returns ``True``
+        when a graph was actually dropped. Any other Redis error propagates so
+        the caller (offboard) can record it as a best-effort failure.
+        """
+        validate_graph_name(graph_name)
+        await self.connect()
+        assert self._redis is not None
+        try:
+            await cast(Any, self._redis.execute_command)("GRAPH.DELETE", graph_name)
+            logger.info("graph_deleted", graph=graph_name)
+            return True
+        except ResponseError as exc:
+            logger.info("graph_delete_absent", graph=graph_name, error=str(exc))
+            return False
 
     async def bootstrap_graph(self, tenant_graph: TenantGraph) -> None:
         """Create the indexes Phase 4 depends on. Safe to run repeatedly."""
