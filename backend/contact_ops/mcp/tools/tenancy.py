@@ -24,6 +24,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_, select, text
 
+from contact_ops.billing.plan_admin import provision_lago_customer
 from contact_ops.core.config import get_settings
 from contact_ops.mcp.audit_helper import emit_action_event
 from contact_ops.mcp.errors import (
@@ -301,6 +302,18 @@ async def create_tenant(ctx: MCPContext, req: CreateTenantInput) -> CreateTenant
         payload_after=_tenant_summary(tenant),
         confidence=req.confidence,
     )
+
+    # Register the tenant with the billing substrate (Lago) at provisioning so
+    # its later metered usage events do not 422 on an unknown customer. Best
+    # effort + DORMANT by default (the manual/unconfigured provider no-ops); a
+    # billing hiccup must never fail tenant creation. New tenants default to the
+    # 'free' tier via the tenants.plan_tier server_default.
+    await provision_lago_customer(
+        tenant_id=tenant.id,
+        plan_tier="free",
+        settings=get_settings(),
+    )
+
     result = CreateTenantOutput(
         tenant_id=tenant.id,
         slug=tenant.slug,

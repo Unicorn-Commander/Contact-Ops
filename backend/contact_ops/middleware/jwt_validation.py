@@ -87,11 +87,18 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     # ``state`` parameter that was issued at oauth-start time and stored
     # in ``oauth_pending`` (or short-TTL Redis); see
     # :mod:`contact_ops.connectors.oauth_state`.
+    # Inbound billing webhooks (Lago) cannot send a bearer Keycloak JWT; they are
+    # authenticated inline in :mod:`contact_ops.api.webhooks` by verifying Lago's
+    # per-payload RS256 signature JWT against its public key (or an opt-in
+    # LAGO_WEBHOOK_STATIC_SECRET), which FAILS CLOSED when no signature can be
+    # verified. Bypassing the Keycloak JWT here does NOT make the route open — the
+    # signature check is mandatory.
     SKIP_PREFIXES: tuple[str, ...] = (
         "/carddav",
         "/.well-known/carddav",
         "/api/connectors/m365/oauth/callback",
         "/api/connectors/gmail/oauth/callback",
+        "/api/webhooks/lago",
     )
 
     def __init__(self, app: Any, settings: Settings) -> None:

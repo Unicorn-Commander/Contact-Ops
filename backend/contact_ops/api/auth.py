@@ -529,6 +529,18 @@ async def onboard(request: Request) -> OnboardResponse:
             error=str(exc),
         )
 
+    # Register the new tenant with the billing substrate (Lago) so its later
+    # metered usage events do not 422 on an unknown customer. Best-effort +
+    # DORMANT by default (no-ops until billing is configured); never fails a
+    # successful signup. New personal workspaces start on the 'free' tier.
+    from contact_ops.billing.plan_admin import provision_lago_customer
+
+    await provision_lago_customer(
+        tenant_id=tenant_id_str,
+        plan_tier="free",
+        settings=settings,
+    )
+
     logger.info("onboard_provisioned", uc_uid=uc_uid, tenant_id=tenant_id_str)
     return OnboardResponse(
         tenant_id=new_tenant_id,

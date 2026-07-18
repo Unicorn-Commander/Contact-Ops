@@ -31,6 +31,7 @@ from contact_ops.api.connectors import router as connectors_router
 from contact_ops.api.import_vcard import router as import_vcard_router
 from contact_ops.api.import_csv import router as import_csv_router
 from contact_ops.api.test_brigade_jwt import router as test_brigade_jwt_router
+from contact_ops.api.webhooks import router as webhooks_router
 from contact_ops.api.well_known import router as well_known_router
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
@@ -359,6 +360,13 @@ def create_application() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(chat_router)
     app.include_router(connectors_router)
+    # Lago billing webhook (subscription.created / terminated -> plan_tier).
+    # Authenticated inline by verifying Lago's per-payload RS256 signature JWT
+    # against its public key (or an opt-in LAGO_WEBHOOK_STATIC_SECRET for
+    # proxy-injected deploys); the JWT middleware skips /api/webhooks via
+    # SKIP_PREFIXES — see middleware/jwt_validation.py. Fails closed (503) until a
+    # signature can be verified.
+    app.include_router(webhooks_router)
     app.include_router(import_vcard_router)
     app.include_router(import_csv_router)
     app.include_router(well_known_router)

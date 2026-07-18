@@ -11,6 +11,12 @@ from contact_ops.billing.catalog import (  # noqa: F401
     PLAN_CATALOG,
     PlanSpec,
     plan_for_tier,
+    tier_for_lago_plan_code,
+)
+from contact_ops.billing.plan_admin import (  # noqa: F401
+    PlanTierChange,
+    provision_lago_customer,
+    set_tenant_plan_tier,
 )
 from contact_ops.billing.provider import (  # noqa: F401
     BillingProvider,
@@ -23,7 +29,11 @@ __all__ = [
     "PLAN_CATALOG",
     "BillingProvider",
     "PlanSpec",
+    "PlanTierChange",
     "check_quota",
     "get_billing_provider",
     "plan_for_tier",
+    "provision_lago_customer",
+    "set_tenant_plan_tier",
+    "tier_for_lago_plan_code",
 ]
