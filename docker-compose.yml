@@ -59,7 +59,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: contact-ops-backend
+    # No container_name: the backend is multi-replica-safe (stateless; migrations
+    # run once under a Postgres advisory lock in prestart). A pinned name forbids
+    # a second replica (`docker compose up --scale contact-ops-backend=2`), so it
+    # is intentionally omitted — Compose names replicas <project>-<service>-<n>.
     restart: unless-stopped
     ports:
       - "8501:8501"

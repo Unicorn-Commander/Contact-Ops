@@ -109,6 +109,22 @@ def make_celery_app() -> Celery:
         },
     )
 
+    # Graph-sync outbox drain -- the GraphSyncWorker's runner. Continuous drainer
+    # (every minute) rather than a daily cron: graph_sync_outbox is a low-latency
+    # write path (a merge should show in FalkorDB promptly), and the drain is a
+    # cheap indexed no-op when empty. ENABLED by default (GRAPH_SYNC_DRAIN_ENABLED,
+    # non-destructive); gated inside run_graph_sync. Scheduled as a plain
+    # task-name + cron so beat does NOT import the graph_sync package (which pulls
+    # the FalkorDB client) to schedule it.
+    app.conf.beat_schedule.setdefault(
+        "graph-sync-drain",
+        {
+            "task": "contact_ops.agents.tasks.run_graph_sync",
+            "schedule": crontab(minute="*"),
+            "kwargs": {"agent_slug": "graph-sync-worker"},
+        },
+    )
+
     # Dedup BATCH agent -- runs through the agent-execution bridge (DORMANT
     # behind DEDUP_AGENT_ENABLED). Scheduled here as a plain task-name + cron
     # string (every 6h, from DEDUP_AGENT_DEF.triggers) rather than via
@@ -149,6 +165,7 @@ def make_celery_app() -> Celery:
     # inside the task body, so this import is safe in the slim API image).
     from contact_ops.agents import (
         agent_tasks,  # noqa: F401
+        graph_sync_drain,  # noqa: F401
         inbox_snooze_flipper,  # noqa: F401
         retention_sweep,  # noqa: F401
     )
