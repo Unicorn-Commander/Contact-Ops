@@ -41,6 +41,7 @@ from contact_ops.mcp.entitlement import DEFAULT_TIER, check_entitlement, tier_fo
 from contact_ops.mcp.errors import ToolError, error_result
 from contact_ops.mcp.registry import MCPContext, get_tool, list_tools
 from contact_ops.mcp.tools import register_all_tools
+from contact_ops.mcp.tools.common import enforce_tool_rbac
 
 logger = structlog.get_logger(__name__)
 register_all_tools()
@@ -186,28 +187,6 @@ class MCPServerInstance:
                             retryable=False,
                         )
                     )
-            # Entitlement gate (P-00075 §4): per-tool plan-tier enforcement.
-            # Runs AFTER the membership gate (so the GUC is bound for the plan
-            # read) and BEFORE the handler — free tools short-circuit with no DB
-            # I/O. Shadow-first + self-host bypass live inside check_entitlement.
-            entitlement_error = await check_entitlement(
-                tool_name=tool.name,
-                tenant_id=self.tenant_id,
-                db=db,
-                settings=settings,
-            )
-            if entitlement_error is not None:
-                await db.rollback()
-                await audit_db.rollback()
-                return error_result(entitlement_error)
-            # Quota gate (P-00075 billing): plan ALLOWANCE check layered on the
-            # entitlement gate (same RLS-bound db). Shadow-first + self-host
-            # bypass live inside check_quota; free tools short-circuit, no DB I/O.
-            quota_error = await check_quota(tool.name, self.tenant_id, db, settings)
-            if quota_error is not None:
-                await db.rollback()
-                await audit_db.rollback()
-                return error_result(quota_error)
             ctx = MCPContext(
                 tenant_id=self.tenant_id,
                 user_id=self.user_id,
@@ -219,6 +198,30 @@ class MCPServerInstance:
                 claims=self.claims,
             )
             try:
+                enforce_tool_rbac(ctx, tool)
+                # Entitlement gate (P-00075 §4): per-tool plan-tier enforcement.
+                # Runs AFTER membership + RBAC (so unauthorized callers do not
+                # learn plan state) and BEFORE the handler — free tools short-circuit
+                # with no DB I/O. Shadow-first + self-host bypass live inside
+                # check_entitlement.
+                entitlement_error = await check_entitlement(
+                    tool_name=tool.name,
+                    tenant_id=self.tenant_id,
+                    db=db,
+                    settings=settings,
+                )
+                if entitlement_error is not None:
+                    await db.rollback()
+                    await audit_db.rollback()
+                    return error_result(entitlement_error)
+                # Quota gate (P-00075 billing): plan ALLOWANCE check layered on the
+                # entitlement gate (same RLS-bound db). Shadow-first + self-host
+                # bypass live inside check_quota; free tools short-circuit, no DB I/O.
+                quota_error = await check_quota(tool.name, self.tenant_id, db, settings)
+                if quota_error is not None:
+                    await db.rollback()
+                    await audit_db.rollback()
+                    return error_result(quota_error)
                 output = await tool.handler(ctx, parsed)
                 # Commit the audit/Undo ledger (audit_db) BEFORE the data (db). Both
                 # point at the same Postgres, so the gap is tiny, but if a crash hits
