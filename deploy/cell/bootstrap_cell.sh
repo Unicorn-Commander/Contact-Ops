@@ -39,7 +39,6 @@ done
 log()  { printf '\033[0;32m[cell]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[cell WARN]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[0;31m[cell ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
-run()  { if [[ $DRY_RUN -eq 1 ]]; then printf '+ %s\n' "$*"; else eval "$@"; fi; }
 
 PG_CONTAINER="${PG_CONTAINER:-contact-ops-postgres}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
@@ -106,7 +105,13 @@ if [[ "$EXISTING" == "t" ]]; then
   warn "Contact-Ops tables already exist in contact_ops_db — skipping role create + treating as RE-RUN (non-destructive)."
 else
   log "  creating runtime LOGIN role (idempotent; NOLOGIN policy roles come from alembic 0001)..."
-  run "docker exec -i $PG_CONTAINER psql -U contact_ops_admin -d contact_ops_db <<SQL
+  if [[ $DRY_RUN -eq 1 ]]; then
+    # Never render the expanded SQL: it contains RUNTIME_PASS. The dry-run plan
+    # names the non-secret target and actions without exposing credential data.
+    log "  (dry-run) would create/update runtime LOGIN role '$RUNTIME_ROLE'"
+    log "  (dry-run) would grant '$RUNTIME_ROLE' membership in contact_ops_app"
+  else
+    docker exec -i "$PG_CONTAINER" psql -U contact_ops_admin -d contact_ops_db <<SQL
 -- Pre-create the NOLOGIN policy/group roles idempotently so the runtime LOGIN
 -- role can be made a MEMBER of contact_ops_app BEFORE migrations. alembic 0001
 -- re-creates these idempotently; creating them here is harmless + required for
@@ -127,12 +132,17 @@ EXCEPTION WHEN duplicate_object THEN
 END \\\$\\\$;
 -- Belt-and-suspenders: ensure membership even if the role pre-existed without it.
 GRANT contact_ops_app TO $RUNTIME_ROLE;
-SQL"
+SQL
+  fi
 fi
 
 # --- 2. Bring up the stack (prestart auto-migrates) --------------------------
 log "=== 2. docker compose up (prestart auto-runs alembic to head + schema_guard) ==="
-run "docker compose -f $COMPOSE_FILE up -d --build"
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "  (dry-run) would run: docker compose -f '$COMPOSE_FILE' up -d --build"
+else
+  docker compose -f "$COMPOSE_FILE" up -d --build
+fi
 
 # --- 3. Wait for health ------------------------------------------------------
 log "=== 3. Wait for backend health ==="
@@ -140,7 +150,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
   log "  (dry-run) would poll $HEALTH_URL"
 else
   ok=0
-  for i in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     if docker exec contact-ops-backend curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
       ok=1; break
     fi

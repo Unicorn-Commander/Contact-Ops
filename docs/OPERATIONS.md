@@ -85,34 +85,49 @@ Connector payload encryption supports two configuration forms:
   precedence over the legacy setting.
 
 The API, Celery worker, and Celery beat all validate the same `Settings`
-contract at process start and all three consume the same Compose env file. Do
-not advance the primary until every process is running a ring-aware release.
-The safe no-outage sequence is:
+contract at process start and all three consume the same Compose env file. A
+stale process with the old primary can emit an old-key token after a successful
+verification, making that token unreadable once the fallback is removed. Do
+not advance or retire a primary until **every replica** of all three process
+types has been recreated and its live configuration has been confirmed. The
+safe no-outage sequence is:
 
 1. Take and verify a database backup. Generate the replacement Fernet key in
    the operator secret store; never pass a key on this CLI or put it in shell
    history.
 2. Stage `CONNECTOR_ENCRYPTION_KEYS=["<old>","<new>"]`. The old key remains
    primary, so legacy ciphertext and concurrent writes remain readable while
-   the ring-aware release is rolled through backend, worker, and beat. Confirm
-   every old process has exited.
+   the ring-aware release is rolled through every API, worker, and beat
+   replica. Confirm every old process has exited before continuing.
 3. Reorder the shared setting to
-   `CONNECTOR_ENCRYPTION_KEYS=["<new>","<old>"]` and roll all three processes
-   again. Both the old-primary and new-primary ring-aware processes can read
-   both generations, so the rollout order is not data-dependent. Do not roll
-   back to a pre-keyring release after this point.
+   `CONNECTOR_ENCRYPTION_KEYS=["<new>","<old>"]` and recreate every replica of
+   all three process types again. Prove from each live process that the
+   intended new key is primary; do not rely only on the deployment manifest.
+   Both ring orders can read both generations during this rollout, but rewrap
+   must not begin while any old-primary writer remains. Do not roll back to a
+   pre-keyring release after this point.
 4. Run the authenticated read-only preflight inside the backend image:
 
    ```bash
    python -m contact_ops.connectors.key_rotation --dry-run --actor <operator-id>
    ```
 
-5. Rewrap in one transaction, then prove no fallback key is needed:
+5. In trusted local secret tooling, calculate the SHA-256 hex digest of the
+   intended new Fernet key's ASCII string. The digest is a non-secret identity
+   check; never paste the key itself into the command. Rewrap in one
+   transaction, then prove no fallback key is needed, supplying that same
+   expected digest to both guarded operations:
 
    ```bash
-   python -m contact_ops.connectors.key_rotation --rewrap --actor <operator-id>
-   python -m contact_ops.connectors.key_rotation --verify-new-only --actor <operator-id>
+   python -m contact_ops.connectors.key_rotation --rewrap --actor <operator-id> \
+     --expected-primary-sha256 <new-key-sha256>
+   python -m contact_ops.connectors.key_rotation --verify-new-only --actor <operator-id> \
+     --expected-primary-sha256 <new-key-sha256>
    ```
+
+   The command validates the digest against the configured first key before
+   opening a database connection. A reversed ring such as `["<old>","<new>"]`
+   therefore fails before any read, lock, or mutation.
 
 6. Only after `verify-new-only` succeeds, set the ring to `["<new>"]`, update
    the legacy single-key value to the same new key (for configuration
@@ -123,11 +138,20 @@ The command accepts no key or database arguments. It reads the shared Settings
 contract and refuses to use the runtime DSN: `MIGRATION_DATABASE_URL` must
 authenticate as a PostgreSQL `SUPERUSER` or `BYPASSRLS` role. Rewrap and the
 primary-only verification gate briefly block connector writes while reads
-continue. Rewrap preflights every ciphertext before its first update, verifies
-semantic JSON equality, compare-and-swaps each row, and primary-only verifies
-the locked table before commit. A corrupt row, unauthorized role, concurrent
+continue. The transaction defaults to `--lock-timeout-ms 5000` and
+`--statement-timeout-ms 30000`; the accepted ranges are 100-60000 ms and
+100-300000 ms respectively, and the statement timeout must exceed the lock
+timeout. Both are applied with `SET LOCAL`, so a lock wait cannot queue writers
+indefinitely and the settings disappear on commit or rollback. Treat a timeout
+as a failed operation and investigate active writers rather than increasing
+these bounds blindly.
+
+Rewrap preflights every ciphertext before its first update, verifies semantic
+JSON equality, compare-and-swaps each row, and primary-only verifies the locked
+table before commit. A corrupt row, unauthorized role, timeout, concurrent
 mismatch, or failed verification aborts and rolls back the whole operation.
-Output contains counts only, never keys, ciphertext, or connector plaintext.
+Output contains counts only, never keys, ciphertext, connector plaintext, or
+secret-bearing exception details.
 
 ## Verifying changes WITHOUT a JWT (the in-process pattern)
 
