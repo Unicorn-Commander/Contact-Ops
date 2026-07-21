@@ -118,18 +118,18 @@ else
 -- the membership grant below (RLS policies are '... TO contact_ops_app' and
 -- table privileges are GRANTed to contact_ops_app, so the runtime role only
 -- inherits them + has the policies apply if it is a member of contact_ops_app).
-DO \\\$\\\$ BEGIN CREATE ROLE contact_ops_app   NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \\\$\\\$;
-DO \\\$\\\$ BEGIN CREATE ROLE contact_ops_ro    NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \\\$\\\$;
-DO \\\$\\\$ BEGIN CREATE ROLE contact_ops_audit NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \\\$\\\$;
+DO \$\$ BEGIN CREATE ROLE contact_ops_app   NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
+DO \$\$ BEGIN CREATE ROLE contact_ops_ro    NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
+DO \$\$ BEGIN CREATE ROLE contact_ops_audit NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
 -- Runtime LOGIN role (NOBYPASSRLS -> RLS-subject), created IN ROLE contact_ops_app
 -- so the group privileges + RLS policies apply. Fallback ALTERs + GRANTs membership
 -- if the role already existed.
-DO \\\$\\\$ BEGIN
+DO \$\$ BEGIN
   CREATE ROLE $RUNTIME_ROLE LOGIN NOBYPASSRLS PASSWORD '$RUNTIME_PASS' IN ROLE contact_ops_app;
 EXCEPTION WHEN duplicate_object THEN
   ALTER ROLE $RUNTIME_ROLE LOGIN NOBYPASSRLS PASSWORD '$RUNTIME_PASS';
   GRANT contact_ops_app TO $RUNTIME_ROLE;
-END \\\$\\\$;
+END \$\$;
 -- Belt-and-suspenders: ensure membership even if the role pre-existed without it.
 GRANT contact_ops_app TO $RUNTIME_ROLE;
 SQL

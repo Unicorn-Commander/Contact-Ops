@@ -18,7 +18,7 @@ import re
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Never
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -35,6 +35,13 @@ class KeyRotationMode(StrEnum):
 
 class ConnectorKeyRotationError(RuntimeError):
     """Fail-closed rotation error with no key, ciphertext, or plaintext detail."""
+
+
+class _SecretSafeArgumentParser(argparse.ArgumentParser):
+    """Discard argparse messages because they can contain rejected values."""
+
+    def error(self, _message: str) -> Never:
+        raise ConnectorKeyRotationError("connector key operation arguments are invalid")
 
 
 @dataclass(frozen=True)
@@ -384,7 +391,7 @@ async def run_connector_key_operation(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _SecretSafeArgumentParser(
         prog="python -m contact_ops.connectors.key_rotation",
         description="Authenticated connector payload key rewrap and verification",
     )
@@ -461,8 +468,11 @@ def _format_report(report: KeyRotationReport) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
     try:
+        # Parsing belongs inside the secret-safe boundary. The custom parser
+        # drops argparse's rejected-value message, while argparse's ordinary
+        # ``--help`` SystemExit(0) remains untouched.
+        args = _parser().parse_args(argv)
         report = asyncio.run(
             run_connector_key_operation(
                 settings=get_settings(),

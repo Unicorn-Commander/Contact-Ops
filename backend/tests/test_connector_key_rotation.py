@@ -544,3 +544,69 @@ def test_module_entrypoint_contains_settings_failure_and_unrelated_secret(
     assert unrelated_marker not in completed.stdout
     assert unrelated_marker not in completed.stderr
     assert "Traceback" not in completed.stderr
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (
+            "--dry-run",
+            "--actor",
+            "pytest",
+            "--lock-timeout-ms",
+            "argparse-marker-must-never-render",
+        ),
+        (
+            "--dry-run",
+            "--actor",
+            "pytest",
+            "--unknown-arg=argparse-marker-must-never-render",
+        ),
+    ],
+    ids=["invalid-typed-value", "unknown-argument"],
+)
+def test_module_entrypoint_contains_rejected_argument_values(
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+) -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    marker = "argparse-marker-must-never-render"
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and module arguments.
+        [sys.executable, "-m", "contact_ops.connectors.key_rotation", *arguments],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(backend_root),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == ("ERROR: connector key operation failed; transaction rolled back\n")
+    assert marker not in completed.stdout
+    assert marker not in completed.stderr
+
+
+def test_module_entrypoint_help_remains_available(tmp_path: Path) -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and module arguments.
+        [sys.executable, "-m", "contact_ops.connectors.key_rotation", "--help"],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(backend_root),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    assert "usage: python -m contact_ops.connectors.key_rotation" in completed.stdout
+    assert "--expected-primary-sha256" in completed.stdout
