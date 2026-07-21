@@ -22,6 +22,7 @@ This module does not stop or start services.  Follow
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import hmac
 import ipaddress
@@ -36,8 +37,11 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Final, Never
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -53,8 +57,46 @@ DB_NAME: Final = "contact_ops_db"
 PRODUCTION_DB_NETWORK: Final = "unicorn-network"
 
 ENV_KEYS: Final = ("DATABASE_URL", "AUDIT_DATABASE_URL", "MIGRATION_DATABASE_URL")
-STATE_FILES: Final = ("previous.env", "runtime.env", "final.env", "manifest.json")
+STATE_FILES: Final = (
+    "previous.env",
+    "runtime.env",
+    "final.env",
+    "manifest.json",
+    "state.json",
+    "rotation.lock",
+)
 MAX_SECRET_FILE_BYTES: Final = 1024 * 1024
+
+PHASE_STAGED: Final = "staged"
+PHASE_RUNTIME_NEW_PENDING: Final = "runtime-new-pending"
+PHASE_RUNTIME_ROLE_APPLIED: Final = "runtime-role-applied"
+PHASE_RUNTIME_ACTIVE: Final = "runtime-active"
+PHASE_MIGRATION_NEW_PENDING: Final = "migration-new-pending"
+PHASE_MIGRATION_ROLE_APPLIED: Final = "migration-role-applied"
+PHASE_FINAL_ACTIVE: Final = "final-active"
+PHASE_MIGRATION_ROLLBACK_PENDING: Final = "migration-rollback-pending"
+PHASE_RUNTIME_ROLLBACK_PENDING: Final = "runtime-rollback-pending"
+
+_VALID_PHASES: Final = frozenset(
+    {
+        PHASE_STAGED,
+        PHASE_RUNTIME_NEW_PENDING,
+        PHASE_RUNTIME_ROLE_APPLIED,
+        PHASE_RUNTIME_ACTIVE,
+        PHASE_MIGRATION_NEW_PENDING,
+        PHASE_MIGRATION_ROLE_APPLIED,
+        PHASE_FINAL_ACTIVE,
+        PHASE_MIGRATION_ROLLBACK_PENDING,
+        PHASE_RUNTIME_ROLLBACK_PENDING,
+    }
+)
+
+_PENDING_ORIGINS: Final = {
+    PHASE_RUNTIME_NEW_PENDING: frozenset({PHASE_STAGED}),
+    PHASE_MIGRATION_NEW_PENDING: frozenset({PHASE_RUNTIME_ACTIVE}),
+    PHASE_MIGRATION_ROLLBACK_PENDING: frozenset({PHASE_MIGRATION_ROLE_APPLIED, PHASE_FINAL_ACTIVE}),
+    PHASE_RUNTIME_ROLLBACK_PENDING: frozenset({PHASE_RUNTIME_ROLE_APPLIED, PHASE_RUNTIME_ACTIVE}),
+}
 
 _ASSIGNMENT_RE = re.compile(
     r"^(?P<prefix>\s*(?:export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*)(?P<value>.*)$"
@@ -65,6 +107,12 @@ _CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 class RotationError(RuntimeError):
     """Expected fail-closed error whose text is safe to show an operator."""
+
+
+class _ProbeStatus(Enum):
+    SUCCESS = "success"
+    AUTH_REJECTED = "auth-rejected"
+    FAILURE = "failure"
 
 
 @dataclass(frozen=True)
@@ -93,6 +141,14 @@ class _State:
     source_env: Path
     files: dict[str, bytes]
     hashes: dict[str, str]
+    phase: str
+    origin_phase: str | None
+
+
+@dataclass(frozen=True)
+class _ProbeResult:
+    status: _ProbeStatus
+    output: str
 
 
 def _status(message: str) -> None:
@@ -300,8 +356,7 @@ def _rewrite_env(data: bytes, replacements: dict[str, str]) -> bytes:
         assignment = assignments[key]
         value = _replace_dsn_password(assignment.value, password)
         lines[assignment.index] = (
-            f"{assignment.prefix}{assignment.quote}{value}{assignment.quote}"
-            f"{assignment.newline}"
+            f"{assignment.prefix}{assignment.quote}{value}{assignment.quote}{assignment.newline}"
         )
     return "".join(lines).encode()
 
@@ -332,6 +387,42 @@ def _validate_staged_relationships(
         _fail("staged migration credential did not change")
     if final_migration == runtime_password:
         _fail("staged runtime and migration credentials are not separated")
+
+
+def _phase_document(phase: str, origin_phase: str | None = None) -> bytes:
+    if phase not in _VALID_PHASES:
+        _fail("refusing to persist an unknown rotation phase")
+    if phase in _PENDING_ORIGINS:
+        if origin_phase not in _PENDING_ORIGINS[phase]:
+            _fail("refusing to persist an invalid transition origin")
+    elif origin_phase is not None:
+        _fail("refusing to persist an origin on a stable rotation phase")
+    document = {
+        "version": 1,
+        "phase": phase,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if origin_phase is not None:
+        document["origin_phase"] = origin_phase
+    return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _parse_phase(data: bytes) -> tuple[str, str | None]:
+    try:
+        document = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise RotationError("rotation phase journal is invalid") from exc
+    if document.get("version") != 1 or document.get("phase") not in _VALID_PHASES:
+        _fail("rotation phase journal is incomplete or unsupported")
+    phase = str(document["phase"])
+    origin = document.get("origin_phase")
+    if phase in _PENDING_ORIGINS:
+        if origin not in _PENDING_ORIGINS[phase]:
+            _fail("pending rotation phase has an invalid stable origin")
+        return phase, str(origin)
+    if origin is not None:
+        _fail("stable rotation phase must not retain an origin")
+    return phase, None
 
 
 def stage(source_env: Path, state_dir: Path) -> None:
@@ -380,7 +471,7 @@ def stage(source_env: Path, state_dir: Path) -> None:
         "final.env": _sha256(final_data),
     }
     manifest = {
-        "version": 1,
+        "version": 2,
         "created_at": datetime.now(UTC).isoformat(),
         "source_env": str(source_env),
         "database": {
@@ -405,6 +496,8 @@ def stage(source_env: Path, state_dir: Path) -> None:
         _write_new_private_file(temporary / "runtime.env", runtime_data)
         _write_new_private_file(temporary / "final.env", final_data)
         _write_new_private_file(temporary / "manifest.json", manifest_data)
+        _write_new_private_file(temporary / "state.json", _phase_document(PHASE_STAGED))
+        _write_new_private_file(temporary / "rotation.lock", b"")
         os.replace(temporary, state_dir)
         parent_fd = os.open(state_dir.parent, os.O_RDONLY)
         try:
@@ -447,7 +540,7 @@ def _load_state(state_dir: Path) -> _State:
         manifest = json.loads(manifest_data)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise RotationError("rotation manifest is invalid") from exc
-    if manifest.get("version") != 1:
+    if manifest.get("version") != 2:
         _fail("unsupported rotation manifest version")
     try:
         source_env = Path(manifest["source_env"])
@@ -472,11 +565,14 @@ def _load_state(state_dir: Path) -> _State:
     runtime = _validate_env(files["runtime.env"])
     final = _validate_env(files["final.env"])
     _validate_staged_relationships(previous, runtime, final)
+    phase, origin_phase = _parse_phase(_read_private_file(state_dir / "state.json"))
     return _State(
         directory=state_dir,
         source_env=source_env,
         files=files,
         hashes=hashes,
+        phase=phase,
+        origin_phase=origin_phase,
     )
 
 
@@ -506,32 +602,145 @@ def _atomic_replace_private(path: Path, data: bytes) -> None:
             pass
 
 
+@contextmanager
+def _state_lock(state_dir: Path) -> Iterator[Path]:
+    candidate = state_dir.expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    try:
+        if stat.S_ISLNK(candidate.lstat().st_mode):
+            _fail("rotation state directory must not be a symlink")
+    except FileNotFoundError as exc:
+        raise RotationError("rotation state directory does not exist") from exc
+    resolved = candidate.resolve(strict=True)
+    lock_path = resolved / "rotation.lock"
+    flags = os.O_RDWR | os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(lock_path, flags)
+    except OSError as exc:
+        raise RotationError("cannot safely open the rotation lock") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            _fail("rotation lock is not a current-operator-owned regular file")
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            _fail("rotation lock must not grant group/other permissions")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield resolved
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _set_phase(state: _State, phase: str, origin_phase: str | None = None) -> None:
+    phase_path = state.directory / "state.json"
+    _atomic_replace_private(phase_path, _phase_document(phase, origin_phase))
+    if _parse_phase(_read_private_file(phase_path)) != (phase, origin_phase):
+        _fail("rotation phase journal update could not be verified")
+
+
+def _live_phase(state: _State) -> str:
+    live_hash = _sha256(_read_private_file(state.source_env))
+    for phase, filename in (
+        ("previous", "previous.env"),
+        ("runtime", "runtime.env"),
+        ("final", "final.env"),
+    ):
+        if hmac.compare_digest(live_hash, state.hashes[filename]):
+            return phase
+    _fail("live environment drifted from every staged phase")
+
+
+def _require_machine_phase(state: _State, action: str, allowed: set[str]) -> None:
+    if state.phase not in allowed:
+        expected = ", ".join(sorted(allowed))
+        _fail(f"action {action} is not allowed from phase {state.phase}; expected {expected}")
+
+
 _ACTIVATIONS: Final = {
-    "runtime": ("runtime.env", {"previous.env"}),
-    "final": ("final.env", {"runtime.env"}),
-    "rollback-migration": ("runtime.env", {"final.env"}),
-    "rollback-all": ("previous.env", {"runtime.env", "final.env"}),
+    "runtime": (
+        "runtime.env",
+        "previous",
+        PHASE_RUNTIME_ROLE_APPLIED,
+        PHASE_RUNTIME_ACTIVE,
+    ),
+    "final": (
+        "final.env",
+        "runtime",
+        PHASE_MIGRATION_ROLE_APPLIED,
+        PHASE_FINAL_ACTIVE,
+    ),
 }
 
 
-def activate(state_dir: Path, action: str) -> None:
-    state = _load_state(state_dir)
-    target_name, allowed_current = _ACTIVATIONS[action]
-    current_data = _read_private_file(state.source_env)
-    current_hash = _sha256(current_data)
-    target_hash = state.hashes[target_name]
-    if hmac.compare_digest(current_hash, target_hash):
-        _status(f"configuration already matches activation action {action}")
-        return
-    if not any(
-        hmac.compare_digest(current_hash, state.hashes[name]) for name in allowed_current
+def _replace_live_config(state: _State, filename: str) -> None:
+    _atomic_replace_private(state.source_env, state.files[filename])
+    if not hmac.compare_digest(
+        _sha256(_read_private_file(state.source_env)), state.hashes[filename]
     ):
-        _fail("live environment drifted from the staged sequence; refusing to overwrite it")
-    _confirm(f"activate-{action}")
-    _atomic_replace_private(state.source_env, state.files[target_name])
-    if not hmac.compare_digest(_sha256(_read_private_file(state.source_env)), target_hash):
         _fail("atomic environment activation could not be verified")
-    _status(f"activated {action} database configuration without printing credentials")
+
+
+def _compensate_activation(state: _State, action: str, container: str) -> None:
+    previous = _validate_env(state.files["previous.env"])
+    runtime = _validate_env(state.files["runtime.env"])
+    if action == "runtime":
+        # Persist a recoverable transition before the compensating ALTER ROLE.
+        _set_phase(state, PHASE_RUNTIME_NEW_PENDING, PHASE_STAGED)
+        _replace_live_config(state, "previous.env")
+        _set_password_with_psql(container, RUNTIME_ROLE, previous["DATABASE_URL"].password)
+        _verify_phase(state, "previous", container, require_live=True)
+        _set_phase(state, PHASE_STAGED)
+        return
+    _set_phase(state, PHASE_MIGRATION_NEW_PENDING, PHASE_RUNTIME_ACTIVE)
+    _replace_live_config(state, "runtime.env")
+    _set_password_with_psql(container, MIGRATION_ROLE, runtime["MIGRATION_DATABASE_URL"].password)
+    _verify_phase(state, "runtime", container, require_live=True)
+    _set_phase(state, PHASE_RUNTIME_ACTIVE)
+
+
+def activate(state_dir: Path, action: str, container: str) -> None:
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        if action not in _ACTIVATIONS:
+            _fail("refusing an unknown activation action")
+        target_name, current_live_phase, required_phase, completed_phase = _ACTIVATIONS[action]
+        _require_machine_phase(state, f"activate-{action}", {required_phase})
+        live_phase = _live_phase(state)
+        target_phase = target_name.removesuffix(".env")
+        if live_phase == target_phase:
+            _verify_phase(state, target_phase, container, require_live=True)
+            _set_phase(state, completed_phase)
+            _status(f"reconciled already-active {action} configuration")
+            return
+        if live_phase != current_live_phase:
+            _fail(
+                f"activation {action} requires live {current_live_phase} config; found {live_phase}"
+            )
+
+        # Verify the target role state before changing the live config. This is
+        # the gate that prevents a config-first credential split.
+        _verify_phase(state, target_phase, container, require_live=False)
+        _confirm(f"activate-{action}")
+        try:
+            _replace_live_config(state, target_name)
+            _verify_phase(state, target_phase, container, require_live=True)
+            _set_phase(state, completed_phase)
+        except Exception as exc:
+            try:
+                _compensate_activation(state, action, container)
+            except Exception as compensation_exc:
+                raise RotationError(
+                    "activation failed and automatic compensation failed; "
+                    "writers must remain stopped"
+                ) from compensation_exc
+            restored_phase = PHASE_STAGED if action == "runtime" else PHASE_RUNTIME_ACTIVE
+            raise RotationError(
+                f"activation failed; database and config were restored to {restored_phase}"
+            ) from exc
+        _status(f"activated {action} database configuration without printing credentials")
 
 
 def _docker_binary() -> str:
@@ -644,7 +853,7 @@ PGPASSFILE="$credential_file" psql -X -v ON_ERROR_STOP=1 -qAt \
 """
 
 
-def _tcp_query(container: str, username: str, password: str, sql: str) -> tuple[bool, str]:
+def _tcp_query(container: str, username: str, password: str, sql: str) -> _ProbeResult:
     _validate_container(container)
     tcp_host = _container_tcp_host(container)
     pgpass = ":".join(
@@ -683,7 +892,12 @@ def _tcp_query(container: str, username: str, password: str, sql: str) -> tuple[
         output = result.stdout.decode("utf-8").strip()
     except UnicodeDecodeError as exc:
         raise RotationError("database returned an invalid authentication result") from exc
-    return result.returncode == 0, output
+    if result.returncode == 0:
+        return _ProbeResult(_ProbeStatus.SUCCESS, output)
+    stderr_lower = result.stderr.lower()
+    if b"password authentication failed for user" in stderr_lower:
+        return _ProbeResult(_ProbeStatus.AUTH_REJECTED, "")
+    return _ProbeResult(_ProbeStatus.FAILURE, "")
 
 
 def _wrong_password(password: str) -> str:
@@ -698,15 +912,17 @@ def _assert_password_auth(
     sql: str,
     expected: tuple[str, ...],
 ) -> None:
-    wrong_ok, _wrong_output = _tcp_query(
+    wrong_result = _tcp_query(
         container, username, _wrong_password(password), "SELECT 'UNEXPECTED';\n"
     )
-    if wrong_ok:
+    if wrong_result.status is _ProbeStatus.SUCCESS:
         _fail("TCP password authentication accepted a known-wrong credential")
-    correct_ok, output = _tcp_query(container, username, password, sql)
-    if not correct_ok:
+    if wrong_result.status is not _ProbeStatus.AUTH_REJECTED:
+        _fail("known-wrong credential probe failed without an authentication rejection")
+    correct_result = _tcp_query(container, username, password, sql)
+    if correct_result.status is not _ProbeStatus.SUCCESS:
         _fail(f"authenticated database query failed for role {username}")
-    output_lines = output.splitlines()
+    output_lines = correct_result.output.splitlines()
     missing = [item for item in expected if item not in output_lines]
     if missing:
         _fail(f"database verification checks failed for role {username}: {', '.join(missing)}")
@@ -822,15 +1038,29 @@ def _verify_phase(state: _State, phase: str, container: str, *, require_live: bo
 
 
 def verify(state_dir: Path, phase: str, container: str) -> None:
-    state = _load_state(state_dir)
-    _verify_phase(state, phase, container, require_live=True)
+    required_machine = {
+        "previous": PHASE_STAGED,
+        "runtime": PHASE_RUNTIME_ACTIVE,
+        "final": PHASE_FINAL_ACTIVE,
+    }[phase]
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        _require_machine_phase(state, f"verify-{phase}", {required_machine})
+        _verify_phase(state, phase, container, require_live=True)
 
 
-_ROLE_ACTIONS: Final = {
-    "runtime-new": (RUNTIME_ROLE, "runtime.env", "DATABASE_URL"),
-    "migration-new": (MIGRATION_ROLE, "final.env", "MIGRATION_DATABASE_URL"),
-    "migration-rollback": (MIGRATION_ROLE, "runtime.env", "MIGRATION_DATABASE_URL"),
-    "runtime-rollback": (RUNTIME_ROLE, "previous.env", "DATABASE_URL"),
+_ROLE_ACTIONS: Final = (
+    "runtime-new",
+    "migration-new",
+    "migration-rollback",
+    "runtime-rollback",
+)
+
+_ROLE_REQUIRED_PHASES: Final = {
+    "runtime-new": frozenset({PHASE_STAGED}),
+    "migration-new": frozenset({PHASE_RUNTIME_ACTIVE}),
+    "migration-rollback": frozenset({PHASE_MIGRATION_ROLE_APPLIED, PHASE_FINAL_ACTIVE}),
+    "runtime-rollback": frozenset({PHASE_RUNTIME_ROLE_APPLIED, PHASE_RUNTIME_ACTIVE}),
 }
 
 
@@ -864,29 +1094,214 @@ def _set_password_with_psql(container: str, role: str, password: str) -> None:
     _run_command(command, payload.encode())
 
 
-def role_password(state_dir: Path, action: str, container: str) -> None:
-    state = _load_state(state_dir)
-    role, filename, key = _ROLE_ACTIONS[action]
-    dsns = _validate_env(state.files[filename])
-    password = dsns[key].password
-    _verify_local_role_contract(container)
+def _forward_role_password(state: _State, action: str, container: str) -> None:
+    if action == "runtime-new":
+        role = RUNTIME_ROLE
+        key = "DATABASE_URL"
+        source_config = "previous"
+        target_config = "runtime"
+        required_phase = PHASE_STAGED
+        pending_phase = PHASE_RUNTIME_NEW_PENDING
+        applied_phase = PHASE_RUNTIME_ROLE_APPLIED
+    else:
+        role = MIGRATION_ROLE
+        key = "MIGRATION_DATABASE_URL"
+        source_config = "runtime"
+        target_config = "final"
+        required_phase = PHASE_RUNTIME_ACTIVE
+        pending_phase = PHASE_MIGRATION_NEW_PENDING
+        applied_phase = PHASE_MIGRATION_ROLE_APPLIED
+
+    _require_machine_phase(state, action, {required_phase})
+    live_phase = _live_phase(state)
+    if live_phase != source_config:
+        _fail(f"role action {action} requires live {source_config} config; found {live_phase}")
+    _verify_phase(state, source_config, container, require_live=True)
+
+    source_dsns = _validate_env(state.files[f"{source_config}.env"])
+    target_dsns = _validate_env(state.files[f"{target_config}.env"])
+    old_password = source_dsns[key].password
+    new_password = target_dsns[key].password
     _confirm(action)
-    _set_password_with_psql(container, role, password)
-    phase = filename.removesuffix(".env")
-    _verify_phase(state, phase, container, require_live=False)
+    _set_phase(state, pending_phase, required_phase)
+    try:
+        _set_password_with_psql(container, role, new_password)
+        _verify_phase(state, target_config, container, require_live=False)
+        if _live_phase(state) != source_config:
+            _fail("live config changed during the role-only transition")
+        _set_phase(state, applied_phase)
+    except Exception as exc:
+        try:
+            _replace_live_config(state, f"{source_config}.env")
+            _set_password_with_psql(container, role, old_password)
+            _verify_phase(state, source_config, container, require_live=True)
+            _set_phase(state, required_phase)
+        except Exception as compensation_exc:
+            raise RotationError(
+                f"role action {action} failed and automatic compensation failed; "
+                "writers must remain stopped and recover must be run"
+            ) from compensation_exc
+        raise RotationError(
+            f"role action {action} failed; database and config were restored"
+        ) from exc
     _status(f"completed and verified database role action {action}")
 
 
+def _rollback_role_password(state: _State, action: str, container: str) -> None:
+    if action == "migration-rollback":
+        role = MIGRATION_ROLE
+        key = "MIGRATION_DATABASE_URL"
+        source_config = "final"
+        target_config = "runtime"
+        allowed_live = {
+            PHASE_MIGRATION_ROLE_APPLIED: "runtime",
+            PHASE_FINAL_ACTIVE: "final",
+        }
+        pending_phase = PHASE_MIGRATION_ROLLBACK_PENDING
+        completed_phase = PHASE_RUNTIME_ACTIVE
+    else:
+        role = RUNTIME_ROLE
+        key = "DATABASE_URL"
+        source_config = "runtime"
+        target_config = "previous"
+        allowed_live = {
+            PHASE_RUNTIME_ROLE_APPLIED: "previous",
+            PHASE_RUNTIME_ACTIVE: "runtime",
+        }
+        pending_phase = PHASE_RUNTIME_ROLLBACK_PENDING
+        completed_phase = PHASE_STAGED
+
+    _require_machine_phase(state, action, set(allowed_live))
+    origin_phase = state.phase
+    expected_live = allowed_live[origin_phase]
+    live_phase = _live_phase(state)
+    if live_phase != expected_live:
+        _fail(f"role action {action} requires live {expected_live} config; found {live_phase}")
+    _verify_phase(
+        state,
+        source_config,
+        container,
+        require_live=expected_live == source_config,
+    )
+
+    source_dsns = _validate_env(state.files[f"{source_config}.env"])
+    target_dsns = _validate_env(state.files[f"{target_config}.env"])
+    source_password = source_dsns[key].password
+    target_password = target_dsns[key].password
+    _confirm(action)
+    _set_phase(state, pending_phase, origin_phase)
+    try:
+        _set_password_with_psql(container, role, target_password)
+        _replace_live_config(state, f"{target_config}.env")
+        _verify_phase(state, target_config, container, require_live=True)
+        _set_phase(state, completed_phase)
+    except Exception as exc:
+        try:
+            _replace_live_config(state, f"{expected_live}.env")
+            _set_password_with_psql(container, role, source_password)
+            _verify_phase(
+                state,
+                source_config,
+                container,
+                require_live=expected_live == source_config,
+            )
+            if _live_phase(state) != expected_live:
+                _fail("rollback compensation could not restore the original live config")
+            _set_phase(state, origin_phase)
+        except Exception as compensation_exc:
+            raise RotationError(
+                f"role action {action} failed and automatic compensation failed; "
+                "writers must remain stopped and recover must be run"
+            ) from compensation_exc
+        raise RotationError(
+            f"role action {action} failed; database and config were restored"
+        ) from exc
+    _status(f"completed and verified database role action {action}")
+
+
+def role_password(state_dir: Path, action: str, container: str) -> None:
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        if action not in _ROLE_REQUIRED_PHASES:
+            _fail("refusing an unknown database role action")
+        if state.phase.endswith("-pending"):
+            _fail(f"rotation is in pending phase {state.phase}; run recover before any role action")
+        # Reject wrong-order actions before any database command, especially
+        # before the ALTER ROLE performed by _set_password_with_psql.
+        _require_machine_phase(state, action, set(_ROLE_REQUIRED_PHASES[action]))
+        _verify_local_role_contract(container)
+        if action in {"runtime-new", "migration-new"}:
+            _forward_role_password(state, action, container)
+        else:
+            _rollback_role_password(state, action, container)
+
+
+def recover(state_dir: Path, container: str) -> None:
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        if not state.phase.endswith("-pending") or state.origin_phase is None:
+            _fail("recover is only allowed from a pending transition phase")
+        _verify_local_role_contract(container)
+        _confirm(f"recover-{state.phase}")
+        previous = _validate_env(state.files["previous.env"])
+        runtime = _validate_env(state.files["runtime.env"])
+        final = _validate_env(state.files["final.env"])
+
+        if state.phase == PHASE_RUNTIME_NEW_PENDING:
+            _replace_live_config(state, "previous.env")
+            _set_password_with_psql(container, RUNTIME_ROLE, previous["DATABASE_URL"].password)
+            target_config = "previous"
+            target_phase = PHASE_STAGED
+        elif state.phase == PHASE_MIGRATION_NEW_PENDING:
+            _replace_live_config(state, "runtime.env")
+            _set_password_with_psql(
+                container,
+                MIGRATION_ROLE,
+                runtime["MIGRATION_DATABASE_URL"].password,
+            )
+            target_config = "runtime"
+            target_phase = PHASE_RUNTIME_ACTIVE
+        elif state.phase == PHASE_MIGRATION_ROLLBACK_PENDING:
+            original_config = "final" if state.origin_phase == PHASE_FINAL_ACTIVE else "runtime"
+            _replace_live_config(state, f"{original_config}.env")
+            _set_password_with_psql(
+                container, MIGRATION_ROLE, final["MIGRATION_DATABASE_URL"].password
+            )
+            target_config = "final"
+            target_phase = state.origin_phase
+        else:
+            original_config = (
+                "runtime" if state.origin_phase == PHASE_RUNTIME_ACTIVE else "previous"
+            )
+            _replace_live_config(state, f"{original_config}.env")
+            _set_password_with_psql(container, RUNTIME_ROLE, runtime["DATABASE_URL"].password)
+            target_config = "runtime"
+            target_phase = state.origin_phase
+
+        _verify_phase(
+            state,
+            target_config,
+            container,
+            require_live=_live_phase(state) == target_config,
+        )
+        _set_phase(state, target_phase)
+        _status(f"recovered pending transition to phase {target_phase}")
+
+
 def preflight(state_dir: Path, container: str) -> None:
-    state = _load_state(state_dir)
-    _verify_phase(state, "previous", container, require_live=True)
-    _status("preflight passed; no database or service state was changed")
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        _require_machine_phase(state, "preflight", {PHASE_STAGED})
+        _verify_phase(state, "previous", container, require_live=True)
+        _status("preflight passed; no database or service state was changed")
 
 
 def _assert_rejected(container: str, username: str, password: str) -> None:
-    accepted, _output = _tcp_query(container, username, password, "SELECT 'ACCEPTED';\n")
-    if accepted:
+    result = _tcp_query(container, username, password, "SELECT 'ACCEPTED';\n")
+    if result.status is _ProbeStatus.SUCCESS:
         _fail(f"retired credential still authenticates for role {username}")
+    if result.status is not _ProbeStatus.AUTH_REJECTED:
+        _fail(f"retired credential probe failed without auth rejection for role {username}")
 
 
 def _verify_retired_state(state: _State, container: str) -> None:
@@ -896,27 +1311,31 @@ def _verify_retired_state(state: _State, container: str) -> None:
 
 
 def verify_retired(state_dir: Path, container: str) -> None:
-    state = _load_state(state_dir)
-    _verify_phase(state, "final", container, require_live=True)
-    _verify_retired_state(state, container)
-    _status("verified both retired database credentials are rejected")
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        _require_machine_phase(state, "verify-retired", {PHASE_FINAL_ACTIVE})
+        _verify_phase(state, "final", container, require_live=True)
+        _verify_retired_state(state, container)
+        _status("verified both retired database credentials are rejected")
 
 
 def finalize(state_dir: Path, container: str) -> None:
-    state = _load_state(state_dir)
-    _verify_phase(state, "final", container, require_live=True)
-    _verify_retired_state(state, container)
-    _confirm("finalize-and-remove-rollback")
-    for filename in STATE_FILES:
-        (state.directory / filename).unlink()
-    state.directory.rmdir()
-    parent_fd = os.open(state.directory.parent, os.O_RDONLY)
-    try:
-        os.fsync(parent_fd)
-    finally:
-        os.close(parent_fd)
-    _status(f"removed protected rotation state {state.directory}")
-    _status("the staged rollback copy is no longer available")
+    with _state_lock(state_dir) as locked_dir:
+        state = _load_state(locked_dir)
+        _require_machine_phase(state, "finalize", {PHASE_FINAL_ACTIVE})
+        _verify_phase(state, "final", container, require_live=True)
+        _verify_retired_state(state, container)
+        _confirm("finalize-and-remove-rollback")
+        for filename in STATE_FILES:
+            (state.directory / filename).unlink()
+        state.directory.rmdir()
+        parent_fd = os.open(state.directory.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+        _status(f"removed protected rotation state {state.directory}")
+        _status("the staged rollback copy is no longer available")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -934,13 +1353,20 @@ def _parser() -> argparse.ArgumentParser:
     preflight_parser.add_argument("--db-container", default=DB_CONTAINER_DEFAULT)
 
     role_parser = subparsers.add_parser("role-password", help="change one role password")
-    role_parser.add_argument("action", choices=tuple(_ROLE_ACTIONS))
+    role_parser.add_argument("action", choices=_ROLE_ACTIONS)
     role_parser.add_argument("--state-dir", required=True, type=Path)
     role_parser.add_argument("--db-container", default=DB_CONTAINER_DEFAULT)
 
     activate_parser = subparsers.add_parser("activate", help="atomically activate a config")
     activate_parser.add_argument("action", choices=tuple(_ACTIVATIONS))
     activate_parser.add_argument("--state-dir", required=True, type=Path)
+    activate_parser.add_argument("--db-container", default=DB_CONTAINER_DEFAULT)
+
+    recover_parser = subparsers.add_parser(
+        "recover", help="restore the stable origin of an interrupted transition"
+    )
+    recover_parser.add_argument("--state-dir", required=True, type=Path)
+    recover_parser.add_argument("--db-container", default=DB_CONTAINER_DEFAULT)
 
     verify_parser = subparsers.add_parser("verify", help="verify a staged credential phase")
     verify_parser.add_argument("phase", choices=("previous", "runtime", "final"))
@@ -972,7 +1398,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "role-password":
         role_password(args.state_dir, args.action, args.db_container)
     elif args.command == "activate":
-        activate(args.state_dir, args.action)
+        activate(args.state_dir, args.action, args.db_container)
+    elif args.command == "recover":
+        recover(args.state_dir, args.db_container)
     elif args.command == "verify":
         verify(args.state_dir, args.phase, args.db_container)
     elif args.command == "verify-retired":

@@ -85,32 +85,178 @@ def test_stage_rejects_weak_source_permissions(tmp_path: Path) -> None:
 
 def test_stage_rejects_role_or_endpoint_drift(tmp_path: Path) -> None:
     source, state_dir = _paths(tmp_path)
-    source.write_bytes(
-        _sample_env().replace(b"contact_ops_runtime", b"contact_ops_admin", 1)
-    )
+    source.write_bytes(_sample_env().replace(b"contact_ops_runtime", b"contact_ops_admin", 1))
     source.chmod(0o600)
 
     with pytest.raises(rotation.RotationError, match="runtime role"):
         rotation.stage(source, state_dir)
 
 
-def test_activate_enforces_order_and_supports_both_rollbacks(
+def test_state_machine_enforces_forward_order_and_supports_both_rollbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, state_dir = _paths(tmp_path)
     rotation.stage(source, state_dir)
     state = rotation._load_state(state_dir)
+    container = "contact-ops-postgres"
+    password_phases: list[str] = []
     monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
+    monkeypatch.setattr(rotation, "_verify_local_role_contract", lambda _container: None)
+    monkeypatch.setattr(rotation, "_verify_phase", lambda *_args, **_kwargs: None)
 
-    rotation.activate(state_dir, "runtime")
+    def record_password_phase(*_args: object, **_kwargs: object) -> None:
+        password_phases.append(rotation._load_state(state_dir).phase)
+
+    monkeypatch.setattr(rotation, "_set_password_with_psql", record_password_phase)
+
+    rotation.role_password(state_dir, "runtime-new", container)
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_RUNTIME_ROLE_APPLIED
+    assert source.read_bytes() == state.files["previous.env"]
+
+    rotation.activate(state_dir, "runtime", container)
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_RUNTIME_ACTIVE
     assert source.read_bytes() == state.files["runtime.env"]
-    rotation.activate(state_dir, "final")
+
+    rotation.role_password(state_dir, "migration-new", container)
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_MIGRATION_ROLE_APPLIED
+    assert source.read_bytes() == state.files["runtime.env"]
+
+    rotation.activate(state_dir, "final", container)
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_FINAL_ACTIVE
     assert source.read_bytes() == state.files["final.env"]
-    rotation.activate(state_dir, "rollback-migration")
+
+    rotation.role_password(state_dir, "migration-rollback", container)
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_RUNTIME_ACTIVE
     assert source.read_bytes() == state.files["runtime.env"]
-    rotation.activate(state_dir, "rollback-all")
+
+    rotation.role_password(state_dir, "runtime-rollback", container)
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_STAGED
     assert source.read_bytes() == state.files["previous.env"]
     assert _mode(source) == 0o600
+    assert password_phases == [
+        rotation.PHASE_RUNTIME_NEW_PENDING,
+        rotation.PHASE_MIGRATION_NEW_PENDING,
+        rotation.PHASE_MIGRATION_ROLLBACK_PENDING,
+        rotation.PHASE_RUNTIME_ROLLBACK_PENDING,
+    ]
+
+
+def test_activation_failure_compensates_under_pending_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, state_dir = _paths(tmp_path)
+    rotation.stage(source, state_dir)
+    state = rotation._load_state(state_dir)
+    rotation._set_phase(state, rotation.PHASE_RUNTIME_ROLE_APPLIED)
+    verify_calls = 0
+    password_phase = ""
+
+    def fail_after_activation(
+        _state: rotation._State,
+        _phase: str,
+        _container: str,
+        *,
+        require_live: bool,
+    ) -> None:
+        nonlocal verify_calls
+        verify_calls += 1
+        if verify_calls == 2 and require_live:
+            raise rotation.RotationError("synthetic post-activation failure")
+
+    def record_compensation_phase(*_args: object, **_kwargs: object) -> None:
+        nonlocal password_phase
+        password_phase = rotation._load_state(state_dir).phase
+
+    monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
+    monkeypatch.setattr(rotation, "_verify_phase", fail_after_activation)
+    monkeypatch.setattr(rotation, "_set_password_with_psql", record_compensation_phase)
+
+    with pytest.raises(rotation.RotationError, match="restored to staged"):
+        rotation.activate(state_dir, "runtime", "contact-ops-postgres")
+
+    assert password_phase == rotation.PHASE_RUNTIME_NEW_PENDING
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_STAGED
+    assert source.read_bytes() == state.files["previous.env"]
+
+
+def test_recover_restores_pending_transition_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, state_dir = _paths(tmp_path)
+    rotation.stage(source, state_dir)
+    state = rotation._load_state(state_dir)
+    source.write_bytes(state.files["runtime.env"])
+    source.chmod(0o600)
+    rotation._set_phase(
+        state,
+        rotation.PHASE_RUNTIME_NEW_PENDING,
+        rotation.PHASE_STAGED,
+    )
+    observed_phase = ""
+
+    def record_recovery_phase(*_args: object, **_kwargs: object) -> None:
+        nonlocal observed_phase
+        observed_phase = rotation._load_state(state_dir).phase
+
+    monkeypatch.setattr(rotation, "_verify_local_role_contract", lambda _container: None)
+    monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
+    monkeypatch.setattr(rotation, "_set_password_with_psql", record_recovery_phase)
+    monkeypatch.setattr(rotation, "_verify_phase", lambda *_args, **_kwargs: None)
+
+    rotation.recover(state_dir, "contact-ops-postgres")
+
+    assert observed_phase == rotation.PHASE_RUNTIME_NEW_PENDING
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_STAGED
+    assert source.read_bytes() == state.files["previous.env"]
+
+
+def test_migration_new_wrong_order_is_rejected_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, state_dir = _paths(tmp_path)
+    rotation.stage(source, state_dir)
+    original = source.read_bytes()
+    database_touched = False
+
+    def unexpected_database_access(*_args: object, **_kwargs: object) -> None:
+        nonlocal database_touched
+        database_touched = True
+
+    monkeypatch.setattr(rotation, "_verify_local_role_contract", unexpected_database_access)
+    monkeypatch.setattr(rotation, "_set_password_with_psql", unexpected_database_access)
+
+    with pytest.raises(rotation.RotationError, match="not allowed from phase staged"):
+        rotation.role_password(state_dir, "migration-new", "contact-ops-postgres")
+
+    assert database_touched is False
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_STAGED
+    assert source.read_bytes() == original
+
+
+def test_runtime_rollback_wrong_order_is_rejected_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, state_dir = _paths(tmp_path)
+    rotation.stage(source, state_dir)
+    state = rotation._load_state(state_dir)
+    source.write_bytes(state.files["final.env"])
+    source.chmod(0o600)
+    rotation._set_phase(state, rotation.PHASE_FINAL_ACTIVE)
+    database_touched = False
+
+    def unexpected_database_access(*_args: object, **_kwargs: object) -> None:
+        nonlocal database_touched
+        database_touched = True
+
+    monkeypatch.setattr(rotation, "_verify_local_role_contract", unexpected_database_access)
+    monkeypatch.setattr(rotation, "_set_password_with_psql", unexpected_database_access)
+
+    with pytest.raises(rotation.RotationError, match="not allowed from phase final-active"):
+        rotation.role_password(state_dir, "runtime-rollback", "contact-ops-postgres")
+
+    assert database_touched is False
+    assert rotation._load_state(state_dir).phase == rotation.PHASE_FINAL_ACTIVE
+    assert source.read_bytes() == state.files["final.env"]
 
 
 def test_activate_refuses_unstaged_live_drift(
@@ -118,12 +264,14 @@ def test_activate_refuses_unstaged_live_drift(
 ) -> None:
     source, state_dir = _paths(tmp_path)
     rotation.stage(source, state_dir)
+    state = rotation._load_state(state_dir)
+    rotation._set_phase(state, rotation.PHASE_RUNTIME_ROLE_APPLIED)
     source.write_bytes(source.read_bytes() + b"DRIFTED=true\n")
     source.chmod(0o600)
     monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
 
     with pytest.raises(rotation.RotationError, match="drifted"):
-        rotation.activate(state_dir, "runtime")
+        rotation.activate(state_dir, "runtime", "contact-ops-postgres")
 
 
 def test_state_hash_detects_tampering(tmp_path: Path) -> None:
@@ -155,10 +303,12 @@ def test_psql_password_change_keeps_secret_out_of_argv(
     )
 
     command = captured["command"]
+    payload = captured["payload"]
     assert isinstance(command, list)
+    assert isinstance(payload, bytes)
     assert all(generated_secret not in argument for argument in command)
-    assert generated_secret.encode() in captured["payload"]
-    assert b"\\password contact_ops_runtime" in captured["payload"]
+    assert generated_secret.encode() in payload
+    assert b"\\password contact_ops_runtime" in payload
 
 
 def test_tcp_probe_keeps_secret_out_of_argv_and_environment(
@@ -175,17 +325,17 @@ def test_tcp_probe_keeps_secret_out_of_argv_and_environment(
         captured.update(command=command, kwargs=kwargs)
         return subprocess.CompletedProcess(command, 0, stdout=b"PROBE_OK\n", stderr=b"")
 
-    monkeypatch.setattr(rotation.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
 
-    ok, output = rotation._tcp_query(
+    result = rotation._tcp_query(
         "contact-ops-postgres",
         rotation.RUNTIME_ROLE,
         generated_secret,
         "SELECT 'PROBE_OK';\n",
     )
 
-    assert ok is True
-    assert output == "PROBE_OK"
+    assert result.status is rotation._ProbeStatus.SUCCESS
+    assert result.output == "PROBE_OK"
     command = captured["command"]
     kwargs = captured["kwargs"]
     assert isinstance(command, list)
@@ -224,6 +374,7 @@ def test_finalize_removes_only_verified_rotation_state(
     state = rotation._load_state(state_dir)
     source.write_bytes(state.files["final.env"])
     source.chmod(0o600)
+    rotation._set_phase(state, rotation.PHASE_FINAL_ACTIVE)
     monkeypatch.setattr(rotation, "_verify_phase", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(rotation, "_verify_retired_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
@@ -240,9 +391,9 @@ def test_retired_credentials_must_both_be_rejected(monkeypatch: pytest.MonkeyPat
 
     def fake_tcp(
         _container: str, username: str, _password: str, _sql: str
-    ) -> tuple[bool, str]:
+    ) -> rotation._ProbeResult:
         attempts.append(username)
-        return False, ""
+        return rotation._ProbeResult(rotation._ProbeStatus.AUTH_REJECTED, "")
 
     monkeypatch.setattr(rotation, "_tcp_query", fake_tcp)
     rotation._assert_rejected("contact-ops-postgres", rotation.RUNTIME_ROLE, "old-runtime")
@@ -251,12 +402,27 @@ def test_retired_credentials_must_both_be_rejected(monkeypatch: pytest.MonkeyPat
 
 
 def test_retired_credential_acceptance_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rotation, "_tcp_query", lambda *_args: (True, "ACCEPTED"))
+    monkeypatch.setattr(
+        rotation,
+        "_tcp_query",
+        lambda *_args: rotation._ProbeResult(rotation._ProbeStatus.SUCCESS, "ACCEPTED"),
+    )
 
     with pytest.raises(rotation.RotationError, match="still authenticates"):
-        rotation._assert_rejected(
-            "contact-ops-postgres", rotation.RUNTIME_ROLE, "retired-runtime"
-        )
+        rotation._assert_rejected("contact-ops-postgres", rotation.RUNTIME_ROLE, "retired-runtime")
+
+
+def test_retired_probe_generic_failure_does_not_count_as_auth_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        rotation,
+        "_tcp_query",
+        lambda *_args: rotation._ProbeResult(rotation._ProbeStatus.FAILURE, ""),
+    )
+
+    with pytest.raises(rotation.RotationError, match="without auth rejection"):
+        rotation._assert_rejected("contact-ops-postgres", rotation.RUNTIME_ROLE, "retired-runtime")
 
 
 def test_stage_rejects_symlinked_source(tmp_path: Path) -> None:
@@ -395,11 +561,46 @@ INSERT INTO persons (id, canonical_owner_tenant_id) VALUES
 
         rotation.stage(source, state_dir)
         rotation.preflight(state_dir, container)
+
+        # The historical wrong-order failure changed DBP3 while the previous
+        # runtime config was still live. The journal must reject it before any
+        # database access and leave the previous phase verifiable.
+        with pytest.raises(rotation.RotationError, match="not allowed from phase staged"):
+            rotation.role_password(state_dir, "migration-new", container)
+        rotation.verify(state_dir, "previous", container)
+
+        # Roll back both before and after runtime config activation. These are
+        # separate supported recovery points in the state machine.
         rotation.role_password(state_dir, "runtime-new", container)
-        rotation.activate(state_dir, "runtime")
+        rotation.role_password(state_dir, "runtime-rollback", container)
+        rotation.verify(state_dir, "previous", container)
+
+        rotation.role_password(state_dir, "runtime-new", container)
+        rotation.activate(state_dir, "runtime", container)
+        rotation.verify(state_dir, "runtime", container)
+        rotation.role_password(state_dir, "runtime-rollback", container)
+        rotation.verify(state_dir, "previous", container)
+
+        rotation.role_password(state_dir, "runtime-new", container)
+        rotation.activate(state_dir, "runtime", container)
+
+        # Likewise, prove DBP3 rollback on both sides of final activation.
+        rotation.role_password(state_dir, "migration-new", container)
+        rotation.role_password(state_dir, "migration-rollback", container)
+        rotation.verify(state_dir, "runtime", container)
+
+        rotation.role_password(state_dir, "migration-new", container)
+        rotation.activate(state_dir, "final", container)
+        rotation.verify(state_dir, "final", container)
+
+        with pytest.raises(rotation.RotationError, match="not allowed from phase final-active"):
+            rotation.role_password(state_dir, "runtime-rollback", container)
+        rotation.verify(state_dir, "final", container)
+
+        rotation.role_password(state_dir, "migration-rollback", container)
         rotation.verify(state_dir, "runtime", container)
         rotation.role_password(state_dir, "migration-new", container)
-        rotation.activate(state_dir, "final")
+        rotation.activate(state_dir, "final", container)
         rotation.verify(state_dir, "final", container)
         rotation.verify_retired(state_dir, container)
         rotation.finalize(state_dir, container)
