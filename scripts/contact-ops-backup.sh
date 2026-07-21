@@ -28,6 +28,9 @@ S3_ENDPOINT="${CONTACT_OPS_BACKUP_S3_ENDPOINT:-}"
 AWS_BIN="${CONTACT_OPS_AWS_BIN:-$(command -v aws 2>/dev/null || true)}"
 
 mkdir -p "$LOCAL_KEEP_DIR" "$(dirname "$LOG")"
+chmod 700 "$LOCAL_KEEP_DIR"
+touch "$LOG"
+chmod 600 "$LOG"
 trap 'rm -rf "$BACKUP_DIR"' EXIT
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
@@ -75,7 +78,7 @@ if ! gzip -t "$DUMP_FILE" 2>/dev/null; then
   exit 2
 fi
 
-cp "$DUMP_FILE" "$LOCAL_KEEP_DIR/"
+install -m 600 "$DUMP_FILE" "$LOCAL_KEEP_DIR/"
 log "Verified database backup preserved locally (${DUMP_BYTES} bytes)"
 
 REMOTE_FAILED=0
@@ -98,7 +101,7 @@ fi
 if [ -f "$ENV_SRC" ] && [ -f "$AGE_REC_FILE" ] && command -v age >/dev/null 2>&1; then
   ENV_AGE="${BACKUP_DIR}/contact_ops_env_${DATE_TODAY}.env.age"
   if age -r "$(cat "$AGE_REC_FILE")" -o "$ENV_AGE" "$ENV_SRC" 2>>"$LOG"; then
-    cp "$ENV_AGE" "$LOCAL_KEEP_DIR/"
+    install -m 600 "$ENV_AGE" "$LOCAL_KEEP_DIR/"
     if [ -n "$REMOTE_URI" ] && [ -n "$AWS_BIN" ]; then
       if upload_remote "$ENV_AGE" "contact_ops_env_${DATE_TODAY}.env.age"; then
         log "Encrypted environment uploaded off-host"

@@ -170,6 +170,9 @@ self_host bypasses). Flip via `.env` + `up -d` (not restart).
   only schema/0 rows), gzipped to `~/backups/contact-ops/` (30-day local
   retention) and, when configured, uploaded to an operator-controlled
   S3-compatible destination. Log: `~/logs/contact-ops-backup.log`.
+  The local backup directory is forced to mode `0700`; the log and published
+  database/encrypted-environment artifacts are forced to mode `0600`, including
+  when a same-day filename already exists.
 - **Off-host credentials are operator-owned and untracked.** Copy
   `deploy/contact-ops-backup.env.example` to
   `~/.config/contact-ops/backup.env`, set mode `0600`, and configure the AWS
