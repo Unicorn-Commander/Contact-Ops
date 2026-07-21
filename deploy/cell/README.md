@@ -87,15 +87,16 @@ A cell needs, reachable from the backend container:
 ```bash
 cp deploy/cell/.env.cell.template .env
 # Fill every CHANGE_ME / <generate>. At minimum:
-#   DATABASE_URL / MIGRATION_DATABASE_URL passwords, CONNECTOR_ENCRYPTION_KEY,
+#   DATABASE_URL / MIGRATION_DATABASE_URL passwords, connector encryption key(s),
 #   KEYCLOAK_ISSUER, CORS_ORIGINS, FRONTEND_URL.
-# CONNECTOR_ENCRYPTION_KEY:
+# CONNECTOR_ENCRYPTION_KEY (legacy single-key configuration):
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 Required-or-boot-fails (per `core/config.py` validators): `DATABASE_URL`,
-`CONNECTOR_ENCRYPTION_KEY` (unless STANDALONE/test), and `KEYCLOAK_ISSUER`
-(unless `STANDALONE_MODE=true`). `STANDALONE_MODE=true` is **rejected** when
-`ENV=prod`.
+one of `CONNECTOR_ENCRYPTION_KEY` or `CONNECTOR_ENCRYPTION_KEYS` (unless
+STANDALONE/test), and `KEYCLOAK_ISSUER` (unless `STANDALONE_MODE=true`). The
+ordered JSON ring uses its first key for writes and the rest as decrypt-only
+fallbacks. `STANDALONE_MODE=true` is **rejected** when `ENV=prod`.
 
 ### 2. Create the database + LOGIN roles FIRST
 The Postgres container is created with `POSTGRES_USER=contact_ops_admin`,

@@ -26,6 +26,7 @@ from celery import Celery
 from celery.schedules import crontab
 
 from contact_ops.agents.registry import AgentClass, list_agents
+from contact_ops.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +60,11 @@ def _backend_url() -> str:
 
 def make_celery_app() -> Celery:
     """Construct (or return the cached) Celery app for the agent fleet."""
+    # Worker and beat must validate the exact same Settings contract as the API
+    # process before either starts. This is especially important during
+    # connector-key rotation: a stale single-key worker must not coexist with a
+    # new-primary API writer.
+    get_settings()
     app = Celery(
         CELERY_APP_NAME,
         broker=_broker_url(),

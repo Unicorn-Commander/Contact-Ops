@@ -61,8 +61,23 @@ require_env() {
     *CHANGE_ME*|*"<generate"*) die "Required env '$key' still has a placeholder value — fill it in." ;;
   esac
 }
-for k in DATABASE_URL MIGRATION_DATABASE_URL CONNECTOR_ENCRYPTION_KEY KEYCLOAK_ISSUER; do
+for k in DATABASE_URL MIGRATION_DATABASE_URL KEYCLOAK_ISSUER; do
   require_env "$k"
+done
+
+# Connector encryption accepts either the backwards-compatible single key or
+# the ordered JSON key ring. Do not print either value during preflight.
+LEGACY_CONNECTOR_KEY="$(grep -E '^CONNECTOR_ENCRYPTION_KEY=' .env | head -n1 | cut -d= -f2- || true)"
+CONNECTOR_KEY_RING="$(grep -E '^CONNECTOR_ENCRYPTION_KEYS=' .env | head -n1 | cut -d= -f2- || true)"
+if [[ -z "$LEGACY_CONNECTOR_KEY" && -z "$CONNECTOR_KEY_RING" ]]; then
+  die "Set CONNECTOR_ENCRYPTION_KEY or CONNECTOR_ENCRYPTION_KEYS in .env"
+fi
+for connector_key_config in "$LEGACY_CONNECTOR_KEY" "$CONNECTOR_KEY_RING"; do
+  case "$connector_key_config" in
+    *CHANGE_ME*|*"<generate"*|*"<primary"*|*"<fallback"*)
+      die "Connector encryption configuration still contains a placeholder value"
+      ;;
+  esac
 done
 # self-host sanity: must not run STANDALONE in prod (config.py rejects it anyway)
 if grep -qE '^ENV=prod' .env && grep -qiE '^STANDALONE_MODE=true' .env; then

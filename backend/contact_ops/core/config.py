@@ -9,6 +9,9 @@ See Contact-Ops-MCP-Design.md §3 (System Topology) for what each setting maps t
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 from functools import lru_cache
 from typing import Literal
 
@@ -57,9 +60,14 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://unicorn-redis:6379/5"
 
-    # Contact import connectors. Generate Fernet key with:
+    # Contact import connectors. CONNECTOR_ENCRYPTION_KEY is the backwards-
+    # compatible single-key setting. CONNECTOR_ENCRYPTION_KEYS is an ordered
+    # JSON array: index 0 is the primary write key and later entries are
+    # decrypt-only fallbacks. When the ring is set it takes precedence over the
+    # legacy setting. Generate each Fernet key with:
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    CONNECTOR_ENCRYPTION_KEY: str = ""
+    CONNECTOR_ENCRYPTION_KEY: str = Field(default="", repr=False)
+    CONNECTOR_ENCRYPTION_KEYS: str = Field(default="", repr=False)
     M365_CLIENT_ID: str = ""
     M365_CLIENT_SECRET: str = ""
     M365_REDIRECT_URI: str = ""
@@ -415,7 +423,8 @@ class Settings(BaseSettings):
     def _default_audience(cls, v: str | None, info) -> str:  # type: ignore[no-untyped-def]
         if v:
             return v
-        return info.data.get("KEYCLOAK_CLIENT_ID", "contact-ops-mcp")
+        client_id = info.data.get("KEYCLOAK_CLIENT_ID", "contact-ops-mcp")
+        return client_id if isinstance(client_id, str) else "contact-ops-mcp"
 
     @model_validator(mode="after")
     def _fail_closed_standalone(self) -> Settings:
@@ -438,9 +447,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_connector_key_in_non_standalone(self) -> Settings:
-        if not self.STANDALONE_MODE and self.ENV != "test" and not self.CONNECTOR_ENCRYPTION_KEY:
+        has_legacy_key = bool(self.CONNECTOR_ENCRYPTION_KEY.strip())
+        has_keyring = bool(self.CONNECTOR_ENCRYPTION_KEYS.strip())
+        if not self.STANDALONE_MODE and self.ENV != "test" and not (
+            has_legacy_key or has_keyring
+        ):
             raise ValueError(
-                "CONNECTOR_ENCRYPTION_KEY is required when STANDALONE_MODE=false. "
+                "CONNECTOR_ENCRYPTION_KEY or CONNECTOR_ENCRYPTION_KEYS is required "
+                "when STANDALONE_MODE=false. "
                 "Generate one with: python -c \"from cryptography.fernet import Fernet; "
                 "print(Fernet.generate_key().decode())\""
             )
@@ -456,7 +470,67 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.ENV in ("dev", "test")
 
+    @property
+    def connector_encryption_keyring(self) -> tuple[str, ...]:
+        """Return the ordered connector key ring without exposing key material.
+
+        ``CONNECTOR_ENCRYPTION_KEYS`` is deliberately a JSON string setting
+        instead of a Pydantic ``list[str]``. That keeps one unambiguous dotenv,
+        Compose, worker, and beat representation while still making ordering
+        explicit. The first key encrypts new payloads; all remaining keys only
+        decrypt existing payloads. The legacy single key is used only when the
+        ring is absent.
+
+        Errors are intentionally generic: configuration exceptions must never
+        echo a key (or the raw ring) into process logs.
+        """
+
+        raw_ring = self.CONNECTOR_ENCRYPTION_KEYS.strip()
+        if raw_ring:
+            try:
+                parsed = json.loads(raw_ring)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise RuntimeError(
+                    "CONNECTOR_ENCRYPTION_KEYS must be a JSON array of Fernet keys"
+                ) from exc
+            if not isinstance(parsed, list) or not parsed:
+                raise RuntimeError(
+                    "CONNECTOR_ENCRYPTION_KEYS must be a non-empty JSON array"
+                )
+            if any(not isinstance(item, str) or not item.strip() for item in parsed):
+                raise RuntimeError(
+                    "CONNECTOR_ENCRYPTION_KEYS entries must be non-empty strings"
+                )
+            keys = tuple(item.strip() for item in parsed)
+        else:
+            legacy = self.CONNECTOR_ENCRYPTION_KEY.strip()
+            keys = (legacy,) if legacy else ()
+
+        if len(set(keys)) != len(keys):
+            raise RuntimeError("connector encryption key ring contains duplicate keys")
+
+        # Fernet keys are URL-safe base64 encodings of exactly 32 bytes. Validate
+        # with the standard library so every Settings consumer fails at the same
+        # process-start boundary, before any connector payload is touched.
+        for key in keys:
+            try:
+                decoded = base64.b64decode(
+                    key.encode("ascii"),
+                    altchars=b"-_",
+                    validate=True,
+                )
+            except (UnicodeEncodeError, binascii.Error, ValueError) as exc:
+                raise RuntimeError("connector encryption key configuration is invalid") from exc
+            if len(decoded) != 32:
+                raise RuntimeError("connector encryption key configuration is invalid")
+
+        return keys
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    settings = Settings()
+    # Validate the shared key contract once at process start. Exceptions are
+    # generic and never contain the configured keys.
+    _ = settings.connector_encryption_keyring
+    return settings

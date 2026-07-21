@@ -73,6 +73,62 @@ failure stops the container (it will NOT boot healthy against a wrong schema).
   `main.py` lifespan) — so "DB down" is a clear failed boot, not a healthy box
   that 500s every request.
 
+## Connector encryption key rotation
+
+Connector payload encryption supports two configuration forms:
+
+- `CONNECTOR_ENCRYPTION_KEY=<single-fernet-key>` is the backwards-compatible
+  legacy form.
+- `CONNECTOR_ENCRYPTION_KEYS=["<primary-fernet-key>","<fallback-fernet-key>"]`
+  is an ordered JSON ring. The first key encrypts every new/updated payload;
+  later keys are decrypt-only fallbacks. When present, the ring takes
+  precedence over the legacy setting.
+
+The API, Celery worker, and Celery beat all validate the same `Settings`
+contract at process start and all three consume the same Compose env file. Do
+not advance the primary until every process is running a ring-aware release.
+The safe no-outage sequence is:
+
+1. Take and verify a database backup. Generate the replacement Fernet key in
+   the operator secret store; never pass a key on this CLI or put it in shell
+   history.
+2. Stage `CONNECTOR_ENCRYPTION_KEYS=["<old>","<new>"]`. The old key remains
+   primary, so legacy ciphertext and concurrent writes remain readable while
+   the ring-aware release is rolled through backend, worker, and beat. Confirm
+   every old process has exited.
+3. Reorder the shared setting to
+   `CONNECTOR_ENCRYPTION_KEYS=["<new>","<old>"]` and roll all three processes
+   again. Both the old-primary and new-primary ring-aware processes can read
+   both generations, so the rollout order is not data-dependent. Do not roll
+   back to a pre-keyring release after this point.
+4. Run the authenticated read-only preflight inside the backend image:
+
+   ```bash
+   python -m contact_ops.connectors.key_rotation --dry-run --actor <operator-id>
+   ```
+
+5. Rewrap in one transaction, then prove no fallback key is needed:
+
+   ```bash
+   python -m contact_ops.connectors.key_rotation --rewrap --actor <operator-id>
+   python -m contact_ops.connectors.key_rotation --verify-new-only --actor <operator-id>
+   ```
+
+6. Only after `verify-new-only` succeeds, set the ring to `["<new>"]`, update
+   the legacy single-key value to the same new key (for configuration
+   compatibility), roll backend/worker/beat, and retire the old key from the
+   secret store.
+
+The command accepts no key or database arguments. It reads the shared Settings
+contract and refuses to use the runtime DSN: `MIGRATION_DATABASE_URL` must
+authenticate as a PostgreSQL `SUPERUSER` or `BYPASSRLS` role. Rewrap and the
+primary-only verification gate briefly block connector writes while reads
+continue. Rewrap preflights every ciphertext before its first update, verifies
+semantic JSON equality, compare-and-swaps each row, and primary-only verifies
+the locked table before commit. A corrupt row, unauthorized role, concurrent
+mismatch, or failed verification aborts and rolls back the whole operation.
+Output contains counts only, never keys, ciphertext, or connector plaintext.
+
 ## Verifying changes WITHOUT a JWT (the in-process pattern)
 
 Build an `MCPContext` and call handlers directly, exactly like

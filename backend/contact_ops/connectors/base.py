@@ -10,10 +10,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from contact_ops.connectors.crypto import ConnectorCipher
 from contact_ops.core.config import get_settings
 from contact_ops.core.database import async_session_maker, bind_session_context
 from contact_ops.importers.base import CanonicalImportRecord
@@ -102,14 +102,11 @@ def apply_refreshed_token(payload: dict[str, Any], refreshed: dict[str, Any]) ->
 
 
 def encrypt_payload(payload: dict[str, Any]) -> bytes:
-    return _fernet().encrypt(json.dumps(payload, sort_keys=True, default=str).encode())
+    return _connector_cipher().encrypt_payload(payload)
 
 
 def decrypt_payload(value: bytes) -> dict[str, Any]:
-    decoded = json.loads(_fernet().decrypt(value).decode())
-    if not isinstance(decoded, dict):
-        raise ValueError("connector payload is not an object")
-    return decoded
+    return _connector_cipher().decrypt_payload(value)
 
 
 async def run_connector_pull(
@@ -469,8 +466,5 @@ async def _run_post_pull_agent_pipeline(tenant_id: uuid.UUID) -> None:
             raise
 
 
-def _fernet() -> Fernet:
-    key = get_settings().CONNECTOR_ENCRYPTION_KEY
-    if not key:
-        raise RuntimeError("CONNECTOR_ENCRYPTION_KEY is required for connector encryption")
-    return Fernet(key.encode())
+def _connector_cipher() -> ConnectorCipher:
+    return ConnectorCipher.from_settings(get_settings())
