@@ -1,9 +1,10 @@
-# ruff: noqa: S105, S107, S608 -- credentials/SQL here are synthetic fixtures.
+# ruff: noqa: S105, S107, S108, S608 -- credentials/paths/SQL are disposable fixtures.
 from __future__ import annotations
 
 import os
 import stat
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -202,12 +203,55 @@ def test_recover_restores_pending_transition_origin(
     monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
     monkeypatch.setattr(rotation, "_set_password_with_psql", record_recovery_phase)
     monkeypatch.setattr(rotation, "_verify_phase", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(rotation, "RECOVERY_QUIESCENCE_SECONDS", 0)
 
     rotation.recover(state_dir, "contact-ops-postgres")
 
     assert observed_phase == rotation.PHASE_RUNTIME_NEW_PENDING
     assert rotation._load_state(state_dir).phase == rotation.PHASE_STAGED
     assert source.read_bytes() == state.files["previous.env"]
+
+
+def test_outer_watchdog_leaves_pending_state_without_compensation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, state_dir = _paths(tmp_path)
+    rotation.stage(source, state_dir)
+    state = rotation._load_state(state_dir)
+    password_attempts = 0
+    database_touched_during_early_recover = False
+
+    def indeterminate_password(*_args: object, **_kwargs: object) -> None:
+        nonlocal password_attempts
+        password_attempts += 1
+        raise rotation._IndeterminateMutationError("synthetic outer watchdog")
+
+    monkeypatch.setattr(rotation, "_confirm", lambda _expected: None)
+    monkeypatch.setattr(rotation, "_verify_local_role_contract", lambda _container: None)
+    monkeypatch.setattr(rotation, "_verify_phase", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(rotation, "_set_password_with_psql", indeterminate_password)
+
+    with pytest.raises(
+        rotation.RotationError,
+        match="remains indeterminate in runtime-new-pending",
+    ):
+        rotation.role_password(state_dir, "runtime-new", "contact-ops-postgres")
+
+    pending = rotation._load_state(state_dir)
+    assert password_attempts == 1
+    assert pending.phase == rotation.PHASE_RUNTIME_NEW_PENDING
+    assert pending.origin_phase == rotation.PHASE_STAGED
+    assert pending.updated_at >= state.updated_at
+    assert source.read_bytes() == state.files["previous.env"]
+
+    def unexpected_database_access(_container: str) -> None:
+        nonlocal database_touched_during_early_recover
+        database_touched_during_early_recover = True
+
+    monkeypatch.setattr(rotation, "_verify_local_role_contract", unexpected_database_access)
+    with pytest.raises(rotation.RotationError, match="container quiescence window"):
+        rotation.recover(state_dir, "contact-ops-postgres")
+    assert database_touched_during_early_recover is False
 
 
 def test_migration_new_wrong_order_is_rejected_before_database_access(
@@ -285,6 +329,44 @@ def test_state_hash_detects_tampering(tmp_path: Path) -> None:
         rotation._load_state(state_dir)
 
 
+def test_rotation_lock_serializes_across_processes(tmp_path: Path) -> None:
+    source, state_dir = _paths(tmp_path)
+    rotation.stage(source, state_dir)
+    holder_script = """
+import fcntl
+import os
+import sys
+import time
+
+fd = os.open(sys.argv[1], os.O_RDWR)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("locked", flush=True)
+time.sleep(1.0)
+fcntl.flock(fd, fcntl.LOCK_UN)
+os.close(fd)
+"""
+    holder = subprocess.Popen(  # noqa: S603 - fixed interpreter and test script.
+        [sys.executable, "-c", holder_script, str(state_dir / "rotation.lock")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "locked"
+        started = time.monotonic()
+        with rotation._state_lock(state_dir):
+            pass
+        elapsed = time.monotonic() - started
+        _stdout, stderr = holder.communicate(timeout=2)
+        assert holder.returncode == 0, stderr
+        assert elapsed >= 0.7
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+            holder.wait(timeout=2)
+
+
 def test_psql_password_change_keeps_secret_out_of_argv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -292,8 +374,19 @@ def test_psql_password_change_keeps_secret_out_of_argv(
     captured: dict[str, object] = {}
     monkeypatch.setattr(rotation, "_docker_binary", lambda: "/usr/bin/docker")
 
-    def fake_run(command: list[str], payload: bytes, *, timeout: int = 60) -> bytes:
-        captured.update(command=command, payload=payload, timeout=timeout)
+    def fake_run(
+        command: list[str],
+        payload: bytes,
+        *,
+        timeout: float = 60,
+        indeterminate_on_timeout: bool = False,
+    ) -> bytes:
+        captured.update(
+            command=command,
+            payload=payload,
+            timeout=timeout,
+            indeterminate_on_timeout=indeterminate_on_timeout,
+        )
         return b""
 
     monkeypatch.setattr(rotation, "_run_command", fake_run)
@@ -307,6 +400,11 @@ def test_psql_password_change_keeps_secret_out_of_argv(
     assert isinstance(command, list)
     assert isinstance(payload, bytes)
     assert all(generated_secret not in argument for argument in command)
+    assert rotation.PASSWORD_MUTATION_LOCK_DIR in command
+    assert any("PGCONNECT_TIMEOUT" in argument for argument in command)
+    assert any("timeout -s TERM" in argument for argument in command)
+    assert captured["indeterminate_on_timeout"] is True
+    assert captured["timeout"] == rotation.PASSWORD_HOST_WATCHDOG_SECONDS
     assert generated_secret.encode() in payload
     assert b"\\password contact_ops_runtime" in payload
 
@@ -341,7 +439,11 @@ def test_tcp_probe_keeps_secret_out_of_argv_and_environment(
     assert isinstance(command, list)
     assert isinstance(kwargs, dict)
     assert all(generated_secret not in argument for argument in command)
+    assert rotation.TCP_PROBE_DIRECTORY_PREFIX in command
+    assert any("mktemp -d" in argument for argument in command)
+    assert any("timeout -s TERM" in argument for argument in command)
     assert "env" not in kwargs
+    assert kwargs["timeout"] == rotation.TCP_HOST_WATCHDOG_SECONDS
     assert generated_secret.encode() in kwargs["input"]
 
 
@@ -557,6 +659,183 @@ INSERT INTO persons (id, canonical_owner_tenant_id) VALUES
                 rotation.DB_NAME,
             ],
             init_sql.encode(),
+        )
+
+        # Killing the host-side Docker CLI does not kill its container-side
+        # exec. Hold the exact mutation lock in such a surviving exec and prove
+        # a password action cannot race it or change the role.
+        ready_marker = "/tmp/contact-ops-rotation-client-timeout-ready"
+        done_marker = "/tmp/contact-ops-rotation-client-timeout-done"
+        delayed_exec_script = r"""
+lock_dir="$1"
+ready_marker="$2"
+done_marker="$3"
+mkdir "$lock_dir"
+cleanup() {
+  rm -f "$lock_dir/owner-pid"
+  rmdir "$lock_dir" 2>/dev/null || :
+}
+trap cleanup EXIT
+printf '%s\n' "$$" >"$lock_dir/owner-pid"
+touch "$ready_marker"
+sleep 3
+touch "$done_marker"
+"""
+        with pytest.raises(subprocess.TimeoutExpired):
+            subprocess.run(  # noqa: S603 - fixed Docker test command.
+                [
+                    docker,
+                    "exec",
+                    "-i",
+                    container,
+                    "sh",
+                    "-ceu",
+                    delayed_exec_script,
+                    "--",
+                    rotation.PASSWORD_MUTATION_LOCK_DIR,
+                    ready_marker,
+                    done_marker,
+                ],
+                capture_output=True,
+                check=False,
+                timeout=0.5,
+            )
+        rotation._run_command([docker, "exec", container, "test", "-f", ready_marker], b"")
+        collision_started = time.monotonic()
+        with pytest.raises(rotation.RotationError) as lock_collision:
+            rotation._set_password_with_psql(
+                container,
+                rotation.RUNTIME_ROLE,
+                "c" * 64,
+            )
+        assert isinstance(lock_collision.value, rotation._IndeterminateMutationError)
+        assert time.monotonic() - collision_started < 2
+        rotation._verify_runtime(container, old_runtime)
+        for _attempt in range(50):
+            try:
+                rotation._run_command([docker, "exec", container, "test", "-f", done_marker], b"")
+                break
+            except rotation.RotationError:
+                time.sleep(0.1)
+        else:
+            pytest.fail("container-side exec did not survive the Docker client timeout")
+        rotation._run_command(
+            [
+                docker,
+                "exec",
+                container,
+                "test",
+                "!",
+                "-e",
+                rotation.PASSWORD_MUTATION_LOCK_DIR,
+            ],
+            b"",
+        )
+
+        # Hold the runtime role row/object lock in PostgreSQL. The password
+        # helper must exit under its inner PG/timeout bounds, before the longer
+        # host watchdog, and must leave the old credential valid.
+        lock_sql = f"""
+BEGIN;
+ALTER ROLE {rotation.RUNTIME_ROLE} PASSWORD '{old_runtime}';
+SELECT pg_sleep(3) /* contact_ops_rotation_inner_deadline */;
+COMMIT;
+"""
+        lock_holder = subprocess.Popen(  # noqa: S603 - fixed Docker test command.
+            [
+                docker,
+                "exec",
+                "-i",
+                container,
+                "psql",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                rotation.MIGRATION_ROLE,
+                "-d",
+                rotation.DB_NAME,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert lock_holder.stdin is not None
+            lock_holder.stdin.write(lock_sql.encode())
+            lock_holder.stdin.close()
+            lock_holder.stdin = None
+            for _attempt in range(50):
+                active = rotation._admin_query(
+                    container,
+                    """
+SELECT count(*) FROM pg_stat_activity
+WHERE query LIKE '%contact_ops_rotation_inner_deadline%'
+  AND wait_event = 'PgSleep';
+""",
+                )
+                if active == "1":
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("could not establish the PostgreSQL role-lock fixture")
+
+            with monkeypatch.context() as deadline_patch:
+                deadline_patch.setattr(rotation, "PASSWORD_CONTAINER_DEADLINE_SECONDS", 2)
+                deadline_patch.setattr(rotation, "CONTAINER_KILL_GRACE_SECONDS", 1)
+                deadline_patch.setattr(rotation, "PASSWORD_HOST_WATCHDOG_SECONDS", 6)
+                deadline_patch.setattr(rotation, "PG_CONNECT_TIMEOUT_SECONDS", 1)
+                deadline_patch.setattr(rotation, "PG_LOCK_TIMEOUT_MILLISECONDS", 500)
+                deadline_patch.setattr(rotation, "PG_STATEMENT_TIMEOUT_MILLISECONDS", 5_000)
+                deadline_started = time.monotonic()
+                with pytest.raises(rotation.RotationError) as bounded_failure:
+                    rotation._set_password_with_psql(
+                        container,
+                        rotation.RUNTIME_ROLE,
+                        "d" * 64,
+                    )
+                deadline_elapsed = time.monotonic() - deadline_started
+                assert not isinstance(bounded_failure.value, rotation._IndeterminateMutationError)
+                assert 0.3 <= deadline_elapsed < 5
+            lock_stdout, lock_stderr = lock_holder.communicate(timeout=5)
+            assert lock_holder.returncode == 0, (lock_stdout, lock_stderr)
+        finally:
+            if lock_holder.poll() is None:
+                lock_holder.kill()
+                lock_holder.wait(timeout=2)
+        rotation._verify_runtime(container, old_runtime)
+
+        # A long TCP query must die inside the container, and the trap must
+        # remove both credential and query files before the host call returns.
+        with monkeypatch.context() as probe_patch:
+            probe_patch.setattr(rotation, "TCP_CONTAINER_DEADLINE_SECONDS", 1)
+            probe_patch.setattr(rotation, "CONTAINER_KILL_GRACE_SECONDS", 1)
+            probe_patch.setattr(rotation, "TCP_HOST_WATCHDOG_SECONDS", 5)
+            probe_patch.setattr(rotation, "PG_CONNECT_TIMEOUT_SECONDS", 1)
+            probe_patch.setattr(rotation, "PG_LOCK_TIMEOUT_MILLISECONDS", 5_000)
+            probe_patch.setattr(rotation, "PG_STATEMENT_TIMEOUT_MILLISECONDS", 5_000)
+            probe_started = time.monotonic()
+            probe_result = rotation._tcp_query(
+                container,
+                rotation.MIGRATION_ROLE,
+                old_migration,
+                "SELECT pg_sleep(3);\n",
+            )
+            probe_elapsed = time.monotonic() - probe_started
+            assert probe_result.status is rotation._ProbeStatus.FAILURE
+            assert 0.8 <= probe_elapsed < 4
+        rotation._run_command(
+            [
+                docker,
+                "exec",
+                container,
+                "sh",
+                "-ceu",
+                'for path in "$1".*; do test ! -e "$path" || exit 1; done',
+                "--",
+                rotation.TCP_PROBE_DIRECTORY_PREFIX,
+            ],
+            b"",
         )
 
         rotation.stage(source, state_dir)

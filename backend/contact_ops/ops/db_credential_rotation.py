@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: S608 -- SQL interpolation is limited to fixed role names and UUID-validated ids.
+# ruff: noqa: S105, S108, S608 -- fixed role SQL; private container temp paths hold no literals.
 """Stage and execute the Contact-Ops PostgreSQL credential rotation.
 
 The helper is deliberately narrow and deployment-specific.  It knows the
@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
 import re
 import resource
@@ -66,6 +67,19 @@ STATE_FILES: Final = (
     "rotation.lock",
 )
 MAX_SECRET_FILE_BYTES: Final = 1024 * 1024
+
+PASSWORD_MUTATION_LOCK_DIR: Final = "/tmp/contact-ops-db-credential-rotation.lock"
+TCP_PROBE_DIRECTORY_PREFIX: Final = "/tmp/contact-ops-db-auth-probe"
+PASSWORD_CONTAINER_DEADLINE_SECONDS: Final = 45
+TCP_CONTAINER_DEADLINE_SECONDS: Final = 45
+CONTAINER_KILL_GRACE_SECONDS: Final = 5
+PASSWORD_HOST_WATCHDOG_SECONDS: Final = 70
+TCP_HOST_WATCHDOG_SECONDS: Final = 70
+PG_CONNECT_TIMEOUT_SECONDS: Final = 10
+PG_LOCK_TIMEOUT_MILLISECONDS: Final = 10_000
+PG_STATEMENT_TIMEOUT_MILLISECONDS: Final = 30_000
+RECOVERY_QUIESCENCE_SECONDS: Final = 60
+CONTAINER_MUTATION_BUSY_EXIT_CODE: Final = 75
 
 PHASE_STAGED: Final = "staged"
 PHASE_RUNTIME_NEW_PENDING: Final = "runtime-new-pending"
@@ -109,6 +123,10 @@ class RotationError(RuntimeError):
     """Expected fail-closed error whose text is safe to show an operator."""
 
 
+class _IndeterminateMutationError(RotationError):
+    """A prior container-side mutation may still be running."""
+
+
 class _ProbeStatus(Enum):
     SUCCESS = "success"
     AUTH_REJECTED = "auth-rejected"
@@ -143,6 +161,7 @@ class _State:
     hashes: dict[str, str]
     phase: str
     origin_phase: str | None
+    updated_at: datetime
 
 
 @dataclass(frozen=True)
@@ -407,22 +426,29 @@ def _phase_document(phase: str, origin_phase: str | None = None) -> bytes:
     return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
 
 
-def _parse_phase(data: bytes) -> tuple[str, str | None]:
+def _parse_phase(data: bytes) -> tuple[str, str | None, datetime]:
     try:
         document = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise RotationError("rotation phase journal is invalid") from exc
     if document.get("version") != 1 or document.get("phase") not in _VALID_PHASES:
         _fail("rotation phase journal is incomplete or unsupported")
+    try:
+        updated_at = datetime.fromisoformat(str(document["updated_at"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RotationError("rotation phase journal has an invalid timestamp") from exc
+    if updated_at.tzinfo is None:
+        _fail("rotation phase journal timestamp must include a timezone")
+    updated_at = updated_at.astimezone(UTC)
     phase = str(document["phase"])
     origin = document.get("origin_phase")
     if phase in _PENDING_ORIGINS:
         if origin not in _PENDING_ORIGINS[phase]:
             _fail("pending rotation phase has an invalid stable origin")
-        return phase, str(origin)
+        return phase, str(origin), updated_at
     if origin is not None:
         _fail("stable rotation phase must not retain an origin")
-    return phase, None
+    return phase, None, updated_at
 
 
 def stage(source_env: Path, state_dir: Path) -> None:
@@ -565,7 +591,7 @@ def _load_state(state_dir: Path) -> _State:
     runtime = _validate_env(files["runtime.env"])
     final = _validate_env(files["final.env"])
     _validate_staged_relationships(previous, runtime, final)
-    phase, origin_phase = _parse_phase(_read_private_file(state_dir / "state.json"))
+    phase, origin_phase, updated_at = _parse_phase(_read_private_file(state_dir / "state.json"))
     return _State(
         directory=state_dir,
         source_env=source_env,
@@ -573,6 +599,7 @@ def _load_state(state_dir: Path) -> _State:
         hashes=hashes,
         phase=phase,
         origin_phase=origin_phase,
+        updated_at=updated_at,
     )
 
 
@@ -637,7 +664,8 @@ def _state_lock(state_dir: Path) -> Iterator[Path]:
 def _set_phase(state: _State, phase: str, origin_phase: str | None = None) -> None:
     phase_path = state.directory / "state.json"
     _atomic_replace_private(phase_path, _phase_document(phase, origin_phase))
-    if _parse_phase(_read_private_file(phase_path)) != (phase, origin_phase):
+    actual_phase, actual_origin, _updated_at = _parse_phase(_read_private_file(phase_path))
+    if (actual_phase, actual_origin) != (phase, origin_phase):
         _fail("rotation phase journal update could not be verified")
 
 
@@ -657,6 +685,16 @@ def _require_machine_phase(state: _State, action: str, allowed: set[str]) -> Non
     if state.phase not in allowed:
         expected = ", ".join(sorted(allowed))
         _fail(f"action {action} is not allowed from phase {state.phase}; expected {expected}")
+
+
+def _require_recovery_quiescence(state: _State) -> None:
+    elapsed = (datetime.now(UTC) - state.updated_at).total_seconds()
+    remaining = RECOVERY_QUIESCENCE_SECONDS - elapsed
+    if remaining > 0:
+        _fail(
+            "pending transition is still inside the container quiescence window; "
+            f"wait at least {math.ceil(remaining)} more seconds before recover"
+        )
 
 
 _ACTIVATIONS: Final = {
@@ -690,13 +728,27 @@ def _compensate_activation(state: _State, action: str, container: str) -> None:
         # Persist a recoverable transition before the compensating ALTER ROLE.
         _set_phase(state, PHASE_RUNTIME_NEW_PENDING, PHASE_STAGED)
         _replace_live_config(state, "previous.env")
-        _set_password_with_psql(container, RUNTIME_ROLE, previous["DATABASE_URL"].password)
+        _set_password_while_pending(
+            state,
+            PHASE_RUNTIME_NEW_PENDING,
+            PHASE_STAGED,
+            container,
+            RUNTIME_ROLE,
+            previous["DATABASE_URL"].password,
+        )
         _verify_phase(state, "previous", container, require_live=True)
         _set_phase(state, PHASE_STAGED)
         return
     _set_phase(state, PHASE_MIGRATION_NEW_PENDING, PHASE_RUNTIME_ACTIVE)
     _replace_live_config(state, "runtime.env")
-    _set_password_with_psql(container, MIGRATION_ROLE, runtime["MIGRATION_DATABASE_URL"].password)
+    _set_password_while_pending(
+        state,
+        PHASE_MIGRATION_NEW_PENDING,
+        PHASE_RUNTIME_ACTIVE,
+        container,
+        MIGRATION_ROLE,
+        runtime["MIGRATION_DATABASE_URL"].password,
+    )
     _verify_phase(state, "runtime", container, require_live=True)
     _set_phase(state, PHASE_RUNTIME_ACTIVE)
 
@@ -734,7 +786,8 @@ def activate(state_dir: Path, action: str, container: str) -> None:
             except Exception as compensation_exc:
                 raise RotationError(
                     "activation failed and automatic compensation failed; "
-                    "writers must remain stopped"
+                    f"writers must remain stopped, wait at least "
+                    f"{RECOVERY_QUIESCENCE_SECONDS} seconds, then run recover"
                 ) from compensation_exc
             restored_phase = PHASE_STAGED if action == "runtime" else PHASE_RUNTIME_ACTIVE
             raise RotationError(
@@ -755,7 +808,24 @@ def _validate_container(container: str) -> None:
         _fail("database container name contains unsupported characters")
 
 
-def _run_command(command: list[str], payload: bytes, *, timeout: int = 60) -> bytes:
+def _validate_watchdog_order(
+    container_deadline: float,
+    kill_grace: float,
+    host_watchdog: float,
+) -> None:
+    if min(container_deadline, kill_grace, host_watchdog) <= 0:
+        _fail("database command deadlines must be positive")
+    if host_watchdog <= container_deadline + kill_grace:
+        _fail("host watchdog must exceed the container deadline and kill grace")
+
+
+def _run_command(
+    command: list[str],
+    payload: bytes,
+    *,
+    timeout: float = 60,
+    indeterminate_on_timeout: bool = False,
+) -> bytes:
     try:
         result = subprocess.run(  # noqa: S603 - fixed executable + validated arguments.
             command,
@@ -764,9 +834,17 @@ def _run_command(command: list[str], payload: bytes, *, timeout: int = 60) -> by
             check=False,
             timeout=timeout,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
+        if indeterminate_on_timeout:
+            raise _IndeterminateMutationError(
+                "host watchdog expired; container-side mutation status is indeterminate"
+            ) from exc
+        raise RotationError("database control command failed before completion") from exc
+    except OSError as exc:
         raise RotationError("database control command failed before completion") from exc
     if result.returncode != 0:
+        if indeterminate_on_timeout and result.returncode == CONTAINER_MUTATION_BUSY_EXIT_CODE:
+            raise _IndeterminateMutationError("container-side password mutation lock is still held")
         # Child output is intentionally withheld: psql diagnostics can include
         # connection strings under unexpected client/server configurations.
         _fail("database control command failed; credentials were not printed")
@@ -840,21 +918,40 @@ def _container_tcp_host(container: str) -> str:
 
 
 _TCP_QUERY_SCRIPT: Final = r"""
-credential_file="$(mktemp)"
-query_file="$(mktemp)"
-cleanup() { rm -f "$credential_file" "$query_file"; }
-trap cleanup EXIT HUP INT TERM
+umask 077
+command -v timeout >/dev/null
+work_dir="$(mktemp -d "$8.XXXXXX")"
+credential_file="$work_dir/pgpass"
+query_file="$work_dir/query.sql"
+cleanup() {
+  rm -f "$credential_file" "$query_file"
+  rmdir "$work_dir" 2>/dev/null || :
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+touch "$credential_file" "$query_file"
 chmod 600 "$credential_file" "$query_file"
 IFS= read -r pgpass_line
 printf '%s\n' "$pgpass_line" >"$credential_file"
 cat >"$query_file"
-PGPASSFILE="$credential_file" psql -X -v ON_ERROR_STOP=1 -qAt \
-  -h "$3" -p 5432 -U "$1" -d "$2" -f "$query_file"
+export PGPASSFILE="$credential_file"
+export PGCONNECT_TIMEOUT="$6"
+export PGOPTIONS="-c lock_timeout=$7 -c statement_timeout=$9"
+timeout -s TERM -k "$5"s "$4"s \
+  psql -X -v ON_ERROR_STOP=1 -qAt \
+    -h "$3" -p 5432 -U "$1" -d "$2" -f "$query_file"
 """
 
 
 def _tcp_query(container: str, username: str, password: str, sql: str) -> _ProbeResult:
     _validate_container(container)
+    _validate_watchdog_order(
+        TCP_CONTAINER_DEADLINE_SECONDS,
+        CONTAINER_KILL_GRACE_SECONDS,
+        TCP_HOST_WATCHDOG_SECONDS,
+    )
     tcp_host = _container_tcp_host(container)
     pgpass = ":".join(
         (
@@ -877,6 +974,12 @@ def _tcp_query(container: str, username: str, password: str, sql: str) -> _Probe
         username,
         DB_NAME,
         tcp_host,
+        str(TCP_CONTAINER_DEADLINE_SECONDS),
+        str(CONTAINER_KILL_GRACE_SECONDS),
+        str(PG_CONNECT_TIMEOUT_SECONDS),
+        str(PG_LOCK_TIMEOUT_MILLISECONDS),
+        TCP_PROBE_DIRECTORY_PREFIX,
+        str(PG_STATEMENT_TIMEOUT_MILLISECONDS),
     ]
     try:
         result = subprocess.run(  # noqa: S603 - fixed executable + validated arguments.
@@ -884,7 +987,7 @@ def _tcp_query(container: str, username: str, password: str, sql: str) -> _Probe
             input=(pgpass + "\n" + sql).encode(),
             capture_output=True,
             check=False,
-            timeout=60,
+            timeout=TCP_HOST_WATCHDOG_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RotationError("database authentication probe failed before completion") from exc
@@ -1072,8 +1175,36 @@ def _confirm(expected: str) -> None:
         _fail("typed confirmation did not match; no change was made")
 
 
+_PASSWORD_CHANGE_SCRIPT: Final = r"""
+umask 077
+command -v timeout >/dev/null
+lock_dir="$8"
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  exit 75
+fi
+cleanup() {
+  rm -f "$lock_dir/owner-pid"
+  rmdir "$lock_dir" 2>/dev/null || :
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf '%s\n' "$$" >"$lock_dir/owner-pid"
+export PGCONNECT_TIMEOUT="$5"
+export PGOPTIONS="-c lock_timeout=$6 -c statement_timeout=$7"
+timeout -s TERM -k "$4"s "$3"s \
+  psql -X -v ON_ERROR_STOP=1 -U "$1" -d "$2"
+"""
+
+
 def _set_password_with_psql(container: str, role: str, password: str) -> None:
     _validate_container(container)
+    _validate_watchdog_order(
+        PASSWORD_CONTAINER_DEADLINE_SECONDS,
+        CONTAINER_KILL_GRACE_SECONDS,
+        PASSWORD_HOST_WATCHDOG_SECONDS,
+    )
     if role not in {RUNTIME_ROLE, MIGRATION_ROLE}:
         _fail("refusing to change an unexpected database role")
     if "\n" in password or "\r" in password:
@@ -1084,14 +1215,48 @@ def _set_password_with_psql(container: str, role: str, password: str) -> None:
         "exec",
         "-i",
         container,
-        "psql",
-        "-X",
-        "-U",
+        "sh",
+        "-ceu",
+        _PASSWORD_CHANGE_SCRIPT,
+        "--",
         MIGRATION_ROLE,
-        "-d",
         DB_NAME,
+        str(PASSWORD_CONTAINER_DEADLINE_SECONDS),
+        str(CONTAINER_KILL_GRACE_SECONDS),
+        str(PG_CONNECT_TIMEOUT_SECONDS),
+        str(PG_LOCK_TIMEOUT_MILLISECONDS),
+        str(PG_STATEMENT_TIMEOUT_MILLISECONDS),
+        PASSWORD_MUTATION_LOCK_DIR,
     ]
-    _run_command(command, payload.encode())
+    _run_command(
+        command,
+        payload.encode(),
+        timeout=PASSWORD_HOST_WATCHDOG_SECONDS,
+        indeterminate_on_timeout=True,
+    )
+
+
+def _set_password_while_pending(
+    state: _State,
+    pending_phase: str,
+    origin_phase: str,
+    container: str,
+    role: str,
+    password: str,
+) -> None:
+    try:
+        _set_password_with_psql(container, role, password)
+    except _IndeterminateMutationError:
+        # Refresh the recovery clock at an outer-watchdog or busy-lane boundary.
+        # The container lock remains authoritative if Docker started the exec
+        # unusually late or the helper died before it could refresh.
+        try:
+            _set_phase(state, pending_phase, origin_phase)
+        except Exception as journal_exc:
+            raise _IndeterminateMutationError(
+                "indeterminate mutation and the pending journal could not be refreshed"
+            ) from journal_exc
+        raise
 
 
 def _forward_role_password(state: _State, action: str, container: str) -> None:
@@ -1125,15 +1290,35 @@ def _forward_role_password(state: _State, action: str, container: str) -> None:
     _confirm(action)
     _set_phase(state, pending_phase, required_phase)
     try:
-        _set_password_with_psql(container, role, new_password)
+        _set_password_while_pending(
+            state,
+            pending_phase,
+            required_phase,
+            container,
+            role,
+            new_password,
+        )
         _verify_phase(state, target_config, container, require_live=False)
         if _live_phase(state) != source_config:
             _fail("live config changed during the role-only transition")
         _set_phase(state, applied_phase)
+    except _IndeterminateMutationError as exc:
+        raise RotationError(
+            f"role action {action} did not reach a determinate database completion; "
+            f"it remains indeterminate in {pending_phase}. Keep writers stopped, "
+            f"wait at least {RECOVERY_QUIESCENCE_SECONDS} seconds, then run recover"
+        ) from exc
     except Exception as exc:
         try:
             _replace_live_config(state, f"{source_config}.env")
-            _set_password_with_psql(container, role, old_password)
+            _set_password_while_pending(
+                state,
+                pending_phase,
+                required_phase,
+                container,
+                role,
+                old_password,
+            )
             _verify_phase(state, source_config, container, require_live=True)
             _set_phase(state, required_phase)
         except Exception as compensation_exc:
@@ -1191,14 +1376,34 @@ def _rollback_role_password(state: _State, action: str, container: str) -> None:
     _confirm(action)
     _set_phase(state, pending_phase, origin_phase)
     try:
-        _set_password_with_psql(container, role, target_password)
+        _set_password_while_pending(
+            state,
+            pending_phase,
+            origin_phase,
+            container,
+            role,
+            target_password,
+        )
         _replace_live_config(state, f"{target_config}.env")
         _verify_phase(state, target_config, container, require_live=True)
         _set_phase(state, completed_phase)
+    except _IndeterminateMutationError as exc:
+        raise RotationError(
+            f"role action {action} did not reach a determinate database completion; "
+            f"it remains indeterminate in {pending_phase}. Keep writers stopped, "
+            f"wait at least {RECOVERY_QUIESCENCE_SECONDS} seconds, then run recover"
+        ) from exc
     except Exception as exc:
         try:
             _replace_live_config(state, f"{expected_live}.env")
-            _set_password_with_psql(container, role, source_password)
+            _set_password_while_pending(
+                state,
+                pending_phase,
+                origin_phase,
+                container,
+                role,
+                source_password,
+            )
             _verify_phase(
                 state,
                 source_config,
@@ -1241,6 +1446,7 @@ def recover(state_dir: Path, container: str) -> None:
         state = _load_state(locked_dir)
         if not state.phase.endswith("-pending") or state.origin_phase is None:
             _fail("recover is only allowed from a pending transition phase")
+        _require_recovery_quiescence(state)
         _verify_local_role_contract(container)
         _confirm(f"recover-{state.phase}")
         previous = _validate_env(state.files["previous.env"])
@@ -1248,36 +1454,47 @@ def recover(state_dir: Path, container: str) -> None:
         final = _validate_env(state.files["final.env"])
 
         if state.phase == PHASE_RUNTIME_NEW_PENDING:
-            _replace_live_config(state, "previous.env")
-            _set_password_with_psql(container, RUNTIME_ROLE, previous["DATABASE_URL"].password)
+            role = RUNTIME_ROLE
+            password = previous["DATABASE_URL"].password
+            live_config = "previous"
             target_config = "previous"
             target_phase = PHASE_STAGED
         elif state.phase == PHASE_MIGRATION_NEW_PENDING:
-            _replace_live_config(state, "runtime.env")
-            _set_password_with_psql(
-                container,
-                MIGRATION_ROLE,
-                runtime["MIGRATION_DATABASE_URL"].password,
-            )
+            role = MIGRATION_ROLE
+            password = runtime["MIGRATION_DATABASE_URL"].password
+            live_config = "runtime"
             target_config = "runtime"
             target_phase = PHASE_RUNTIME_ACTIVE
         elif state.phase == PHASE_MIGRATION_ROLLBACK_PENDING:
-            original_config = "final" if state.origin_phase == PHASE_FINAL_ACTIVE else "runtime"
-            _replace_live_config(state, f"{original_config}.env")
-            _set_password_with_psql(
-                container, MIGRATION_ROLE, final["MIGRATION_DATABASE_URL"].password
-            )
+            role = MIGRATION_ROLE
+            password = final["MIGRATION_DATABASE_URL"].password
+            live_config = "final" if state.origin_phase == PHASE_FINAL_ACTIVE else "runtime"
             target_config = "final"
             target_phase = state.origin_phase
         else:
-            original_config = (
-                "runtime" if state.origin_phase == PHASE_RUNTIME_ACTIVE else "previous"
-            )
-            _replace_live_config(state, f"{original_config}.env")
-            _set_password_with_psql(container, RUNTIME_ROLE, runtime["DATABASE_URL"].password)
+            role = RUNTIME_ROLE
+            password = runtime["DATABASE_URL"].password
+            live_config = "runtime" if state.origin_phase == PHASE_RUNTIME_ACTIVE else "previous"
             target_config = "runtime"
             target_phase = state.origin_phase
 
+        try:
+            _set_password_while_pending(
+                state,
+                state.phase,
+                state.origin_phase,
+                container,
+                role,
+                password,
+            )
+        except _IndeterminateMutationError as exc:
+            raise RotationError(
+                "recover did not reach a determinate database completion; the "
+                "transition remains pending and indeterminate. Keep writers stopped, "
+                "wait at least "
+                f"{RECOVERY_QUIESCENCE_SECONDS} seconds, then retry recover"
+            ) from exc
+        _replace_live_config(state, f"{live_config}.env")
         _verify_phase(
             state,
             target_config,
