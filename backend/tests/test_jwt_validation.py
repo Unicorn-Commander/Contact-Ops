@@ -73,6 +73,20 @@ def _make_token(claims: dict, key_pem: str, headers: dict | None = None) -> str:
     return jose_jwt.encode(claims, key_pem, algorithm="RS256", headers=headers)
 
 
+def _signature_bytes(token: str) -> bytes:
+    signature_segment = token.split(".")[2]
+    padding = "=" * (-len(signature_segment) % 4)
+    return base64.urlsafe_b64decode(signature_segment + padding)
+
+
+def _flip_signature_bit(token: str) -> str:
+    parts = token.split(".")
+    signature = bytearray(_signature_bytes(token))
+    signature[0] ^= 0x01
+    parts[2] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+    return ".".join(parts)
+
+
 VALID_ISSUER = "https://test-keycloak.invalid/realms/uchub"
 VALID_JWKS_URL = "https://test-keycloak.invalid/protocol/openid-connect/certs"
 BRIGADE_JWKS_URL = "https://brigade.unicorncommander.ai/.well-known/jwks.json"
@@ -217,7 +231,7 @@ def test_wrong_issuer_rejected(rsa_keypair):
 
 
 def test_tampered_signature_rejected(rsa_keypair):
-    """Token with a flipped byte in the signature → verification fails."""
+    """Token with a flipped signature bit is rejected by the real middleware."""
     import respx
 
     now = int(time.time())
@@ -231,13 +245,13 @@ def test_tampered_signature_rejected(rsa_keypair):
         "nbf": now - 60,
     }
     token = _make_token(claims, rsa_keypair["private_pem"])
+    tampered = _flip_signature_bit(token)
 
-    # Replace the entire last character of the signature
-    parts = token.split(".")
-    sig = list(parts[2])
-    sig[-1] = "A" if sig[-1] != "A" else "B"
-    parts[2] = "".join(sig)
-    tampered = ".".join(parts)
+    # Keep the signed header/payload unchanged while proving that the decoded
+    # signature bytes really differ. Changing only the final base64url character
+    # can alter unused padding bits and leave the signature bytes unchanged.
+    assert tampered.rsplit(".", 1)[0] == token.rsplit(".", 1)[0]
+    assert _signature_bytes(tampered) != _signature_bytes(token)
 
     with respx.mock(assert_all_called=False) as mock:
         _mock_jwks(mock, rsa_keypair["jwk"])
