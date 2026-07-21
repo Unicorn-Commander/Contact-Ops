@@ -181,12 +181,12 @@ self_host bypasses). Flip via `.env` + `up -d` (not restart).
 - **DB restore:** use `scripts/contact-ops-restore.sh --latest`, pass an explicit
   local dump, or use `--from-lambda YYYYMMDD` with the protected off-host config.
   The driver validates the gzip before prompting, requires typed consent, stops
-  every container in `CONTACT_OPS_WRITER_CONTAINERS`, recreates the database,
-  and restores in one transaction with `ON_ERROR_STOP`. If a stop or SQL step
-  fails, it exits with writers left stopped for operator inspection rather than
-  reopening a partially restored service. Production currently has no Celery
-  writer; list the worker and beat containers in the protected config if that
-  topology is enabled.
+  the backend plus live Celery worker/beat from Docker Compose labels (or every
+  explicit container in `CONTACT_OPS_WRITER_CONTAINERS`), recreates the database,
+  and restores in one transaction with `ON_ERROR_STOP`. It stops writers in
+  reverse startup order and restarts the API before workers/scheduler. If a stop
+  or SQL step fails, it exits with writers left stopped for operator inspection
+  rather than reopening a partially restored service.
 - **`.env` (server secrets) backup — age public-key encrypted, off-host.** The
   same backup also uploads `contact_ops_env_YYYYMMDD.env.age`. **Key model: ONE
   keypair per DEPLOYMENT, held by the operator (NOT per end-user — users back up
