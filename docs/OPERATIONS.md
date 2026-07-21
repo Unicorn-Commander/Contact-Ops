@@ -73,6 +73,14 @@ failure stops the container (it will NOT boot healthy against a wrong schema).
   `main.py` lifespan) — so "DB down" is a clear failed boot, not a healthy box
   that 500s every request.
 
+### Database credential rotation
+
+Use [DATABASE-CREDENTIAL-ROTATION.md](DATABASE-CREDENTIAL-ROTATION.md) for the
+production DBP2/DBP3 rotation. The sequence is deliberately two-phase because
+`contact_ops_runtime` backs both runtime and audit DSNs while
+`contact_ops_admin` is a separate privileged migration login consumed during
+backend prestart. Do not rotate both roles in one unverified config/restart step.
+
 ## Connector encryption key rotation
 
 Connector payload encryption supports two configuration forms:
