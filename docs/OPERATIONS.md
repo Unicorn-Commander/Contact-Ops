@@ -163,12 +163,18 @@ self_host bypasses). Flip via `.env` + `up -d` (not restart).
 
 ## Backups
 
-- **DB backup is wired and off-host** via `scripts/contact-ops-backup.sh` (cron
+- **DB backup is wired and optionally off-host** via `scripts/contact-ops-backup.sh` (cron
   `10 3 * * *`): a superuser `pg_dump` of `contact_ops_db` (the `contact_ops_admin`
   superuser bypasses RLS — the `contact_ops_runtime` user is RLS-subject and a
   pg_dump as it fails "query would be affected by row-level security policy" with
   only schema/0 rows), gzipped to `~/backups/contact-ops/` (30-day local
-  retention) AND **uploaded off-host to Lambda S3**. Log: `~/logs/contact-ops-backup.log`.
+  retention) and, when configured, uploaded to an operator-controlled
+  S3-compatible destination. Log: `~/logs/contact-ops-backup.log`.
+- **Off-host credentials are operator-owned and untracked.** Copy
+  `deploy/contact-ops-backup.env.example` to
+  `~/.config/contact-ops/backup.env`, set mode `0600`, and configure the AWS
+  credential chain outside Git. Both backup and `--from-lambda` restore use
+  this file by default; override it with `CONTACT_OPS_BACKUP_CONFIG`.
 - **DB restore:** `zcat ~/backups/contact-ops/contact_ops_db_YYYYMMDD.sql.gz | docker
   run --rm -i --network unicorn-network -e PGPASSWORD=$(docker exec
   contact-ops-postgres printenv POSTGRES_PASSWORD) postgres:16 psql -h
@@ -187,11 +193,12 @@ self_host bypasses). Flip via `.env` + `up -d` (not restart).
 
 ## Open-source readiness (before publishing the repo)
 
-- **⚠️ `scripts/contact-ops-backup.sh` has the Lambda S3 access key/secret
-  hard-coded and committed** (and they are in git history). Before open-sourcing:
-  rotate those S3 credentials, move them to an un-committed config the script
-  sources (or `.env`), and scrub history (`git filter-repo`) — the new repo
-  should pull in cleaned files, not the history with the secret.
+- **Credential incident:** older revisions of both backup and restore scripts
+  contained a Lambda S3 Adapter access-key pair. Current scripts load only a
+  protected untracked operator config, but removing the values from `HEAD` does
+  not revoke them or erase them from Git history. Rotate/revoke the old pair,
+  update every consumer, verify an off-host backup and restore, then perform an
+  approved coordinated history rewrite before publishing or cloning the repo.
 - FalkorDB is intentionally not backed up — the graph rebuilds from Postgres via
   `backend/scripts/graph_backfill.py`.
 - **Connector scheduling:** pulls are manual (`pull_connector_now`) / owner-

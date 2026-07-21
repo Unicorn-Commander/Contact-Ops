@@ -1,19 +1,24 @@
-#!/bin/bash
-# Contact-Ops Postgres restore — recovery runbook driver
-#
-# Usage:
-#   ./contact-ops-restore.sh /path/to/backup.sql.gz
-#   ./contact-ops-restore.sh --latest        # most recent local
-#   ./contact-ops-restore.sh --from-lambda DATE  # pull from Lambda S3
-#
-# DESTRUCTIVE — drops + recreates contact_ops_db. Requires typed confirmation.
+#!/usr/bin/env bash
+# Contact-Ops PostgreSQL restore — recovery runbook driver.
+# DESTRUCTIVE: drops and recreates the configured database after typed consent.
 
 set -euo pipefail
+umask 077
 
-LOCAL_KEEP_DIR="${HOME}/backups/contact-ops"
-DB_USER="contact_ops_admin"
-DB_NAME="contact_ops_db"
-CONTAINER="contact-ops-postgres"
+CONFIG_FILE="${CONTACT_OPS_BACKUP_CONFIG:-${HOME}/.config/contact-ops/backup.env}"
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+fi
+
+LOCAL_KEEP_DIR="${CONTACT_OPS_BACKUP_LOCAL_DIR:-${HOME}/backups/contact-ops}"
+DB_USER="${CONTACT_OPS_DB_USER:-contact_ops_admin}"
+DB_NAME="${CONTACT_OPS_DB_NAME:-contact_ops_db}"
+CONTAINER="${CONTACT_OPS_DB_CONTAINER:-contact-ops-postgres}"
+BACKEND_CONTAINER="${CONTACT_OPS_BACKEND_CONTAINER:-contact-ops-backend}"
+REMOTE_URI="${CONTACT_OPS_BACKUP_REMOTE_URI:-}"
+S3_ENDPOINT="${CONTACT_OPS_BACKUP_S3_ENDPOINT:-}"
+AWS_BIN="${CONTACT_OPS_AWS_BIN:-$(command -v aws 2>/dev/null || true)}"
 
 print_usage() {
   cat <<'EOF'
@@ -24,41 +29,61 @@ Usage:
 
 Options:
   --latest             Restore from the most recent local backup
-  --from-lambda DATE   Download from Lambda S3 first, then restore
-  -h, --help           This help
+  --from-lambda DATE   Download from the configured S3-compatible destination
+  -h, --help           Show this help
 
-WARNING: drops and recreates contact_ops_db. The backend MUST be stopped
-before running this. Requires typed confirmation.
+WARNING: drops and recreates contact_ops_db. Stop all writers first. A typed
+confirmation is required before any database mutation.
 EOF
 }
 
-if [ $# -lt 1 ]; then print_usage; exit 1; fi
+if [ "$#" -lt 1 ]; then
+  print_usage
+  exit 1
+fi
 
 DUMP_FILE=""
+TEMP_DOWNLOAD=0
 
 case "$1" in
   -h|--help)
-    print_usage; exit 0 ;;
+    print_usage
+    exit 0
+    ;;
   --latest)
-    DUMP_FILE=$(ls -t "$LOCAL_KEEP_DIR"/contact_ops_db_*.sql.gz 2>/dev/null | head -1)
-    [ -z "$DUMP_FILE" ] && { echo "no local backups in $LOCAL_KEEP_DIR"; exit 1; } ;;
+    DUMP_FILE="$(find "$LOCAL_KEEP_DIR" -maxdepth 1 -type f -name 'contact_ops_db_*.sql.gz' -print 2>/dev/null | sort -r | head -1)"
+    [ -n "$DUMP_FILE" ] || { echo "ERROR: no local backups in $LOCAL_KEEP_DIR"; exit 1; }
+    ;;
   --from-lambda)
+    [ "$#" -ge 2 ] || { echo "ERROR: --from-lambda requires YYYYMMDD"; exit 1; }
     DATE="$2"
-    DUMP_FILE="/tmp/contact_ops_db_${DATE}.sql.gz"
-    echo "Downloading from Lambda S3..."
-    export AWS_ACCESS_KEY_ID=7U0ST6S7Q86BUWWDX0CD
-    export AWS_SECRET_ACCESS_KEY="rl6nuYtyiyActOM0HX58mQAJCYqt/xkv9TSCpg3R"  # gitleaks:allow
-    export AWS_DEFAULT_REGION=us-east-3
-    aws s3 cp \
-      "s3://9eb54b95-1ad1-4db4-8311-a6ae979b44da/contact-ops-backups/contact_ops_db_${DATE}.sql.gz" \
+    [[ "$DATE" =~ ^[0-9]{8}$ ]] || { echo "ERROR: date must be YYYYMMDD"; exit 1; }
+    [ -n "$REMOTE_URI" ] || { echo "ERROR: CONTACT_OPS_BACKUP_REMOTE_URI is not configured"; exit 1; }
+    [ -n "$AWS_BIN" ] || { echo "ERROR: AWS CLI is unavailable"; exit 1; }
+    DUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/contact_ops_db_${DATE}.XXXXXX.sql.gz")"
+    TEMP_DOWNLOAD=1
+    endpoint_args=()
+    [ -n "$S3_ENDPOINT" ] && endpoint_args=(--endpoint-url "$S3_ENDPOINT")
+    echo "Downloading from configured off-host backup..."
+    "$AWS_BIN" s3 cp \
+      "${REMOTE_URI%/}/contact_ops_db_${DATE}.sql.gz" \
       "$DUMP_FILE" \
-      --endpoint-url https://files.us-east-3.lambda.ai ;;
-  *) DUMP_FILE="$1" ;;
+      "${endpoint_args[@]}"
+    ;;
+  *)
+    DUMP_FILE="$1"
+    ;;
 esac
 
-if [ ! -f "$DUMP_FILE" ]; then
-  echo "ERROR: dump file not found: $DUMP_FILE"; exit 1
-fi
+cleanup() {
+  if [ "$TEMP_DOWNLOAD" -eq 1 ] && [ -n "$DUMP_FILE" ]; then
+    rm -f -- "$DUMP_FILE"
+  fi
+}
+trap cleanup EXIT
+
+[ -f "$DUMP_FILE" ] || { echo "ERROR: dump file not found: $DUMP_FILE"; exit 1; }
+gzip -t "$DUMP_FILE" || { echo "ERROR: dump is not a valid gzip archive"; exit 1; }
 
 echo "Restore source: $DUMP_FILE ($(du -sh "$DUMP_FILE" | cut -f1))"
 echo
@@ -70,22 +95,23 @@ if [ "$CONFIRM" != "restore contact-ops" ]; then
   exit 0
 fi
 
-echo "Stopping contact-ops-backend so it can't write during restore..."
-docker stop contact-ops-backend || true
+echo "Stopping $BACKEND_CONTAINER so it cannot write during restore..."
+docker stop "$BACKEND_CONTAINER" || true
 
-echo "Dropping + recreating $DB_NAME..."
+echo "Dropping and recreating $DB_NAME..."
 docker exec -i "$CONTAINER" psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME;"
 docker exec -i "$CONTAINER" psql -U "$DB_USER" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
 
 echo "Restoring from dump..."
 gunzip -c "$DUMP_FILE" | docker exec -i "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME"
 
-echo "Starting contact-ops-backend..."
-docker start contact-ops-backend
+echo "Starting $BACKEND_CONTAINER..."
+docker start "$BACKEND_CONTAINER"
 
 sleep 6
 echo "Health check..."
-docker exec contact-ops-backend curl -fsS http://localhost:8501/health || {
-  echo "WARN: backend not responding"; exit 3
+docker exec "$BACKEND_CONTAINER" curl -fsS http://localhost:8501/health || {
+  echo "WARN: backend not responding"
+  exit 3
 }
 echo "Restore complete."
