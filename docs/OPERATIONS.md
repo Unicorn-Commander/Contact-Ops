@@ -175,10 +175,15 @@ self_host bypasses). Flip via `.env` + `up -d` (not restart).
   `~/.config/contact-ops/backup.env`, set mode `0600`, and configure the AWS
   credential chain outside Git. Both backup and `--from-lambda` restore use
   this file by default; override it with `CONTACT_OPS_BACKUP_CONFIG`.
-- **DB restore:** `zcat ~/backups/contact-ops/contact_ops_db_YYYYMMDD.sql.gz | docker
-  run --rm -i --network unicorn-network -e PGPASSWORD=$(docker exec
-  contact-ops-postgres printenv POSTGRES_PASSWORD) postgres:16 psql -h
-  contact-ops-postgres -U contact_ops_admin -d contact_ops_db` (into a fresh DB).
+- **DB restore:** use `scripts/contact-ops-restore.sh --latest`, pass an explicit
+  local dump, or use `--from-lambda YYYYMMDD` with the protected off-host config.
+  The driver validates the gzip before prompting, requires typed consent, stops
+  every container in `CONTACT_OPS_WRITER_CONTAINERS`, recreates the database,
+  and restores in one transaction with `ON_ERROR_STOP`. If a stop or SQL step
+  fails, it exits with writers left stopped for operator inspection rather than
+  reopening a partially restored service. Production currently has no Celery
+  writer; list the worker and beat containers in the protected config if that
+  topology is enabled.
 - **`.env` (server secrets) backup — age public-key encrypted, off-host.** The
   same backup also uploads `contact_ops_env_YYYYMMDD.env.age`. **Key model: ONE
   keypair per DEPLOYMENT, held by the operator (NOT per end-user — users back up

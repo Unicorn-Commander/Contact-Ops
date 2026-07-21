@@ -16,6 +16,9 @@ DB_USER="${CONTACT_OPS_DB_USER:-contact_ops_admin}"
 DB_NAME="${CONTACT_OPS_DB_NAME:-contact_ops_db}"
 CONTAINER="${CONTACT_OPS_DB_CONTAINER:-contact-ops-postgres}"
 BACKEND_CONTAINER="${CONTACT_OPS_BACKEND_CONTAINER:-contact-ops-backend}"
+# Whitespace-separated containers that can write to the database. Production
+# currently has only the backend; add Celery worker/beat names here if enabled.
+WRITER_CONTAINERS="${CONTACT_OPS_WRITER_CONTAINERS:-$BACKEND_CONTAINER}"
 REMOTE_URI="${CONTACT_OPS_BACKUP_REMOTE_URI:-}"
 S3_ENDPOINT="${CONTACT_OPS_BACKUP_S3_ENDPOINT:-}"
 AWS_BIN="${CONTACT_OPS_AWS_BIN:-$(command -v aws 2>/dev/null || true)}"
@@ -45,6 +48,13 @@ fi
 DUMP_FILE=""
 TEMP_DOWNLOAD=0
 
+cleanup() {
+  if [ "$TEMP_DOWNLOAD" -eq 1 ] && [ -n "$DUMP_FILE" ]; then
+    rm -f -- "$DUMP_FILE"
+  fi
+}
+trap cleanup EXIT
+
 case "$1" in
   -h|--help)
     print_usage
@@ -60,27 +70,26 @@ case "$1" in
     [[ "$DATE" =~ ^[0-9]{8}$ ]] || { echo "ERROR: date must be YYYYMMDD"; exit 1; }
     [ -n "$REMOTE_URI" ] || { echo "ERROR: CONTACT_OPS_BACKUP_REMOTE_URI is not configured"; exit 1; }
     [ -n "$AWS_BIN" ] || { echo "ERROR: AWS CLI is unavailable"; exit 1; }
-    DUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/contact_ops_db_${DATE}.XXXXXX.sql.gz")"
+    # Keep XXXXXX at the end: BSD/macOS mktemp otherwise creates the template
+    # literally instead of replacing the placeholder.
+    DUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/contact_ops_db_${DATE}.sql.gz.XXXXXX")"
     TEMP_DOWNLOAD=1
-    endpoint_args=()
-    [ -n "$S3_ENDPOINT" ] && endpoint_args=(--endpoint-url "$S3_ENDPOINT")
     echo "Downloading from configured off-host backup..."
-    "$AWS_BIN" s3 cp \
-      "${REMOTE_URI%/}/contact_ops_db_${DATE}.sql.gz" \
-      "$DUMP_FILE" \
-      "${endpoint_args[@]}"
+    if [ -n "$S3_ENDPOINT" ]; then
+      "$AWS_BIN" s3 cp \
+        "${REMOTE_URI%/}/contact_ops_db_${DATE}.sql.gz" \
+        "$DUMP_FILE" \
+        --endpoint-url "$S3_ENDPOINT"
+    else
+      "$AWS_BIN" s3 cp \
+        "${REMOTE_URI%/}/contact_ops_db_${DATE}.sql.gz" \
+        "$DUMP_FILE"
+    fi
     ;;
   *)
     DUMP_FILE="$1"
     ;;
 esac
-
-cleanup() {
-  if [ "$TEMP_DOWNLOAD" -eq 1 ] && [ -n "$DUMP_FILE" ]; then
-    rm -f -- "$DUMP_FILE"
-  fi
-}
-trap cleanup EXIT
 
 [ -f "$DUMP_FILE" ] || { echo "ERROR: dump file not found: $DUMP_FILE"; exit 1; }
 gzip -t "$DUMP_FILE" || { echo "ERROR: dump is not a valid gzip archive"; exit 1; }
@@ -95,18 +104,26 @@ if [ "$CONFIRM" != "restore contact-ops" ]; then
   exit 0
 fi
 
-echo "Stopping $BACKEND_CONTAINER so it cannot write during restore..."
-docker stop "$BACKEND_CONTAINER" || true
+echo "Stopping database writers so they cannot write during restore..."
+# Intentional word splitting: this is an operator-configured, whitespace-
+# separated list of Docker container names.
+# shellcheck disable=SC2086
+for writer in $WRITER_CONTAINERS; do
+  docker stop "$writer"
+done
 
 echo "Dropping and recreating $DB_NAME..."
-docker exec -i "$CONTAINER" psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME;"
-docker exec -i "$CONTAINER" psql -U "$DB_USER" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+docker exec -i "$CONTAINER" psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME;"
+docker exec -i "$CONTAINER" psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
 
 echo "Restoring from dump..."
-gunzip -c "$DUMP_FILE" | docker exec -i "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME"
+gunzip -c "$DUMP_FILE" | docker exec -i "$CONTAINER" psql -v ON_ERROR_STOP=1 --single-transaction -U "$DB_USER" -d "$DB_NAME"
 
-echo "Starting $BACKEND_CONTAINER..."
-docker start "$BACKEND_CONTAINER"
+echo "Starting database writers..."
+# shellcheck disable=SC2086
+for writer in $WRITER_CONTAINERS; do
+  docker start "$writer"
+done
 
 sleep 6
 echo "Health check..."

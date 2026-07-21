@@ -35,13 +35,20 @@ log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; 
 upload_remote() {
   local source_file="$1"
   local remote_name="$2"
-  local endpoint_args=()
 
-  [ -n "$S3_ENDPOINT" ] && endpoint_args=(--endpoint-url "$S3_ENDPOINT")
-  "$AWS_BIN" s3 cp "$source_file" \
-    "${REMOTE_URI%/}/${remote_name}" \
-    "${endpoint_args[@]}" \
-    2>>"$LOG"
+  # macOS ships Bash 3.2, where expanding an empty array under `set -u`
+  # aborts the script. Keep the optional endpoint in explicit branches so the
+  # standard AWS credential/endpoint chain works on every supported host.
+  if [ -n "$S3_ENDPOINT" ]; then
+    "$AWS_BIN" s3 cp "$source_file" \
+      "${REMOTE_URI%/}/${remote_name}" \
+      --endpoint-url "$S3_ENDPOINT" \
+      2>>"$LOG"
+  else
+    "$AWS_BIN" s3 cp "$source_file" \
+      "${REMOTE_URI%/}/${remote_name}" \
+      2>>"$LOG"
+  fi
 }
 
 log "=== Contact-Ops backup starting ==="
@@ -103,7 +110,8 @@ if [ -f "$ENV_SRC" ] && [ -f "$AGE_REC_FILE" ] && command -v age >/dev/null 2>&1
       log "Encrypted environment preserved locally; remote backup is not configured"
     fi
   else
-    log "WARN: age encryption of environment failed"
+    log "ERROR: age encryption of environment failed; database copy preserved"
+    REMOTE_FAILED=1
   fi
 else
   log "WARN: skipping environment backup (missing source, age recipient, or age binary)"
