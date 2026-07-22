@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Contact-Ops PostgreSQL restore — recovery runbook driver.
 # DESTRUCTIVE: drops and recreates the configured database after typed consent.
+#
+# Off-host download (--from-lambda) uses operator credentials from
+# ~/.config/contact-ops/backup.env. Prefer GARAGE_ACCESS_KEY / GARAGE_SECRET_KEY
+# (mapped to the AWS CLI chain). Never hardcode keys in this script.
 
 set -euo pipefail
 umask 077
@@ -10,6 +14,16 @@ if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1090
   . "$CONFIG_FILE"
 fi
+
+# Suite-standard Garage names → AWS CLI credential chain (never hardcode keys).
+if [ -n "${GARAGE_ACCESS_KEY:-}" ]; then
+  export AWS_ACCESS_KEY_ID="${GARAGE_ACCESS_KEY}"
+fi
+if [ -n "${GARAGE_SECRET_KEY:-}" ]; then
+  export AWS_SECRET_ACCESS_KEY="${GARAGE_SECRET_KEY}"  # gitleaks:allow
+fi
+: "${AWS_DEFAULT_REGION:=${GARAGE_REGION:-us-east-3}}"
+export AWS_DEFAULT_REGION
 
 LOCAL_KEEP_DIR="${CONTACT_OPS_BACKUP_LOCAL_DIR:-${HOME}/backups/contact-ops}"
 DB_USER="${CONTACT_OPS_DB_USER:-contact_ops_admin}"
@@ -21,6 +35,19 @@ COMPOSE_PROJECT="${CONTACT_OPS_COMPOSE_PROJECT:-contact-ops}"
 REMOTE_URI="${CONTACT_OPS_BACKUP_REMOTE_URI:-}"
 S3_ENDPOINT="${CONTACT_OPS_BACKUP_S3_ENDPOINT:-}"
 AWS_BIN="${CONTACT_OPS_AWS_BIN:-$(command -v aws 2>/dev/null || true)}"
+
+require_offhost_credentials() {
+  if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    return 0
+  fi
+  if [ -n "${AWS_PROFILE:-}" ]; then
+    return 0
+  fi
+  echo "ERROR: off-host restore requires credentials."
+  echo "ERROR: set GARAGE_ACCESS_KEY + GARAGE_SECRET_KEY (or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or AWS_PROFILE) in ${CONFIG_FILE} (mode 0600)."
+  echo "ERROR: see deploy/contact-ops-backup.env.example — never commit live keys."
+  return 1
+}
 
 print_usage() {
   cat <<'EOF'
@@ -69,6 +96,7 @@ case "$1" in
     [[ "$DATE" =~ ^[0-9]{8}$ ]] || { echo "ERROR: date must be YYYYMMDD"; exit 1; }
     [ -n "$REMOTE_URI" ] || { echo "ERROR: CONTACT_OPS_BACKUP_REMOTE_URI is not configured"; exit 1; }
     [ -n "$AWS_BIN" ] || { echo "ERROR: AWS CLI is unavailable"; exit 1; }
+    require_offhost_credentials || exit 3
     # Keep XXXXXX at the end: BSD/macOS mktemp otherwise creates the template
     # literally instead of replacing the placeholder.
     DUMP_FILE="$(mktemp "${TMPDIR:-/tmp}/contact_ops_db_${DATE}.sql.gz.XXXXXX")"

@@ -263,9 +263,22 @@ self_host bypasses). Flip via `.env` + `up -d` (not restart).
   when a same-day filename already exists.
 - **Off-host credentials are operator-owned and untracked.** Copy
   `deploy/contact-ops-backup.env.example` to
-  `~/.config/contact-ops/backup.env`, set mode `0600`, and configure the AWS
-  credential chain outside Git. Both backup and `--from-lambda` restore use
-  this file by default; override it with `CONTACT_OPS_BACKUP_CONFIG`.
+  `~/.config/contact-ops/backup.env`, set mode `0600`, and configure credentials
+  outside Git. Both backup and `--from-lambda` restore use this file by default;
+  override it with `CONTACT_OPS_BACKUP_CONFIG`. Scripts never embed keys —
+  prefer suite-standard `GARAGE_ACCESS_KEY` + `GARAGE_SECRET_KEY` (mapped onto
+  the AWS CLI chain); alternatives are `AWS_PROFILE` or
+  `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`. When
+  `CONTACT_OPS_BACKUP_REMOTE_URI` is set, missing credentials fail closed with a
+  clear error before any dump/upload work.
+- **Backup cron host must set credentials.** On the host that runs
+  `10 3 * * * …/scripts/contact-ops-backup.sh`, ensure
+  `~/.config/contact-ops/backup.env` exists (mode `0600`) with live
+  `GARAGE_*` / AWS keys (or profile) **and** `CONTACT_OPS_BACKUP_REMOTE_URI`
+  pointing at the off-host bucket. After any credential rotation, re-verify a
+  remote upload in `~/logs/contact-ops-backup.log` — do not paste secret values
+  into tickets or commits. `.env.bak*` local backup files are gitignored and
+  must never be re-added to the tree.
 - **DB restore:** use `scripts/contact-ops-restore.sh --latest`, pass an explicit
   local dump, or use `--from-lambda YYYYMMDD` with the protected off-host config.
   The driver validates the gzip before prompting, requires typed consent, stops
