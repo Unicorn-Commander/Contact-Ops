@@ -3,6 +3,11 @@
 # Optional off-host upload uses the standard AWS credential chain. This file
 # contains no credentials; production configuration is operator-owned and
 # stored outside the repository.
+#
+# Preferred S3-compatible keys (Garage / Lambda object storage):
+#   GARAGE_ACCESS_KEY / GARAGE_SECRET_KEY
+# These map onto AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for the AWS CLI.
+# Alternatives: AWS_PROFILE, or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY.
 
 set -euo pipefail
 umask 077
@@ -12,6 +17,16 @@ if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1090
   . "$CONFIG_FILE"
 fi
+
+# Suite-standard Garage names → AWS CLI credential chain (never hardcode keys).
+if [ -n "${GARAGE_ACCESS_KEY:-}" ]; then
+  export AWS_ACCESS_KEY_ID="${GARAGE_ACCESS_KEY}"
+fi
+if [ -n "${GARAGE_SECRET_KEY:-}" ]; then
+  export AWS_SECRET_ACCESS_KEY="${GARAGE_SECRET_KEY}"  # gitleaks:allow
+fi
+: "${AWS_DEFAULT_REGION:=${GARAGE_REGION:-us-east-3}}"
+export AWS_DEFAULT_REGION
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 DATE_TODAY="$(date +%Y%m%d)"
@@ -35,6 +50,22 @@ trap 'rm -rf "$BACKUP_DIR"' EXIT
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
+# Fail closed when off-host upload is configured but no operator credentials
+# are available. Does not print secret values — only which vars are missing.
+require_offhost_credentials() {
+  if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    return 0
+  fi
+  if [ -n "${AWS_PROFILE:-}" ]; then
+    return 0
+  fi
+  log "ERROR: off-host backup is configured (CONTACT_OPS_BACKUP_REMOTE_URI) but no credentials are set."
+  log "ERROR: on the backup cron host, set GARAGE_ACCESS_KEY + GARAGE_SECRET_KEY"
+  log "ERROR: (or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or AWS_PROFILE) in ${CONFIG_FILE} (mode 0600)."
+  log "ERROR: see deploy/contact-ops-backup.env.example — never commit live keys."
+  return 1
+}
+
 upload_remote() {
   local source_file="$1"
   local remote_name="$2"
@@ -55,6 +86,16 @@ upload_remote() {
 }
 
 log "=== Contact-Ops backup starting ==="
+
+# Credential gate runs before any dump work so misconfigured cron fails closed
+# with a clear message (and so dry-runs do not need a live database).
+if [ -n "$REMOTE_URI" ]; then
+  if [ -z "$AWS_BIN" ]; then
+    log "ERROR: remote backup configured but AWS CLI is unavailable"
+    exit 3
+  fi
+  require_offhost_credentials || exit 3
+fi
 
 log "Dumping ${DB_NAME} from ${DB_CONTAINER}..."
 DUMP_FILE="${BACKUP_DIR}/contact_ops_db_${DATE_TODAY}.sql.gz"
@@ -83,10 +124,8 @@ log "Verified database backup preserved locally (${DUMP_BYTES} bytes)"
 
 REMOTE_FAILED=0
 if [ -n "$REMOTE_URI" ]; then
-  if [ -z "$AWS_BIN" ]; then
-    log "ERROR: remote backup configured but AWS CLI is unavailable"
-    REMOTE_FAILED=1
-  elif upload_remote "$DUMP_FILE" "contact_ops_db_${DATE_TODAY}.sql.gz"; then
+  # Credentials and AWS CLI were already validated above (fail closed).
+  if upload_remote "$DUMP_FILE" "contact_ops_db_${DATE_TODAY}.sql.gz"; then
     log "Off-host database upload complete"
   else
     log "ERROR: off-host database upload failed; local copy preserved"
