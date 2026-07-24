@@ -9,15 +9,22 @@ import testcontainers.core.utils
 
 testcontainers.core.utils.raise_for_deprecated_parameter = lambda *_args, **_kwargs: None
 
-from contact_ops.mcp.errors import AMBIGUOUS_MATCH, INSUFFICIENT_ROLE, ToolError
+from contact_ops.mcp.errors import (
+    AMBIGUOUS_MATCH,
+    INSUFFICIENT_ROLE,
+    INSUFFICIENT_SCOPE,
+    ToolError,
+)
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.people import (
     ArchivePersonInput,
     CreatePersonInput,
     FindPersonByIdentifierInput,
     GetPersonInput,
+    IdentityLinkSearchInput,
     IdentifierInput,
     ListPeopleInput,
+    ResolvePersonIdInput,
     SearchPeopleInput,
     UpdatePersonInput,
     archive_person,
@@ -27,14 +34,17 @@ from contact_ops.mcp.tools.people import (
     find_person_by_identifier,
     get_person,
     list_people,
+    resolve_person_id,
     search_people,
+    search_people_for_identity_link,
     update_person,
     BulkArchivePeopleInput,
     BulkUpsertPeopleInput,
     UpsertPersonInput,
     upsert_person,
 )
-from contact_ops.models import ActionEvent, Email
+from contact_ops.models import ActionEvent, Email, Person
+from contact_ops.models.enums import MergeStatus
 
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -197,6 +207,107 @@ async def test_find_person_by_identifier_ambiguous(db_session):
     with pytest.raises(ToolError) as exc:
         await find_person_by_identifier(c, FindPersonByIdentifierInput(identifiers=[IdentifierInput(namespace="email", value="REMOVED")]))
     assert exc.value.code == AMBIGUOUS_MATCH
+
+
+@pytest.mark.asyncio
+async def test_identity_link_search_is_minimal_lexical_and_explicit(db_session):
+    reader = ctx(db_session, role="CLIENT", scopes="person:read")
+    writer = ctx(db_session)
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="Ada Lovelace",
+            bio="This private biography must not cross the federation seam",
+            emails=[{"address": "REMOVED", "is_primary": True}],
+        ),
+    )
+
+    result = await search_people_for_identity_link(
+        reader,
+        IdentityLinkSearchInput(query="REMOVED"),
+    )
+
+    assert result.count == 1
+    item = result.items[0]
+    assert item.match_confidence == 1.0
+    assert item.match_basis == "exact_email"
+    assert set(item.model_dump(mode="json")) == {
+        "person_id",
+        "display_name",
+        "primary_email",
+        "match_confidence",
+        "match_basis",
+    }
+    serialized = result.model_dump_json()
+    assert "embedding" not in serialized
+    assert "voice" not in serialized
+    assert "biography" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_identity_link_search_requires_person_read_scope(db_session):
+    with pytest.raises(ToolError) as exc:
+        await search_people_for_identity_link(
+            ctx(db_session, role="CLIENT", scopes=""),
+            IdentityLinkSearchInput(query="Ada"),
+        )
+    assert exc.value.code == INSUFFICIENT_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_identity_resolution_follows_merge_and_stays_workspace_bound(db_session):
+    reader = ctx(db_session, role="CLIENT", scopes="person:read")
+    writer = ctx(db_session)
+    survivor = await create_person(writer, CreatePersonInput(display_name="Canonical"))
+    stale = await create_person(writer, CreatePersonInput(display_name="Stale"))
+    stale_row = await db_session.get(Person, stale.person_id)
+    assert stale_row is not None
+    stale_row.merge_status = MergeStatus.merged_into
+    stale_row.merged_into_id = survivor.person_id
+    await db_session.flush()
+
+    resolved = await resolve_person_id(
+        reader,
+        ResolvePersonIdInput(person_id=stale.person_id),
+    )
+    assert resolved.status == "redirected"
+    assert resolved.canonical_person_id == survivor.person_id
+    assert stale.person_id in resolved.alias_ids
+
+    other_tenant = uuid.UUID("00000000-0000-0000-0000-000000000099")
+    other_person = uuid.uuid4()
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO tenants (
+                id, slug, kind, display_name, owner_user_id,
+                qdrant_namespace, garage_bucket_prefix
+            ) VALUES (
+                :tenant_id, 'other-people-test', 'personal', 'Other',
+                :tenant_id, 'other-people-test', 'other-people-test'
+            )
+            """
+        ),
+        {"tenant_id": other_tenant},
+    )
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO persons (
+                id, display_name, canonical_owner_tenant_id, merge_status
+            ) VALUES (:person_id, 'Other Workspace', :tenant_id, 'canonical')
+            """
+        ),
+        {"person_id": other_person, "tenant_id": other_tenant},
+    )
+    await db_session.flush()
+
+    denied = await resolve_person_id(
+        reader,
+        ResolvePersonIdInput(person_id=other_person),
+    )
+    assert denied.status == "not_found"
+    assert denied.canonical_person_id is None
 
 
 @pytest.mark.asyncio

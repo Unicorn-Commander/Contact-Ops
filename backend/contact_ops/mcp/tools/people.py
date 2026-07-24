@@ -347,6 +347,45 @@ class FindPersonByIdentifierOutput(ToolOutput):
     ambiguous: bool
 
 
+class IdentityLinkSearchInput(BaseModel):
+    """Minimal, lexical-only search used by Meeting-Ops participant linking."""
+
+    query: str = Field(min_length=2, max_length=200)
+    limit: int = Field(default=10, ge=1, le=25)
+
+
+class IdentityLinkSearchResult(BaseModel):
+    person_id: uuid.UUID
+    display_name: str
+    primary_email: str | None = None
+    match_confidence: float = Field(ge=0, le=1)
+    match_basis: Literal[
+        "exact_email",
+        "exact_name",
+        "email_prefix",
+        "name_prefix",
+        "email_contains",
+        "name_contains",
+    ]
+
+
+class IdentityLinkSearchOutput(ToolOutput):
+    items: list[IdentityLinkSearchResult]
+    count: int
+    ambiguous: bool
+
+
+class ResolvePersonIdInput(BaseModel):
+    person_id: uuid.UUID
+
+
+class ResolvePersonIdOutput(ToolOutput):
+    requested_person_id: uuid.UUID
+    canonical_person_id: uuid.UUID | None = None
+    alias_ids: list[uuid.UUID] = Field(default_factory=list)
+    status: Literal["canonical", "redirected", "not_found", "not_linkable"]
+
+
 class BulkUpsertPeopleInput(BaseModel):
     people: list[UpsertPersonInput] = Field(alias="items", min_length=1, max_length=50)
     conflict_strategy: Literal[
@@ -1167,6 +1206,204 @@ async def find_person_by_identifier(
     return FindPersonByIdentifierOutput(matches=items, ambiguous=False)
 
 
+def _identity_match(
+    query: str,
+    *,
+    display_name: str,
+    primary_email: str | None,
+) -> tuple[float, str]:
+    """Return an explicit lexical confidence and its observable basis.
+
+    This is deliberately not a probabilistic identity assertion. It is a
+    deterministic UI ranking signal over name/email only; no embeddings,
+    voiceprints, biography, or inferred attributes participate.
+    """
+
+    needle = query.casefold()
+    name = (display_name or "").strip().casefold()
+    email = (primary_email or "").strip().casefold()
+    if email and email == needle:
+        return 1.0, "exact_email"
+    if name and name == needle:
+        return 0.95, "exact_name"
+    if email and email.startswith(needle):
+        return 0.90, "email_prefix"
+    if name and name.startswith(needle):
+        return 0.85, "name_prefix"
+    if email and needle in email:
+        return 0.75, "email_contains"
+    return 0.70, "name_contains"
+
+
+async def search_people_for_identity_link(
+    ctx: MCPContext, args: BaseModel
+) -> IdentityLinkSearchOutput:
+    """Workspace-bound, response-minimized person search for manual linking."""
+
+    require_role(ctx, "CLIENT")
+    require_scopes(ctx, ("person:read",))
+    data = IdentityLinkSearchInput.model_validate(args)
+    query = data.query.strip()
+    normalized = query.casefold()
+    escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    contains = f"%{escaped}%"
+    prefix = f"{escaped}%"
+    primary_email = (
+        select(Email.address)
+        .where(Email.person_id == Person.id)
+        .order_by(Email.is_primary.desc(), Email.created_at.asc())
+        .limit(1)
+        .correlate(Person)
+        .scalar_subquery()
+    )
+    normalized_name = func.lower(Person.display_name)
+    normalized_email = func.lower(primary_email)
+    match_priority = sa.case(
+        (normalized_email == normalized, 0),
+        (normalized_name == normalized, 1),
+        (normalized_email.like(prefix, escape="\\"), 2),
+        (normalized_name.like(prefix, escape="\\"), 3),
+        else_=4,
+    )
+    rows = (
+        await ctx.db.execute(
+            select(Person, primary_email.label("primary_email"))
+            .where(
+                Person.canonical_owner_tenant_id == ctx.tenant_id,
+                Person.merge_status == MergeStatus.canonical,
+                or_(
+                    normalized_name.like(contains, escape="\\"),
+                    normalized_email.like(contains, escape="\\"),
+                ),
+            )
+            .order_by(
+                match_priority.asc(),
+                normalized_name.asc(),
+                Person.id.asc(),
+            )
+            .limit(100)
+        )
+    ).all()
+
+    ranked: list[IdentityLinkSearchResult] = []
+    for person, email in rows:
+        confidence, basis = _identity_match(
+            query,
+            display_name=person.display_name,
+            primary_email=email,
+        )
+        ranked.append(
+            IdentityLinkSearchResult(
+                person_id=person.id,
+                display_name=person.display_name,
+                primary_email=email,
+                match_confidence=confidence,
+                match_basis=cast(Any, basis),
+            )
+        )
+    ranked.sort(
+        key=lambda item: (
+            -item.match_confidence,
+            item.display_name.casefold(),
+            str(item.person_id),
+        )
+    )
+    items = ranked[: data.limit]
+    top_score = items[0].match_confidence if items else None
+    ambiguous = bool(
+        top_score is not None
+        and sum(1 for item in items if item.match_confidence == top_score) > 1
+    )
+    return IdentityLinkSearchOutput(
+        items=items,
+        count=len(items),
+        ambiguous=ambiguous,
+    )
+
+
+async def resolve_person_id(
+    ctx: MCPContext, args: BaseModel
+) -> ResolvePersonIdOutput:
+    """Resolve a possibly stale merged person id to its live canonical id.
+
+    Every hop is explicitly tenant-filtered in addition to the transaction RLS
+    binding. Reverse aliases are returned so Meeting-Ops can match historical
+    participant links after Contact-Ops merges without copying person data.
+    """
+
+    require_role(ctx, "CLIENT")
+    require_scopes(ctx, ("person:read",))
+    data = ResolvePersonIdInput.model_validate(args)
+    requested = data.person_id
+    current = requested
+    visited: set[uuid.UUID] = set()
+
+    for _ in range(32):
+        if current in visited:
+            return ResolvePersonIdOutput(
+                requested_person_id=requested,
+                status="not_linkable",
+            )
+        visited.add(current)
+        person = await ctx.db.scalar(
+            select(Person).where(
+                Person.id == current,
+                Person.canonical_owner_tenant_id == ctx.tenant_id,
+            )
+        )
+        if person is None:
+            return ResolvePersonIdOutput(
+                requested_person_id=requested,
+                status="not_found",
+            )
+        if person.merge_status == MergeStatus.canonical:
+            canonical = person.id
+            break
+        if (
+            person.merge_status != MergeStatus.merged_into
+            or person.merged_into_id is None
+        ):
+            return ResolvePersonIdOutput(
+                requested_person_id=requested,
+                status="not_linkable",
+            )
+        current = person.merged_into_id
+    else:
+        return ResolvePersonIdOutput(
+            requested_person_id=requested,
+            status="not_linkable",
+        )
+
+    # Walk reverse merge links with an explicit tenant predicate on *every*
+    # hop. Besides preserving the RLS boundary, this remains testable on the
+    # SQLite contract fixture without weakening the production Postgres query.
+    alias_ids: list[uuid.UUID] = []
+    seen = {canonical}
+    frontier = [canonical]
+    for _ in range(32):
+        if not frontier:
+            break
+        rows = (
+            await ctx.db.scalars(
+                select(Person.id).where(
+                    Person.canonical_owner_tenant_id == ctx.tenant_id,
+                    Person.merge_status == MergeStatus.merged_into,
+                    Person.merged_into_id.in_(frontier),
+                )
+            )
+        ).all()
+        frontier = [person_id for person_id in rows if person_id not in seen]
+        seen.update(frontier)
+        alias_ids.extend(frontier)
+    alias_ids.sort(key=str)
+    return ResolvePersonIdOutput(
+        requested_person_id=requested,
+        canonical_person_id=canonical,
+        alias_ids=alias_ids,
+        status="canonical" if requested == canonical else "redirected",
+    )
+
+
 async def bulk_upsert_people(ctx: MCPContext, args: BaseModel) -> BulkUpsertPeopleOutput:
     require_role(ctx, "STAFF")
     require_scopes(ctx, ("person:write", "person:bulk"))
@@ -1382,6 +1619,35 @@ def register_people_tools() -> None:
         input_model=FindPersonByIdentifierInput,
         output_model=FindPersonByIdentifierOutput,
         handler=find_person_by_identifier,
+        required_role="CLIENT",
+        required_scopes=("person:read",),
+        annotations={**base, "readOnlyHint": True, "idempotentHint": True},
+        idempotency="none",
+    )
+    register(
+        name="search_people_for_identity_link",
+        description=(
+            "Minimal lexical name/email search for manual cross-app identity "
+            "linking. Returns explicit confidence+basis and no biometric or "
+            "embedding fields; CLIENT with person:read required."
+        ),
+        input_model=IdentityLinkSearchInput,
+        output_model=IdentityLinkSearchOutput,
+        handler=search_people_for_identity_link,
+        required_role="CLIENT",
+        required_scopes=("person:read",),
+        annotations={**base, "readOnlyHint": True, "idempotentHint": True},
+        idempotency="none",
+    )
+    register(
+        name="resolve_person_id",
+        description=(
+            "Resolve a stale merged Contact-Ops person id to the current "
+            "workspace-bound canonical id and historical alias ids."
+        ),
+        input_model=ResolvePersonIdInput,
+        output_model=ResolvePersonIdOutput,
+        handler=resolve_person_id,
         required_role="CLIENT",
         required_scopes=("person:read",),
         annotations={**base, "readOnlyHint": True, "idempotentHint": True},
