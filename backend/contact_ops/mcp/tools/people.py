@@ -37,11 +37,14 @@ from contact_ops.mcp.tools.common import (
 from contact_ops.models import (
     ActionEvent,
     Email,
+    Identifier,
+    IMHandle,
     MergeCandidate,
     Organization,
     Person,
     PersonTenantMembership,
     Phone,
+    Url,
 )
 from contact_ops.models.enums import (
     EmailType,
@@ -160,8 +163,22 @@ class GetPersonOutput(ToolOutput):
     kind: str
     status: str
     merged_into_id: uuid.UUID | None = None
+    # Name fields (exposed end-to-end; see CO-expose-fields).
+    given_name: str | None = None
+    family_name: str | None = None
+    additional_names: list[str] = Field(default_factory=list)
+    honorific_prefix: str | None = None
+    honorific_suffix: str | None = None
+    phonetic_given_name: str | None = None
+    phonetic_family_name: str | None = None
+    nicknames: list[str] = Field(default_factory=list)
+    file_as: str | None = None
+    pronouns: str | None = None
     emails: list[dict[str, Any]] | None = None
     phones: list[dict[str, Any]] | None = None
+    im_handles: list[dict[str, Any]] | None = None
+    identifiers: list[dict[str, Any]] | None = None
+    urls: list[dict[str, Any]] | None = None
     # The owner's personal relationship to this contact (friend, coworker,
     # family, client, …). Held per-tenant in person_tenant_membership.custom_attrs
     # so it's the *caller's* view, not a shared fact about the person.
@@ -188,6 +205,13 @@ class UpdatePersonInput(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
     given_name: str | None = Field(default=None, max_length=100)
     family_name: str | None = Field(default=None, max_length=100)
+    additional_names: list[str] | None = Field(default=None, max_length=5)
+    honorific_prefix: str | None = Field(default=None, max_length=40)
+    honorific_suffix: str | None = Field(default=None, max_length=40)
+    phonetic_given_name: str | None = Field(default=None, max_length=100)
+    phonetic_family_name: str | None = Field(default=None, max_length=100)
+    nicknames: list[str] | None = Field(default=None, max_length=10)
+    file_as: str | None = Field(default=None, max_length=200)
     pronouns: str | None = Field(default=None, max_length=40)
     headline: str | None = Field(default=None, max_length=200)
     bio: str | None = Field(default=None, max_length=4000)
@@ -595,6 +619,9 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
     person = await load_person(ctx, data.person_id)
     emails = None
     phones = None
+    im_handles = None
+    identifiers = None
+    urls = None
     if "emails" in data.include:
         result = await ctx.db.execute(
             select(Email).where(Email.person_id == person.id).order_by(Email.is_primary.desc())
@@ -622,6 +649,48 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
             }
             for row in phone_rows
         ]
+    if "im_handles" in data.include:
+        result = await ctx.db.execute(
+            select(IMHandle).where(IMHandle.person_id == person.id).order_by(IMHandle.is_primary.desc())
+        )
+        im_handles = [
+            {
+                "id": str(row.id),
+                "protocol": row.protocol,
+                "handle": row.handle,
+                "label": row.label,
+                "is_primary": row.is_primary,
+            }
+            for row in result.scalars()
+        ]
+    if "identifiers" in data.include:
+        result = await ctx.db.execute(
+            select(Identifier).where(Identifier.person_id == person.id)
+        )
+        identifiers = [
+            {
+                "id": str(row.id),
+                "namespace": row.namespace,
+                "value": row.value,
+                "url": row.url,
+                "verified": row.verified,
+            }
+            for row in result.scalars()
+        ]
+    if "urls" in data.include:
+        result = await ctx.db.execute(
+            select(Url).where(Url.person_id == person.id).order_by(Url.is_primary.desc())
+        )
+        urls = [
+            {
+                "id": str(row.id),
+                "url": row.url,
+                "type": row.type,
+                "label": row.label,
+                "is_primary": row.is_primary,
+            }
+            for row in result.scalars()
+        ]
     membership = await ctx.db.get(PersonTenantMembership, (person.id, ctx.tenant_id))
     relationship_category = (
         (membership.custom_attrs or {}).get("relationship_category") if membership else None
@@ -640,8 +709,21 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
         kind=person.kind.value,
         status="archived" if person.merge_status == MergeStatus.archived else "active",
         merged_into_id=person.merged_into_id,
+        given_name=person.given_name,
+        family_name=person.family_name,
+        additional_names=person.additional_names or [],
+        honorific_prefix=person.honorific_prefix,
+        honorific_suffix=person.honorific_suffix,
+        phonetic_given_name=person.phonetic_given_name,
+        phonetic_family_name=person.phonetic_family_name,
+        nicknames=person.nicknames or [],
+        file_as=person.file_as,
+        pronouns=person.pronouns,
         emails=emails,
         phones=phones,
+        im_handles=im_handles,
+        identifiers=identifiers,
+        urls=urls,
         relationship_category=relationship_category,
         recent_events=[
             {
@@ -695,6 +777,13 @@ async def update_person(ctx: MCPContext, args: BaseModel) -> UpdatePersonOutput:
         "display_name",
         "given_name",
         "family_name",
+        "additional_names",
+        "honorific_prefix",
+        "honorific_suffix",
+        "phonetic_given_name",
+        "phonetic_family_name",
+        "nicknames",
+        "file_as",
         "pronouns",
         "headline",
         "bio",
