@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import STALE_ETAG, VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, now_utc, register
@@ -38,6 +38,7 @@ class UrlOutput(ToolOutput):
 
 class UpdateUrlInput(BaseModel):
     url_id: uuid.UUID
+    etag: str
     url: str | None = Field(default=None, min_length=1, max_length=2000)
     type: str | None = Field(default=None, min_length=1, max_length=40)
     label: str | None = Field(default=None, max_length=120)
@@ -47,6 +48,7 @@ class UpdateUrlInput(BaseModel):
 
 class UpdateUrlOutput(ToolOutput):
     url_id: uuid.UUID
+    etag: str
     changed_fields: list[str]
     status: str
     event_id: uuid.UUID | None = None
@@ -74,6 +76,10 @@ def _payload(row: Url) -> dict[str, Any]:
         "label": row.label,
         "is_primary": row.is_primary,
     }
+
+
+def _etag(row: Url) -> str:
+    return row.updated_at.isoformat() if row.updated_at else str(row.id)
 
 
 async def _load_url(ctx: MCPContext, url_id: uuid.UUID) -> Url:
@@ -153,9 +159,11 @@ async def update_url(ctx: MCPContext, req: UpdateUrlInput) -> UpdateUrlOutput:
     require_scopes(ctx, ["person:write"])
     row = await _load_url(ctx, req.url_id)
     assert row.person_id is not None
+    if _etag(row) != req.etag:
+        raise ToolError(STALE_ETAG, "stale url etag", retryable=False)
     before = _payload(row)
     changed: list[str] = []
-    patch = req.model_dump(exclude={"url_id", "confidence"}, exclude_unset=True)
+    patch = req.model_dump(exclude={"url_id", "etag", "confidence"}, exclude_unset=True)
     if "url" in patch and patch["url"] is not None:
         patch["url"] = patch["url"].strip()
     if "type" in patch and patch["type"] is not None:
@@ -194,7 +202,7 @@ async def update_url(ctx: MCPContext, req: UpdateUrlInput) -> UpdateUrlOutput:
             confidence=req.confidence,
         )
     return UpdateUrlOutput(
-        url_id=row.id, changed_fields=changed, status="applied", event_id=event_id
+        url_id=row.id, etag=_etag(row), changed_fields=changed, status="applied", event_id=event_id
     )
 
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import DUPLICATE_RECORD, VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import DUPLICATE_RECORD, STALE_ETAG, VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, now_utc, register
@@ -79,6 +79,7 @@ class VerifyIdentifierOutput(ToolOutput):
 
 class UpdateIdentifierInput(BaseModel):
     identifier_id: uuid.UUID
+    etag: str
     namespace: str | None = Field(default=None, min_length=1, max_length=60)
     value: str | None = Field(default=None, min_length=1, max_length=400)
     url: str | None = Field(default=None, max_length=1000)
@@ -88,6 +89,7 @@ class UpdateIdentifierInput(BaseModel):
 
 class UpdateIdentifierOutput(ToolOutput):
     identifier_id: uuid.UUID
+    etag: str
     changed_fields: list[str]
     status: str
     event_id: uuid.UUID | None = None
@@ -106,6 +108,10 @@ def _row_subject(row: Identifier) -> tuple[str, uuid.UUID]:
     if row.organization_id is not None:
         return "org", row.organization_id
     raise ToolError(VALIDATION_FAILED, "identifier has no subject")
+
+
+def _etag(row: Identifier) -> str:
+    return row.updated_at.isoformat() if row.updated_at else str(row.id)
 
 
 async def _assert_subject(ctx: MCPContext, subject_kind: str, subject_id: uuid.UUID) -> None:
@@ -291,6 +297,8 @@ async def update_identifier(
         require_scopes(ctx, ["identifier:write", "identifier:verify"])
     row = await _load_identifier(ctx, req.identifier_id)
     subject_id = row.person_id or row.organization_id
+    if _etag(row) != req.etag:
+        raise ToolError(STALE_ETAG, "stale identifier etag", retryable=False)
     before = {
         "namespace": row.namespace,
         "value": row.value,
@@ -298,7 +306,7 @@ async def update_identifier(
         "verified": row.verified,
     }
     changed: list[str] = []
-    patch = req.model_dump(exclude={"identifier_id", "confidence"}, exclude_unset=True)
+    patch = req.model_dump(exclude={"identifier_id", "etag", "confidence"}, exclude_unset=True)
     if "namespace" in patch and patch["namespace"] is not None:
         patch["namespace"] = patch["namespace"].strip().lower()
     if "value" in patch and patch["value"] is not None:
@@ -345,7 +353,11 @@ async def update_identifier(
             confidence=req.confidence,
         )
     return UpdateIdentifierOutput(
-        identifier_id=row.id, changed_fields=changed, status="applied", event_id=event_id
+        identifier_id=row.id,
+        etag=_etag(row),
+        changed_fields=changed,
+        status="applied",
+        event_id=event_id,
     )
 
 

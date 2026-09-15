@@ -44,3 +44,8 @@ class Identifier(Base):
         nullable=False,
         server_default=sa.text("now()"),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.text("now()"),
+    )

@@ -18,11 +18,15 @@ class IMHandle(Base):
         primary_key=True,
         server_default=sa.text("uuidv7_generate()"),
     )
-    person_id: Mapped[uuid_module.UUID] = mapped_column(ForeignKey("persons.id", ondelete="CASCADE"))
+    person_id: Mapped[uuid_module.UUID] = mapped_column(
+        ForeignKey("persons.id", ondelete="CASCADE")
+    )
     protocol: Mapped[str] = mapped_column(Text, nullable=False)
     handle: Mapped[str] = mapped_column(Text, nullable=False)
     label: Mapped[str | None] = mapped_column(Text)
-    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa.text("false"))
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa.text("false")
+    )
     source_id: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
     confidence: Mapped[Decimal] = mapped_column(
         Numeric(4, 3),
@@ -35,6 +39,11 @@ class IMHandle(Base):
         server_default=sa.text("now()"),
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=sa.text("now()"),

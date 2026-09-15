@@ -27,7 +27,9 @@ class Url(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(Text, nullable=False, server_default=sa.text("'profile'"))
     label: Mapped[str | None] = mapped_column(Text)
-    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa.text("false"))
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa.text("false")
+    )
     source_id: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
     confidence: Mapped[Decimal] = mapped_column(
         Numeric(4, 3),
@@ -40,6 +42,11 @@ class Url(Base):
         server_default=sa.text("now()"),
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=sa.text("now()"),

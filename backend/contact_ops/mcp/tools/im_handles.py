@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import STALE_ETAG, VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, now_utc, register
@@ -43,6 +43,7 @@ class ImHandleOutput(ToolOutput):
 
 class UpdateImHandleInput(BaseModel):
     im_handle_id: uuid.UUID
+    etag: str
     protocol: str | None = Field(default=None, min_length=1, max_length=40)
     handle: str | None = Field(default=None, min_length=1, max_length=400)
     label: str | None = Field(default=None, max_length=120)
@@ -52,6 +53,7 @@ class UpdateImHandleInput(BaseModel):
 
 class UpdateImHandleOutput(ToolOutput):
     im_handle_id: uuid.UUID
+    etag: str
     changed_fields: list[str]
     status: str
     event_id: uuid.UUID | None = None
@@ -79,6 +81,10 @@ def _payload(row: IMHandle) -> dict[str, Any]:
         "label": row.label,
         "is_primary": row.is_primary,
     }
+
+
+def _etag(row: IMHandle) -> str:
+    return row.updated_at.isoformat() if row.updated_at else str(row.id)
 
 
 async def _load_im_handle(ctx: MCPContext, im_handle_id: uuid.UUID) -> IMHandle:
@@ -165,9 +171,11 @@ async def update_im_handle(ctx: MCPContext, req: UpdateImHandleInput) -> UpdateI
     require_scopes(ctx, ["person:write"])
     row = await _load_im_handle(ctx, req.im_handle_id)
     assert row.person_id is not None
+    if _etag(row) != req.etag:
+        raise ToolError(STALE_ETAG, "stale im_handle etag", retryable=False)
     before = _payload(row)
     changed: list[str] = []
-    patch = req.model_dump(exclude={"im_handle_id", "confidence"}, exclude_unset=True)
+    patch = req.model_dump(exclude={"im_handle_id", "etag", "confidence"}, exclude_unset=True)
     if "protocol" in patch and patch["protocol"] is not None:
         patch["protocol"] = patch["protocol"].strip().lower()
     if "handle" in patch and patch["handle"] is not None:
@@ -206,7 +214,11 @@ async def update_im_handle(ctx: MCPContext, req: UpdateImHandleInput) -> UpdateI
             confidence=req.confidence,
         )
     return UpdateImHandleOutput(
-        im_handle_id=row.id, changed_fields=changed, status="applied", event_id=event_id
+        im_handle_id=row.id,
+        etag=_etag(row),
+        changed_fields=changed,
+        status="applied",
+        event_id=event_id,
     )
 
 

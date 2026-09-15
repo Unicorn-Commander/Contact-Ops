@@ -62,7 +62,7 @@ async def test_add_identifier_rbac_rejects_client() -> None:
 
 @pytest.mark.asyncio
 async def test_update_identifier_rbac_rejects_client() -> None:
-    req = UpdateIdentifierInput(identifier_id=uuid.uuid4(), verified=True)
+    req = UpdateIdentifierInput(identifier_id=uuid.uuid4(), etag="x", verified=True)
     with pytest.raises(ToolError) as exc:
         await update_identifier(_ctx(), req)
     assert exc.value.code == INSUFFICIENT_ROLE
