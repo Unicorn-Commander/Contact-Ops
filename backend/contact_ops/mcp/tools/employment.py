@@ -283,6 +283,7 @@ async def update_employment(ctx: MCPContext, req: UpdateEmploymentInput) -> Upda
     if req.is_primary is True:
         await _demote_other_primary(ctx, row.person_id, row.id)
     await ctx.db.flush()
+    await ctx.db.refresh(row)
     event_id = None
     if changed:
         event_id = await emit_action_event(

@@ -303,6 +303,7 @@ async def update_address(ctx: MCPContext, req: UpdateAddressInput) -> UpdateAddr
             setattr(row, field, value)
             changed.append(field)
     await ctx.db.flush()
+    await ctx.db.refresh(row)
     event_id = None
     if changed:
         event_id = await emit_action_event(
