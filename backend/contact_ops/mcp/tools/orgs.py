@@ -13,7 +13,7 @@ from contact_ops.mcp.errors import (
     AMBIGUOUS_MATCH,
     DUPLICATE_RECORD,
     ORG_NOT_FOUND,
-    VALIDATION_FAILED,
+    STALE_ETAG,
     ToolError,
 )
 from contact_ops.mcp.idempotency import check_or_register, store_result
@@ -434,7 +434,7 @@ async def update_organization(
     org = await _load_org(ctx, req.org_id)
     if org.etag != req.etag:
         raise ToolError(
-            VALIDATION_FAILED, "stale organization etag", hint="reload organization before patching"
+            STALE_ETAG, "stale organization etag", hint="reload organization before patching"
         )
     before = _org_to_record(org).model_dump(mode="json")
     changed: list[str] = []

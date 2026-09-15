@@ -32,8 +32,8 @@ from contact_ops.mcp.errors import (
     CONFIRMATION_PHRASE_MISMATCH,
     INSUFFICIENT_ROLE,
     PERSON_NOT_FOUND,
+    STALE_ETAG,
     TENANT_MISMATCH,
-    VALIDATION_FAILED,
     ToolError,
 )
 from contact_ops.mcp.idempotency import check_or_register, store_result
@@ -422,7 +422,7 @@ async def update_tenant_settings(
     tenant = await _load_tenant(ctx, req.tenant_id, for_update=True)
     if tenant.etag != req.etag:
         raise ToolError(
-            VALIDATION_FAILED,
+            STALE_ETAG,
             "stale tenant etag",
             hint="reload tenant via get_tenant before patching",
         )
