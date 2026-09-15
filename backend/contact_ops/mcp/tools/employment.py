@@ -9,7 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import ORG_NOT_FOUND, PERSON_NOT_FOUND, VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import (
+    ORG_NOT_FOUND,
+    PERSON_NOT_FOUND,
+    STALE_ETAG,
+    VALIDATION_FAILED,
+    ToolError,
+)
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, register
@@ -260,7 +266,7 @@ async def update_employment(ctx: MCPContext, req: UpdateEmploymentInput) -> Upda
     require_scopes(ctx, ["org:write", "person:write"])
     row = await _load_employment(ctx, req.employment_id)
     if _etag(row) != req.etag:
-        raise ToolError(VALIDATION_FAILED, "stale employment etag")
+        raise ToolError(STALE_ETAG, "stale employment etag")
     before = _record(row).model_dump(mode="json")
     changed: list[str] = []
     patch = req.model_dump(exclude={"employment_id", "etag", "confidence"}, exclude_unset=True)

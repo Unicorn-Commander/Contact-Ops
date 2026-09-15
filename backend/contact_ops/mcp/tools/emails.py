@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import DUPLICATE_RECORD, VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import (
+    DUPLICATE_RECORD,
+    STALE_ETAG,
+    VALIDATION_FAILED,
+    ToolError,
+)
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, now_utc, register
@@ -251,7 +256,7 @@ async def update_email(ctx: MCPContext, req: UpdateEmailInput) -> UpdateEmailOut
     require_scopes(ctx, ["email:write"])
     row = await _load_email(ctx, req.email_id)
     if _etag(row) != req.etag:
-        raise ToolError(VALIDATION_FAILED, "stale email etag")
+        raise ToolError(STALE_ETAG, "stale email etag")
     before = _payload(row)
     changed: list[str] = []
     patch = req.model_dump(exclude={"email_id", "etag", "confidence"}, exclude_unset=True)

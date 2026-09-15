@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import DUPLICATE_RECORD, VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import (
+    DUPLICATE_RECORD,
+    STALE_ETAG,
+    VALIDATION_FAILED,
+    ToolError,
+)
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, now_utc, register
@@ -278,7 +283,7 @@ async def update_phone(ctx: MCPContext, req: UpdatePhoneInput) -> UpdatePhoneOut
     require_scopes(ctx, ["phone:write"])
     row = await _load_phone(ctx, req.phone_id)
     if _etag(row) != req.etag:
-        raise ToolError(VALIDATION_FAILED, "stale phone etag")
+        raise ToolError(STALE_ETAG, "stale phone etag")
     before = _payload(row)
     changed: list[str] = []
     patch = req.model_dump(exclude={"phone_id", "etag", "confidence"}, exclude_unset=True)

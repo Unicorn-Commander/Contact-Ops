@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import STALE_ETAG, VALIDATION_FAILED, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, now_utc, register
@@ -289,7 +289,7 @@ async def update_address(ctx: MCPContext, req: UpdateAddressInput) -> UpdateAddr
     require_scopes(ctx, ["address:write"])
     row = await _load_address(ctx, req.address_id)
     if _etag(row) != req.etag:
-        raise ToolError(VALIDATION_FAILED, "stale address etag")
+        raise ToolError(STALE_ETAG, "stale address etag")
     before = _payload(row)
     changed: list[str] = []
     patch = req.model_dump(
