@@ -279,6 +279,14 @@ async def update_identifier(
 ) -> UpdateIdentifierOutput:
     require_role(ctx, "STAFF")
     require_scopes(ctx, ["identifier:write"])
+    # Verification state is controlled by the dedicated `identifier:verify` scope
+    # (mirroring `verify_identifier`). A plain `identifier:write` holder must not be
+    # able to set `verified` in either direction — otherwise update_identifier is a
+    # bypass around the verify gate (flip true without proof, or silently un-verify).
+    # Checked before the row load so the rejection is deterministic and side-effect
+    # free. Omitting `verified` (or sending null = "no change") needs write only.
+    if req.verified is not None:
+        require_scopes(ctx, ["identifier:write", "identifier:verify"])
     row = await _load_identifier(ctx, req.identifier_id)
     subject_id = row.person_id or row.organization_id
     before = {
@@ -293,9 +301,9 @@ async def update_identifier(
         patch["namespace"] = patch["namespace"].strip().lower()
     if "value" in patch and patch["value"] is not None:
         patch["value"] = patch["value"].strip()
-    # namespace/value are NOT NULL — an explicit null means "no change", never a
-    # write of NULL. `url` stays nullable so a null clears it.
-    for required in ("namespace", "value"):
+    # namespace/value/verified are NOT NULL — an explicit null means "no change",
+    # never a write of NULL. `url` stays nullable so a null clears it.
+    for required in ("namespace", "value", "verified"):
         if patch.get(required) is None:
             patch.pop(required, None)
     # Preserve the (namespace, value) global-uniqueness invariant add_identifier
@@ -382,6 +390,8 @@ for _name, _input, _output, _handler, _role, _scopes, _readonly in [
         UpdateIdentifierOutput,
         update_identifier,
         "STAFF",
+        # Baseline scope; touching the `verified` field additionally requires
+        # `identifier:verify`, enforced conditionally inside the handler.
         ("identifier:write",),
         False,
     ),
