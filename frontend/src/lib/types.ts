@@ -84,6 +84,27 @@ export type ContactMethod = {
   source_label?: string;
 };
 
+/** Typed person-name kinds (backend NameType enum, mcp/tools/person_names.py). */
+export type NameType =
+  | "legal"
+  | "preferred"
+  | "nickname"
+  | "aka"
+  | "former"
+  | "maiden"
+  | "stage";
+
+/** Row shape returned by `list_person_names` (person_names MCP tool). */
+export type PersonName = {
+  person_name_id: UUID;
+  name_type: NameType;
+  value: string;
+  given_name?: string | null;
+  family_name?: string | null;
+  is_primary: boolean;
+  confidence?: number;
+};
+
 export type OrganizationSummary = {
   org_id: UUID;
   legal_name?: string;

@@ -23,6 +23,7 @@ import type {
   Organization,
   OrganizationSummary,
   Person,
+  PersonName,
   PersonalAccessToken,
   PersonalAccessTokenIssued,
   PersonSummary,
@@ -349,6 +350,20 @@ export const tools = {
     callTool("update_url", args, token),
   removeUrl: (args: Record<string, unknown>, token: string) =>
     callTool("remove_url", args, token),
+
+  // ---- Typed person names (backend mcp/tools/person_names.py) ----
+  // add/edit/remove/set-primary operate on the person_names table; list returns
+  // { items, count } (not the paginated ListResult) keyed by person_id.
+  listPersonNames: (person_id: UUID, token: string) =>
+    callTool<{ items: PersonName[]; count: number }>("list_person_names", { person_id }, token),
+  addPersonName: (args: Record<string, unknown>, token: string) =>
+    callTool("add_person_name", args, token),
+  updatePersonName: (args: Record<string, unknown>, token: string) =>
+    callTool("update_person_name", args, token),
+  removePersonName: (args: Record<string, unknown>, token: string) =>
+    callTool("remove_person_name", args, token),
+  setPrimaryPersonName: (args: Record<string, unknown>, token: string) =>
+    callTool("set_primary_person_name", args, token),
   listOrganizations: (args: Record<string, unknown>, token: string) =>
     callTool<ListResult<OrganizationSummary>>("list_organizations", args, token),
   searchOrganizations: (args: Record<string, unknown>, token: string) =>

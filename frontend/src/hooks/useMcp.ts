@@ -146,6 +146,14 @@ export const usePerson = (id: string) => {
   const qk = useQueryKeys();
   return useAuthedQuery(qk.person(id), (token) => tools.getPerson(id, token), Boolean(id));
 };
+export const usePersonNames = (personId: string) => {
+  const qk = useQueryKeys();
+  return useAuthedQuery(
+    qk.personNames(personId),
+    (token) => tools.listPersonNames(personId, token),
+    Boolean(personId)
+  );
+};
 export const useOrganizations = (args: Record<string, unknown>) => {
   const qk = useQueryKeys();
   return useAuthedQuery(qk.orgs(args), (token) =>

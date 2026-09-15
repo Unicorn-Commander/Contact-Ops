@@ -15,6 +15,7 @@ import { RelationshipCategoryPicker } from "@/components/domain/RelationshipCate
 import { TagChip } from "@/components/domain/Badges";
 import { ContactMethodList, EmploymentTimeline } from "@/components/domain/Lists";
 import { ContactDetailsEditor } from "@/components/domain/ContactDetailsEditor";
+import { PersonNamesEditor } from "@/components/domain/PersonNamesEditor";
 import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
 import { useAllPeople, useMcpMutation, usePerson, usePhotos, useTags } from "@/hooks/useMcp";
@@ -538,6 +539,7 @@ export function PersonDetailRoute() {
               urls: data.urls
             }}
           />
+          <PersonNamesEditor key={id} personId={id} />
         </TabsContent>
 
         <TabsContent value="relationships">
