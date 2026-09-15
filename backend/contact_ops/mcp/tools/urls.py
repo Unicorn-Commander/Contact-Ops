@@ -189,6 +189,10 @@ async def update_url(ctx: MCPContext, req: UpdateUrlInput) -> UpdateUrlOutput:
             setattr(row, field, value)
             changed.append(field)
     await ctx.db.flush()
+    # The `touch_updated` trigger bumps `updated_at` on UPDATE at the DB level, so
+    # the in-memory row is one write behind. Refresh to capture the post-write
+    # value before we serialize the etag back to the client.
+    await ctx.db.refresh(row)
     event_id = None
     if changed:
         event_id = await emit_action_event(

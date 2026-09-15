@@ -47,6 +47,14 @@ class _FakeDb:
     async def flush(self) -> None:
         return None
 
+    def add(self, _obj: Any) -> None:
+        return None
+
+    async def refresh(self, _row: Any) -> None:
+        # No-op: in a real DB `refresh` reloads the row from the store. The
+        # post-write bump is simulated by _TriggerDb below.
+        return None
+
     async def scalar(self, *_args: object, **_kwargs: object) -> None:
         return None
 
@@ -200,3 +208,69 @@ async def test_update_identifier_accepts_current_etag() -> None:
     )
     assert out.etag == row.updated_at.isoformat()
     assert out.changed_fields == []
+
+
+# ── post-write etag (touch_updated trigger) ────────────────────────────────
+#
+# The `touch_updated` trigger bumps `updated_at` at the DB level on UPDATE, so
+# the ORM row is one write behind. The update tools must `refresh()` the row
+# after flush and return the POST-write etag, or a client that reuses the
+# returned etag gets a false STALE_ETAG. These tests simulate the trigger by
+# bumping `updated_at` inside `refresh`.
+
+
+class _TriggerDb(_FakeDb):
+    """Fake DB whose `refresh` simulates the touch_updated trigger bump."""
+
+    def __init__(self, rows: dict[type, Any], bump_to: datetime) -> None:
+        super().__init__(rows)
+        self._bump_to = bump_to
+
+    async def refresh(self, row: Any) -> None:
+        row.updated_at = self._bump_to
+
+
+POST_WRITE = datetime(2026, 1, 1, 12, 0, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_update_im_handle_returns_post_write_etag() -> None:
+    row = _im_handle()
+    pre = row.updated_at.isoformat()
+    ctx = _ctx(_TriggerDb({IMHandle: row, Person: _person()}, bump_to=POST_WRITE))
+
+    out = await update_im_handle(
+        ctx, UpdateImHandleInput(im_handle_id=row.id, etag=pre, label="new-label")
+    )
+    assert out.changed_fields == ["label"]
+    assert out.etag == POST_WRITE.isoformat()
+    assert out.etag != pre
+
+
+@pytest.mark.asyncio
+async def test_update_url_returns_post_write_etag() -> None:
+    row = _url()
+    pre = row.updated_at.isoformat()
+    ctx = _ctx(_TriggerDb({Url: row, Person: _person()}, bump_to=POST_WRITE))
+
+    out = await update_url(ctx, UpdateUrlInput(url_id=row.id, etag=pre, label="new-label"))
+    assert out.changed_fields == ["label"]
+    assert out.etag == POST_WRITE.isoformat()
+    assert out.etag != pre
+
+
+@pytest.mark.asyncio
+async def test_update_identifier_returns_post_write_etag() -> None:
+    row = _identifier()
+    pre = row.updated_at.isoformat()
+    ctx = _ctx(
+        _TriggerDb({Identifier: row, Person: _person()}, bump_to=POST_WRITE),
+        scopes="identifier:write",
+    )
+
+    out = await update_identifier(
+        ctx, UpdateIdentifierInput(identifier_id=row.id, etag=pre, url="https://x.co")
+    )
+    assert out.changed_fields == ["url"]
+    assert out.etag == POST_WRITE.isoformat()
+    assert out.etag != pre
