@@ -30,7 +30,12 @@ from contact_ops.mcp.errors import (
     QUOTA_EXCEEDED,
     ToolError,
 )
+from contact_ops.mcp.tools import register_all_tools
 from contact_ops.mcp.tools.im_handles import AddImHandleInput
+
+# _run_tool now resolves the registry ToolDef to enforce RBAC first, so the pro
+# tools the tests reference (propose_merge) must be registered.
+register_all_tools()
 
 
 class _FakeDb:
@@ -92,13 +97,18 @@ async def _handler(_ctx: object, _req: object) -> _Out:
     return _Out()
 
 
-def _make_request() -> SimpleNamespace:
+def _make_request(
+    role: str = "STAFF",
+    scopes: str = "person:write dedup:propose",
+) -> SimpleNamespace:
     return SimpleNamespace(
         state=SimpleNamespace(
             jwt_claims={
                 "tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
                 "sub": "u1",
                 "uc_uid": "u1",
+                "realm_access": {"roles": [role]},
+                "scope": scopes,
             },
             actor_chain={"sub": "u1"},
             human_authority="u1",
@@ -242,3 +252,32 @@ async def test_quota_denial_surfaces_as_403(monkeypatch: pytest.MonkeyPatch) -> 
             tool_name="add_im_handle",
         )
     assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_role_rejected_403_before_billing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A CLIENT caller on a STAFF tool must be rejected with 403 by RBAC BEFORE any
+    # billing probe: both gates are wired to record any invocation, and RBAC-first
+    # must reject the caller without ever touching them.
+    calls: list[str] = []
+
+    async def _record_probe(*_args: object, **_kwargs: object) -> None:
+        calls.append("billing")
+        return None
+
+    monkeypatch.setattr("contact_ops.mcp.entitlement.check_entitlement", _record_probe)
+    monkeypatch.setattr("contact_ops.billing.check_quota", _record_probe)
+    _install_fakes(monkeypatch, db=_FakeDb(), settings=_settings())
+
+    with pytest.raises(HTTPException) as exc:
+        await people._run_tool(
+            _make_request(role="CLIENT"),
+            AddImHandleInput,
+            _handler,
+            _payload(),
+            tool_name="add_im_handle",
+        )
+    assert exc.value.status_code == 403
+    assert calls == []

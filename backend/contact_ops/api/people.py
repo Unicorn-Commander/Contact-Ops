@@ -41,7 +41,8 @@ from contact_ops.mcp.errors import (
     VALIDATION_FAILED,
     ToolError,
 )
-from contact_ops.mcp.registry import MCPContext
+from contact_ops.mcp.registry import MCPContext, get_tool
+from contact_ops.mcp.tools.common import enforce_tool_rbac
 from contact_ops.mcp.tools.identifiers import (
     AddIdentifierInput,
     RemoveIdentifierInput,
@@ -152,11 +153,22 @@ async def _run_tool(
                 request_id=request_id,
                 claims=claims,
             )
+            # RBAC FIRST (mirrors server.py): resolve the registry ToolDef and run
+            # require_role/require_scopes BEFORE the billing gates, so an
+            # unauthorized caller is rejected with 403 without ever probing plan
+            # state. The handler re-checks RBAC internally, but that would run
+            # AFTER the billing gates — exactly the order this guard exists to
+            # prevent (server.py deliberately runs RBAC before entitlement).
+            tool = get_tool(tool_name)
+            if tool is None:
+                raise ToolError(
+                    VALIDATION_FAILED, f"unknown tool: {tool_name}", retryable=False
+                )
+            enforce_tool_rbac(ctx, tool)
             # Billing gates (P-00075): mirror server.py — entitlement then quota,
-            # run BEFORE the handler (RBAC is enforced inside the handler via
-            # require_role/require_scopes, so it stays the last line). Lazy import
-            # (as server.py does) to avoid the
-            # billing → mcp.entitlement → mcp.__init__ → server import cycle.
+            # run AFTER the RBAC guard above and BEFORE the handler (which still
+            # re-checks RBAC internally). Lazy import (as server.py does) to avoid
+            # the billing → mcp.entitlement → mcp.__init__ → server import cycle.
             # Shadow-first + self-host + free-tool short-circuit all live inside
             # check_entitlement / check_quota, so the common path stays cheap —
             # and every current REST tool is free, so these are no-ops today.
