@@ -28,13 +28,15 @@ from contact_ops.agents.observability.otel import init_otel
 from contact_ops.api.auth import router as auth_router
 from contact_ops.api.chat import router as chat_router
 from contact_ops.api.connectors import router as connectors_router
-from contact_ops.api.import_vcard import router as import_vcard_router
 from contact_ops.api.import_csv import router as import_csv_router
+from contact_ops.api.import_vcard import router as import_vcard_router
+from contact_ops.api.people import router as people_router
 from contact_ops.api.test_brigade_jwt import router as test_brigade_jwt_router
 from contact_ops.api.webhooks import router as webhooks_router
 from contact_ops.api.well_known import router as well_known_router
 from contact_ops.carddav.router import carddav_router
 from contact_ops.core.config import get_settings
+from contact_ops.core.redis import close_redis, init_redis
 from contact_ops.mcp import router as mcp_router
 from contact_ops.middleware import (
     AuditMiddleware,
@@ -44,7 +46,6 @@ from contact_ops.middleware import (
     RequestMetricsMiddleware,
     SecurityHeadersMiddleware,
 )
-from contact_ops.core.redis import close_redis, init_redis
 from contact_ops.observability.sentry import init_sentry
 from contact_ops.routers import health_router
 from contact_ops.services.brigade_jwt_verifier import prime_brigade_jwks_cache
@@ -333,7 +334,7 @@ def create_application() -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.CORS_ORIGINS,
             allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             # The browser app IS an MCP client over Streamable HTTP, so the MCP
             # transport headers must be allowed (request) and exposed (response).
             # Without Mcp-Session-Id the session can never be read and every call
@@ -360,6 +361,7 @@ def create_application() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(chat_router)
     app.include_router(connectors_router)
+    app.include_router(people_router)
     # Lago billing webhook (subscription.created / terminated -> plan_tier).
     # Authenticated inline by verifying Lago's per-payload RS256 signature JWT
     # against its public key (or an opt-in LAGO_WEBHOOK_STATIC_SECRET for

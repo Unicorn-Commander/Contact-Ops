@@ -16,6 +16,7 @@ _OPTIONAL_TOOL_MODULES = (
     "emails",
     "employment",
     "identifiers",
+    "im_handles",
     "imports",
     "import_vcard",
     "import_csv",
@@ -24,6 +25,7 @@ _OPTIONAL_TOOL_MODULES = (
     "phones",
     "personal_access_tokens",
     "tags",
+    "urls",
 )
 
 

@@ -39,7 +39,34 @@ export type Person = ToolEnvelope & {
   relationship_category?: string | null;
   emails?: ContactMethod[];
   phones?: ContactMethod[];
+  im_handles?: ImHandle[];
+  identifiers?: PersonIdentifier[];
+  urls?: PersonUrl[];
   recent_events: ActionEvent[];
+};
+
+export type ImHandle = {
+  id?: UUID;
+  protocol?: string;
+  handle?: string;
+  label?: string;
+  is_primary?: boolean;
+};
+
+export type PersonIdentifier = {
+  id?: UUID;
+  namespace?: string;
+  value?: string;
+  url?: string;
+  verified?: boolean;
+};
+
+export type PersonUrl = {
+  id?: UUID;
+  url?: string;
+  type?: string;
+  label?: string;
+  is_primary?: boolean;
 };
 
 export type ContactMethod = {

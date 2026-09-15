@@ -77,6 +77,22 @@ class VerifyIdentifierOutput(ToolOutput):
     event_id: uuid.UUID | None = None
 
 
+class UpdateIdentifierInput(BaseModel):
+    identifier_id: uuid.UUID
+    namespace: str | None = Field(default=None, min_length=1, max_length=60)
+    value: str | None = Field(default=None, min_length=1, max_length=400)
+    url: str | None = Field(default=None, max_length=1000)
+    verified: bool | None = None
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class UpdateIdentifierOutput(ToolOutput):
+    identifier_id: uuid.UUID
+    changed_fields: list[str]
+    status: str
+    event_id: uuid.UUID | None = None
+
+
 def _subject_columns(subject_kind: str, subject_id: uuid.UUID) -> dict[str, uuid.UUID | None]:
     return {
         "person_id": subject_id if subject_kind == "person" else None,
@@ -258,6 +274,71 @@ async def verify_identifier(ctx: MCPContext, req: VerifyIdentifierInput) -> Veri
     )
 
 
+async def update_identifier(
+    ctx: MCPContext, req: UpdateIdentifierInput
+) -> UpdateIdentifierOutput:
+    require_role(ctx, "STAFF")
+    require_scopes(ctx, ["identifier:write"])
+    row = await _load_identifier(ctx, req.identifier_id)
+    subject_id = row.person_id or row.organization_id
+    before = {
+        "namespace": row.namespace,
+        "value": row.value,
+        "url": row.url,
+        "verified": row.verified,
+    }
+    changed: list[str] = []
+    patch = req.model_dump(exclude={"identifier_id", "confidence"}, exclude_unset=True)
+    if "namespace" in patch and patch["namespace"] is not None:
+        patch["namespace"] = patch["namespace"].strip().lower()
+    if "value" in patch and patch["value"] is not None:
+        patch["value"] = patch["value"].strip()
+    # namespace/value are NOT NULL — an explicit null means "no change", never a
+    # write of NULL. `url` stays nullable so a null clears it.
+    for required in ("namespace", "value"):
+        if patch.get(required) is None:
+            patch.pop(required, None)
+    # Preserve the (namespace, value) global-uniqueness invariant add_identifier
+    # enforces: a rename must not collide with another subject's identifier.
+    if "namespace" in patch or "value" in patch:
+        target_ns = patch.get("namespace", row.namespace)
+        target_val = patch.get("value", row.value)
+        collision = await ctx.db.scalar(
+            select(Identifier.id).where(
+                Identifier.id != row.id,
+                func.lower(Identifier.namespace) == str(target_ns).lower(),
+                func.lower(Identifier.value) == str(target_val).lower(),
+            )
+        )
+        if collision:
+            raise ToolError(DUPLICATE_RECORD, "identifier already belongs to another subject")
+    for field, value in patch.items():
+        if getattr(row, field) != value:
+            setattr(row, field, value)
+            changed.append(field)
+    await ctx.db.flush()
+    event_id = None
+    if changed:
+        event_id = await emit_action_event(
+            ctx,
+            event_type="identifier.update",
+            aggregate_type="identifier",
+            aggregate_id=row.id,
+            affected_ids=[subject_id] if subject_id is not None else [],
+            payload_before=before,
+            payload_after={
+                "namespace": row.namespace,
+                "value": row.value,
+                "url": row.url,
+                "verified": row.verified,
+            },
+            confidence=req.confidence,
+        )
+    return UpdateIdentifierOutput(
+        identifier_id=row.id, changed_fields=changed, status="applied", event_id=event_id
+    )
+
+
 for _name, _input, _output, _handler, _role, _scopes, _readonly in [
     (
         "add_identifier",
@@ -293,6 +374,15 @@ for _name, _input, _output, _handler, _role, _scopes, _readonly in [
         verify_identifier,
         "STAFF",
         ("identifier:write", "identifier:verify"),
+        False,
+    ),
+    (
+        "update_identifier",
+        UpdateIdentifierInput,
+        UpdateIdentifierOutput,
+        update_identifier,
+        "STAFF",
+        ("identifier:write",),
         False,
     ),
 ]:

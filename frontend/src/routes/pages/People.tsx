@@ -14,6 +14,7 @@ import { PersonCard, PersonGridCard } from "@/components/domain/Cards";
 import { RelationshipCategoryPicker } from "@/components/domain/RelationshipCategoryPicker";
 import { TagChip } from "@/components/domain/Badges";
 import { ContactMethodList, EmploymentTimeline } from "@/components/domain/Lists";
+import { ContactDetailsEditor } from "@/components/domain/ContactDetailsEditor";
 import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
 import { useAllPeople, useMcpMutation, usePerson, usePhotos, useTags } from "@/hooks/useMcp";
@@ -523,11 +524,20 @@ export function PersonDetailRoute() {
           ))}
         </TabsList>
 
-        <TabsContent value="overview" className="grid gap-4 lg:grid-cols-2">
-          <ContactMethodList title="Emails" items={data.emails} />
-          <ContactMethodList title="Phones" items={data.phones} />
-          <ContactMethodList title="Addresses" items={[]} />
-          <ContactMethodList title="Identifiers and URLs" items={[]} />
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ContactMethodList title="Emails" items={data.emails} />
+            <ContactMethodList title="Phones" items={data.phones} />
+            <ContactMethodList title="Addresses" items={[]} />
+          </div>
+          <ContactDetailsEditor
+            personId={id}
+            data={{
+              im_handles: data.im_handles,
+              identifiers: data.identifiers,
+              urls: data.urls
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="relationships">

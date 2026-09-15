@@ -117,6 +117,66 @@ async def test_upsert_person_updates_existing_by_email(db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_person_with_im_handles(db_session):
+    c = ctx(db_session)
+    created = await create_person(
+        c,
+        CreatePersonInput(
+            display_name="Diesel",
+            im_handles=[
+                {"protocol": "instagram", "handle": "@diesel", "label": "main"},
+                {"protocol": "x", "handle": "diesel"},
+            ],
+        ),
+    )
+    fetched = await get_person(
+        c, GetPersonInput(person_id=created.person_id, include=["im_handles"])
+    )
+    handles = {h["handle"]: h for h in (fetched.im_handles or [])}
+    assert "@diesel" in handles
+    assert handles["@diesel"]["protocol"] == "instagram"
+    assert handles["@diesel"]["is_primary"] is True  # first handle auto-primary
+    assert "diesel" in handles
+
+
+@pytest.mark.asyncio
+async def test_upsert_person_adds_im_handles_idempotently(db_session):
+    c = ctx(db_session)
+    first = await create_person(
+        c,
+        CreatePersonInput(
+            display_name="Diesel", emails=[{"address": "REMOVED"}]
+        ),
+    )
+    output = await upsert_person(
+        c,
+        UpsertPersonInput(
+            match_by=[IdentifierInput(namespace="email", value="REMOVED")],
+            im_handles=[{"protocol": "instagram", "handle": "@diesel"}],
+        ),
+    )
+    assert output.action == "updated"
+    assert "im_handles" in output.changed_fields
+    fetched = await get_person(
+        c, GetPersonInput(person_id=first.person_id, include=["im_handles"])
+    )
+    assert [h["handle"] for h in (fetched.im_handles or [])] == ["@diesel"]
+    # Re-upsert with the same handle must not duplicate it.
+    again = await upsert_person(
+        c,
+        UpsertPersonInput(
+            match_by=[IdentifierInput(namespace="email", value="REMOVED")],
+            im_handles=[{"protocol": "instagram", "handle": "@diesel"}],
+        ),
+    )
+    assert "im_handles" not in again.changed_fields
+    refetched = await get_person(
+        c, GetPersonInput(person_id=first.person_id, include=["im_handles"])
+    )
+    assert len(refetched.im_handles or []) == 1
+
+
+@pytest.mark.asyncio
 async def test_list_and_search_people(db_session):
     c = ctx(db_session, role="CLIENT", scopes="person:read")
     writer = ctx(db_session)

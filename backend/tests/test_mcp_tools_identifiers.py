@@ -8,7 +8,12 @@ import pytest
 from contact_ops.mcp.errors import INSUFFICIENT_ROLE, ToolError
 from contact_ops.mcp.registry import MCPContext, get_tool
 from contact_ops.mcp.tools import register_all_tools
-from contact_ops.mcp.tools.identifiers import AddIdentifierInput, add_identifier
+from contact_ops.mcp.tools.identifiers import (
+    AddIdentifierInput,
+    UpdateIdentifierInput,
+    add_identifier,
+    update_identifier,
+)
 
 
 def _ctx(role: str = "CLIENT", scopes: str = "") -> MCPContext:
@@ -27,7 +32,13 @@ def _ctx(role: str = "CLIENT", scopes: str = "") -> MCPContext:
 
 def test_identifier_tools_registered() -> None:
     register_all_tools()
-    for name in {"add_identifier", "remove_identifier", "list_identifiers", "verify_identifier"}:
+    for name in {
+        "add_identifier",
+        "remove_identifier",
+        "list_identifiers",
+        "verify_identifier",
+        "update_identifier",
+    }:
         assert get_tool(name) is not None
 
 
@@ -46,4 +57,12 @@ async def test_add_identifier_rbac_rejects_client() -> None:
     )
     with pytest.raises(ToolError) as exc:
         await add_identifier(_ctx(), req)
+    assert exc.value.code == INSUFFICIENT_ROLE
+
+
+@pytest.mark.asyncio
+async def test_update_identifier_rbac_rejects_client() -> None:
+    req = UpdateIdentifierInput(identifier_id=uuid.uuid4(), verified=True)
+    with pytest.raises(ToolError) as exc:
+        await update_identifier(_ctx(), req)
     assert exc.value.code == INSUFFICIENT_ROLE

@@ -331,6 +331,24 @@ export const tools = {
   archivePerson: (args: Record<string, unknown>, token: string) => callTool("archive_person", args, token),
   setRelationshipCategory: (args: Record<string, unknown>, token: string) =>
     callTool("set_relationship_category", args, token),
+  addImHandle: (args: Record<string, unknown>, token: string) =>
+    callTool("add_im_handle", args, token),
+  updateImHandle: (args: Record<string, unknown>, token: string) =>
+    callTool("update_im_handle", args, token),
+  removeImHandle: (args: Record<string, unknown>, token: string) =>
+    callTool("remove_im_handle", args, token),
+  addIdentifier: (args: Record<string, unknown>, token: string) =>
+    callTool("add_identifier", args, token),
+  updateIdentifier: (args: Record<string, unknown>, token: string) =>
+    callTool("update_identifier", args, token),
+  removeIdentifier: (args: Record<string, unknown>, token: string) =>
+    callTool("remove_identifier", args, token),
+  addUrl: (args: Record<string, unknown>, token: string) =>
+    callTool("add_url", args, token),
+  updateUrl: (args: Record<string, unknown>, token: string) =>
+    callTool("update_url", args, token),
+  removeUrl: (args: Record<string, unknown>, token: string) =>
+    callTool("remove_url", args, token),
   listOrganizations: (args: Record<string, unknown>, token: string) =>
     callTool<ListResult<OrganizationSummary>>("list_organizations", args, token),
   searchOrganizations: (args: Record<string, unknown>, token: string) =>

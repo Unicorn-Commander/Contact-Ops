@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import sqlalchemy as sa
@@ -79,6 +80,13 @@ class IdentifierInput(BaseModel):
     value: str = Field(min_length=1, max_length=400)
 
 
+class IMHandleInput(BaseModel):
+    protocol: str = Field(min_length=1, max_length=40)
+    handle: str = Field(min_length=1, max_length=400)
+    label: str | None = Field(default=None, max_length=120)
+    is_primary: bool = False
+
+
 class CreatePersonInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -103,6 +111,7 @@ class CreatePersonInput(BaseModel):
     occupation_title: str | None = Field(default=None, max_length=120)
     emails: list[EmailInput] = Field(default_factory=list, max_length=20)
     phones: list[PhoneInput] = Field(default_factory=list, max_length=20)
+    im_handles: list[IMHandleInput] = Field(default_factory=list, max_length=20)
     initial_tags: list[str] = Field(default_factory=list, max_length=20)
     tenant_membership_notes: str | None = Field(default=None, max_length=2000)
     idempotency_key: uuid.UUID | None = None
@@ -457,6 +466,17 @@ async def _insert_person(ctx: MCPContext, data: CreatePersonInput) -> Person:
                 confidence=data.confidence,
             )
         )
+    for index, handle_item in enumerate(data.im_handles):
+        ctx.db.add(
+            IMHandle(
+                person_id=person.id,
+                protocol=handle_item.protocol.strip().lower(),
+                handle=handle_item.handle.strip(),
+                label=handle_item.label,
+                is_primary=handle_item.is_primary or index == 0,
+                confidence=data.confidence,
+            )
+        )
     await ctx.db.flush()
     return person
 
@@ -467,6 +487,50 @@ def _is_uuid(value: str) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+async def _ensure_im_handles(
+    ctx: MCPContext, person: Person, handles: list[IMHandleInput], confidence: float
+) -> list[IMHandle]:
+    """Idempotently add incoming IM handles that are not already present.
+
+    Used by upsert_person on the existing-person path so a Customer-Ops
+    ingest_lead (which pushes handles through im_handles) lands handles even when
+    the person was matched by email/phone rather than freshly created.
+    """
+    added: list[IMHandle] = []
+    if not handles:
+        return added
+    existing = (
+        await ctx.db.execute(
+            select(IMHandle).where(IMHandle.person_id == person.id)
+        )
+    ).scalars().all()
+    seen = {(h.protocol.strip().lower(), h.handle.strip().lower()) for h in existing}
+    has_primary = any(h.is_primary for h in existing)
+    for item in handles:
+        key = (item.protocol.strip().lower(), item.handle.strip().lower())
+        if key in seen:
+            continue
+        # First handle overall becomes primary when none exists (matches the
+        # add/create semantics); an explicitly primary incoming handle wins the
+        # still-open primary slot. We never demote an existing primary on upsert —
+        # ingestion must not silently reorder a contact's preferred channel.
+        make_primary = not has_primary and (item.is_primary or not added)
+        row = IMHandle(
+            person_id=person.id,
+            protocol=item.protocol.strip().lower(),
+            handle=item.handle.strip(),
+            label=item.label,
+            is_primary=make_primary,
+            confidence=Decimal(str(confidence)),
+        )
+        ctx.db.add(row)
+        added.append(row)
+        seen.add(key)
+        if make_primary:
+            has_primary = True
+    return added
 
 
 async def create_person(ctx: MCPContext, args: BaseModel) -> CreatePersonOutput:
@@ -585,6 +649,8 @@ async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
             if current != incoming:
                 setattr(person, field, incoming)
                 changed_fields.append(field)
+        if await _ensure_im_handles(ctx, person, data.im_handles, data.confidence):
+            changed_fields.append("im_handles")
         if changed_fields:
             person.etag = str(uuid.uuid4())
         action = "updated" if changed_fields else "noop"
