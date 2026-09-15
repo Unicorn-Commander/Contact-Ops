@@ -377,3 +377,21 @@ class VisibilityScope(str, enum.Enum):
     team = "team"
     org = "org"
     shared = "shared"
+
+
+class NameType(str, enum.Enum):
+    """Typed alternate names on a person (person_names.name_type).
+
+    `legal` / `preferred` are the person's own name forms; `nickname`, `aka`,
+    `former`, `maiden`, `stage` are alternate/other names that search + dedup
+    must match on. Usernames/social handles are NOT here — they live in
+    im_handles.
+    """
+
+    legal = "legal"
+    preferred = "preferred"
+    nickname = "nickname"
+    aka = "aka"
+    former = "former"
+    maiden = "maiden"
+    stage = "stage"

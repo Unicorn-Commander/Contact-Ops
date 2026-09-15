@@ -7,6 +7,8 @@ import jellyfish
 
 from contact_ops.agents.dedup.normalizers import (
     apply_nickname_map,
+    name_variants,
+    names_share_variant,
     normalize_address,
     normalize_email,
     normalize_phone_e164,
@@ -18,6 +20,8 @@ from contact_ops.agents.dedup.normalizers import (
 # stable across both the real module and the comparison entry points).
 __all__ = [
     "apply_nickname_map",
+    "name_variants",
+    "names_share_variant",
     "normalize_address",
     "normalize_email",
     "normalize_phone_e164",
@@ -95,9 +99,35 @@ def compare_first_name(
     return ComparisonOutcome("disagree", -4.0, a_facts + b_facts)
 
 
-# ---------------------------------------------------------------------------
-# Last Name
-# ---------------------------------------------------------------------------
+def compare_stored_names(
+    a: list[str], b: list[str],
+    *,
+    a_facts: tuple[FactRef, ...] = (),
+    b_facts: tuple[FactRef, ...] = (),
+) -> ComparisonOutcome:
+    """Match on any shared stored-name variant (nickname/aka/former/maiden/
+    stage/legal/preferred) OR on the static nickname map. A contact known only
+    by a nickname ("Diesel") matches a later record that carries it as a given
+    name — the name_type data is folded into the comparison via name_variants.
+    """
+    if not a or not b:
+        return ComparisonOutcome("null_exclude", 0.0)
+
+    a_norm = [_normalize_name(x) for x in a]
+    b_norm = [_normalize_name(x) for x in b]
+
+    if names_share_variant(a_norm, b_norm):
+        return ComparisonOutcome("strong", 8.0, a_facts + b_facts)
+
+    # Nickname-map fallback across the two variant sets.
+    for x in a_norm:
+        for y in b_norm:
+            nx = apply_nickname_map(x)
+            ny = apply_nickname_map(y)
+            if y in nx or x in ny:
+                return ComparisonOutcome("nickname", 5.0, a_facts + b_facts)
+
+    return ComparisonOutcome("disagree", -4.0, a_facts + b_facts)
 
 def compare_last_name(
     a: str | None, b: str | None,

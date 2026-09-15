@@ -19,6 +19,8 @@ from contact_ops.agents.dedup.comparisons import (
     compare_last_name,
     compare_name_embedding,
     compare_phone,
+    compare_stored_names,
+    name_variants,
 )
 
 
@@ -191,3 +193,35 @@ class TestAllNullExclude:
         ]:
             assert outcome.level_name == "null_exclude"
             assert outcome.raw_bits == 0.0
+
+
+class TestStoredNameVariants:
+    def test_nickname_diesel_matches_given_name_diesel(self) -> None:
+        # Contact A is known only by a nickname; a later record carries it as
+        # the given name: 'Firstname "Diesel" Lastname'.
+        a = name_variants(None, None, ["Diesel"], [])
+        b = name_variants("Diesel", "Lastname", [], [])
+        result = compare_stored_names(a, b)
+        assert result.level_name == "strong"
+        assert result.raw_bits == 8.0
+
+    def test_aka_name_type_included_in_variants(self) -> None:
+        # A typed person_names value (name_type='aka') is folded into the
+        # candidate name tokens and matches a later given name.
+        a = name_variants(None, None, [], ["Diesel"])
+        b = name_variants("Diesel", "Smith", [], [])
+        assert compare_stored_names(a, b).level_name == "strong"
+
+    def test_former_name_matches_older_record(self) -> None:
+        a = name_variants(None, None, [], ["Jane Doe"])  # former/maiden full name
+        b = name_variants("Jane", "Doe", [], [])
+        # name_variants splits full names into tokens; "jane" overlaps.
+        assert compare_stored_names(a, b).level_name == "strong"
+
+    def test_disjoint_names_disagree(self) -> None:
+        a = name_variants("Diesel", "A", [], [])
+        b = name_variants("Robert", "B", [], [])
+        assert compare_stored_names(a, b).level_name == "disagree"
+
+    def test_null_exclude_when_no_variants(self) -> None:
+        assert compare_stored_names([], ["Diesel"]).level_name == "null_exclude"

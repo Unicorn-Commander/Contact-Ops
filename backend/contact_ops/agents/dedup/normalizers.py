@@ -116,3 +116,42 @@ def apply_nickname_map(given_name: str | None) -> list[str]:
             seen.add(item)
             deduped.append(item)
     return deduped
+
+
+def name_variants(
+    given_name: str | None,
+    family_name: str | None,
+    nicknames: list[str] | None = None,
+    person_names: list[str] | None = None,
+) -> list[str]:
+    """Every name string a person can be matched on, lowercased + deduped.
+
+    Includes the given/family name, the stored `persons.nicknames`, and any
+    typed `person_names` values (legal/preferred/nickname/aka/former/maiden/
+    stage). Used by search + dedup so a contact known only by a nickname
+    (e.g. "Diesel") still matches a later record that carries it as a given or
+    full name.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str | None) -> None:
+        if value is None:
+            return
+        for token in str(value).strip().lower().split():
+            if token and token not in seen:
+                seen.add(token)
+                out.append(token)
+
+    add(given_name)
+    add(family_name)
+    for n in nicknames or []:
+        add(n)
+    for n in person_names or []:
+        add(n)
+    return out
+
+
+def names_share_variant(a: list[str], b: list[str]) -> bool:
+    """True when two name-variant lists overlap (any shared name token)."""
+    return bool(set(a) & set(b))

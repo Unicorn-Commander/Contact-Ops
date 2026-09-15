@@ -42,11 +42,6 @@ class Tenant(Base):
     )
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     owner_user_id: Mapped[uuid_module.UUID] = mapped_column(PGUUID, nullable=False)
-    # Subscription plan tier (P-00075 §4 entitlement). free < pro < enterprise;
-    # the policy + ladder live in contact_ops.mcp.entitlement. Existing tenants
-    # were grandfathered to 'enterprise' in migration 0041; new self-served
-    # tenants default to 'free'.
-    plan_tier: Mapped[str] = mapped_column(Text, nullable=False, server_default=sa.text("'free'"))
     parent_tenant_id: Mapped[uuid_module.UUID | None] = mapped_column(ForeignKey("tenants.id"))
     branding: Mapped[dict] = mapped_column(JSONB, default=dict)
     retention_policy: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -55,17 +50,6 @@ class Tenant(Base):
     data_residency: Mapped[str] = mapped_column(Text, default="us-east")
     data_intel_publish_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_approve_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Workspace-wide agent master switch (the Agent Command Center kill-switch).
-    # True => BaseAgent.execute refuses to run ANY agent for this tenant, beside
-    # the per-agent / fleet circuit breaker. Distinct from auto_approve_disabled
-    # (which only stops auto-APPLY; agents still run and propose). reason/at/by
-    # are audit detail the console surfaces; who/when/why also hits prov_activities.
-    agents_paused: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=sa.text("false")
-    )
-    agents_paused_reason: Mapped[str | None] = mapped_column(Text)
-    agents_paused_at: Mapped[datetime | None] = mapped_column()
-    agents_paused_by: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
     carddav_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     graph_mode: Mapped[str] = mapped_column(Text, default="per_org_graph")
     graph_name: Mapped[str | None] = mapped_column(Text)
@@ -151,11 +135,6 @@ class Person(Base):
         server_default=sa.text("'operational_2y'"),
     )
     legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Two-phase erasure tombstone (P-00075 compliance, migration 0042). An Art.17
-    # erasure request sets these (+ redacts PII); the retention sweep hard-purges
-    # once purge_after passes. Both null on a normal live person.
-    tombstoned_at: Mapped[datetime | None] = mapped_column()
-    purge_after: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     created_by_actor_id: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
@@ -234,6 +213,7 @@ from contact_ops.models.merge_history import MergeHistory
 from contact_ops.models.organization_tenant_membership import OrganizationTenantMembership
 from contact_ops.models.person_alias import PersonAlias
 from contact_ops.models.person_org_role import PersonOrgRole
+from contact_ops.models.person_name import PersonName
 from contact_ops.models.person_person_relation import PersonPersonRelation
 from contact_ops.models.person_tenant_membership import PersonTenantMembership
 from contact_ops.models.personal_access_token import PersonalAccessToken
@@ -268,6 +248,7 @@ __all__ = [
     "OrganizationTenantMembership",
     "PersonTenantMembership",
     "PersonalAccessToken",
+    "PersonName",
     "Photo",
     "PostalAddress",
     "Identifier",
