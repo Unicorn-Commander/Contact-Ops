@@ -10,9 +10,9 @@ workspace scoping, and audit can never drift between the two surfaces.
 Workspace scoping is RLS-enforced at the session layer (``app.tenant_id`` GUC)
 plus re-gated by ``load_person`` inside every handler, so a caller can only ever
 reach a person in their own workspace. The billing entitlement/quota gates that
-``server.py`` runs around each tool call are NOT re-run here — they remain a
-property of the MCP surface (see the P-00075 billing module); this REST surface
-enforces RBAC + workspace + audit only.
+``server.py`` runs around each tool call are re-run here too (lazy-imported
+``check_entitlement`` / ``check_quota`` in ``_run_tool``, keyed to each route's
+underlying MCP tool name), so a REST write cannot bypass the plan gates.
 """
 
 from __future__ import annotations
@@ -32,9 +32,11 @@ from contact_ops.core.database import (
 )
 from contact_ops.mcp.errors import (
     DUPLICATE_RECORD,
+    ENTITLEMENT_REQUIRED,
     INSUFFICIENT_ROLE,
     INSUFFICIENT_SCOPE,
     PERSON_NOT_FOUND,
+    QUOTA_EXCEEDED,
     STALE_ETAG,
     VALIDATION_FAILED,
     ToolError,
@@ -77,9 +79,22 @@ _TOOL_ERROR_STATUS: dict[str, int] = {
     VALIDATION_FAILED: status.HTTP_400_BAD_REQUEST,
     DUPLICATE_RECORD: status.HTTP_409_CONFLICT,
     STALE_ETAG: status.HTTP_409_CONFLICT,
+    # Billing gates (P-00075): a plan-tier denial is a paywall (402), an
+    # exhausted allowance is a hard block on this op (403) — matching the MCP
+    # surface, which surfaces these as ENTITLEMENT_REQUIRED / QUOTA_EXCEEDED.
+    ENTITLEMENT_REQUIRED: status.HTTP_402_PAYMENT_REQUIRED,
+    QUOTA_EXCEEDED: status.HTTP_403_FORBIDDEN,
 }
 
 Handler = Callable[[MCPContext, BaseModel], Awaitable[BaseModel]]
+
+
+def _raise_tool_error(exc: ToolError) -> None:
+    """Translate an MCP ToolError into the matching HTTPException (never returns)."""
+    raise HTTPException(
+        status_code=_TOOL_ERROR_STATUS.get(exc.code, status.HTTP_400_BAD_REQUEST),
+        detail=exc.message,
+    )
 
 
 def _claims(request: Request) -> dict[str, Any]:
@@ -97,8 +112,15 @@ async def _run_tool(
     input_model: type[BaseModel],
     handler: Handler,
     payload: dict[str, Any],
+    *,
+    tool_name: str,
 ) -> dict[str, Any]:
-    """Invoke an MCP tool handler from a REST route with a JWT-built context."""
+    """Invoke an MCP tool handler from a REST route with a JWT-built context.
+
+    `tool_name` is the underlying MCP tool's registry name, used to run the same
+    billing entitlement/quota gates the MCP surface (`server.py`) runs around
+    each tool call, so a REST write cannot bypass the plan gates.
+    """
     claims = _claims(request)
     settings = get_settings()
     tenant_id = uuid.UUID(str(claims["tenant_id"]))
@@ -130,6 +152,28 @@ async def _run_tool(
                 request_id=request_id,
                 claims=claims,
             )
+            # Billing gates (P-00075): mirror server.py — entitlement then quota,
+            # run BEFORE the handler (RBAC is enforced inside the handler via
+            # require_role/require_scopes, so it stays the last line). Lazy import
+            # (as server.py does) to avoid the
+            # billing → mcp.entitlement → mcp.__init__ → server import cycle.
+            # Shadow-first + self-host + free-tool short-circuit all live inside
+            # check_entitlement / check_quota, so the common path stays cheap —
+            # and every current REST tool is free, so these are no-ops today.
+            from contact_ops.billing import check_quota
+            from contact_ops.mcp.entitlement import check_entitlement
+
+            entitlement_error = await check_entitlement(
+                tool_name=tool_name,
+                tenant_id=tenant_id,
+                db=db,
+                settings=settings,
+            )
+            if entitlement_error is not None:
+                _raise_tool_error(entitlement_error)
+            quota_error = await check_quota(tool_name, tenant_id, db, settings)
+            if quota_error is not None:
+                _raise_tool_error(quota_error)
             result = await handler(ctx, req)
             # Match server.py commit order: audit ledger first, then data.
             await audit_db.commit()
@@ -141,10 +185,7 @@ async def _run_tool(
             detail=str(exc),
         ) from exc
     except ToolError as exc:
-        raise HTTPException(
-            status_code=_TOOL_ERROR_STATUS.get(exc.code, status.HTTP_400_BAD_REQUEST),
-            detail=exc.message,
-        ) from exc
+        _raise_tool_error(exc)
 
 
 async def _assert_owned_by_person(
@@ -182,7 +223,8 @@ async def add_person_im_handle(
     request: Request, person_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, AddImHandleInput, add_im_handle, {**body, "person_id": person_id}
+        request, AddImHandleInput, add_im_handle, {**body, "person_id": person_id},
+        tool_name="add_im_handle",
     )
 
 
@@ -192,7 +234,8 @@ async def update_person_im_handle(
 ) -> dict[str, Any]:
     await _assert_owned_by_person(request, person_id, IMHandle, im_handle_id)
     return await _run_tool(
-        request, UpdateImHandleInput, update_im_handle, {**body, "im_handle_id": im_handle_id}
+        request, UpdateImHandleInput, update_im_handle, {**body, "im_handle_id": im_handle_id},
+        tool_name="update_im_handle",
     )
 
 
@@ -209,6 +252,7 @@ async def delete_person_im_handle(
         RemoveImHandleInput,
         remove_im_handle,
         {**(body or {}), "im_handle_id": im_handle_id},
+        tool_name="remove_im_handle",
     )
 
 
@@ -224,6 +268,7 @@ async def add_person_identifier(
         AddIdentifierInput,
         add_identifier,
         {**body, "subject_kind": "person", "subject_id": person_id},
+        tool_name="add_identifier",
     )
 
 
@@ -237,6 +282,7 @@ async def update_person_identifier(
         UpdateIdentifierInput,
         update_identifier,
         {**body, "identifier_id": identifier_id},
+        tool_name="update_identifier",
     )
 
 
@@ -253,6 +299,7 @@ async def delete_person_identifier(
         RemoveIdentifierInput,
         remove_identifier,
         {**(body or {}), "identifier_id": identifier_id},
+        tool_name="remove_identifier",
     )
 
 
@@ -263,7 +310,10 @@ async def delete_person_identifier(
 async def add_person_url(
     request: Request, person_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
-    return await _run_tool(request, AddUrlInput, add_url, {**body, "person_id": person_id})
+    return await _run_tool(
+        request, AddUrlInput, add_url, {**body, "person_id": person_id},
+        tool_name="add_url",
+    )
 
 
 @router.patch("/{person_id}/urls/{url_id}")
@@ -271,7 +321,10 @@ async def update_person_url(
     request: Request, person_id: uuid.UUID, url_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     await _assert_owned_by_person(request, person_id, Url, url_id)
-    return await _run_tool(request, UpdateUrlInput, update_url, {**body, "url_id": url_id})
+    return await _run_tool(
+        request, UpdateUrlInput, update_url, {**body, "url_id": url_id},
+        tool_name="update_url",
+    )
 
 
 @router.delete("/{person_id}/urls/{url_id}", status_code=status.HTTP_200_OK)
@@ -283,5 +336,6 @@ async def delete_person_url(
 ) -> dict[str, Any]:
     await _assert_owned_by_person(request, person_id, Url, url_id)
     return await _run_tool(
-        request, RemoveUrlInput, remove_url, {**(body or {}), "url_id": url_id}
+        request, RemoveUrlInput, remove_url, {**(body or {}), "url_id": url_id},
+        tool_name="remove_url",
     )
