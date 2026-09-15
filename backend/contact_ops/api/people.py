@@ -42,7 +42,10 @@ from contact_ops.mcp.errors import (
     ToolError,
 )
 from contact_ops.mcp.registry import MCPContext, get_tool
+from contact_ops.mcp.tools.addresses import UpdateAddressInput, update_address
 from contact_ops.mcp.tools.common import enforce_tool_rbac
+from contact_ops.mcp.tools.emails import UpdateEmailInput, update_email
+from contact_ops.mcp.tools.employment import UpdateEmploymentInput, update_employment
 from contact_ops.mcp.tools.identifiers import (
     AddIdentifierInput,
     RemoveIdentifierInput,
@@ -59,6 +62,7 @@ from contact_ops.mcp.tools.im_handles import (
     remove_im_handle,
     update_im_handle,
 )
+from contact_ops.mcp.tools.phones import UpdatePhoneInput, update_phone
 from contact_ops.mcp.tools.urls import (
     AddUrlInput,
     RemoveUrlInput,
@@ -67,7 +71,15 @@ from contact_ops.mcp.tools.urls import (
     remove_url,
     update_url,
 )
-from contact_ops.models import Identifier, IMHandle, Url
+from contact_ops.models import (
+    Email,
+    Identifier,
+    IMHandle,
+    PersonOrgRole,
+    Phone,
+    PostalAddress,
+    Url,
+)
 
 router = APIRouter(prefix="/api/people", tags=["People"])
 
@@ -335,4 +347,60 @@ async def delete_person_url(
         request, RemoveUrlInput, remove_url, {**(body or {}), "url_id": url_id},
         tool_name="remove_url",
         owned=(person_id, Url, url_id),
+    )
+
+
+# ── Emails ───────────────────────────────────────────────────────────────────
+
+
+@router.patch("/{person_id}/emails/{email_id}")
+async def update_person_email(
+    request: Request, person_id: uuid.UUID, email_id: uuid.UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    return await _run_tool(
+        request, UpdateEmailInput, update_email, {**body, "email_id": email_id},
+        tool_name="update_email",
+        owned=(person_id, Email, email_id),
+    )
+
+
+# ── Phones ───────────────────────────────────────────────────────────────────
+
+
+@router.patch("/{person_id}/phones/{phone_id}")
+async def update_person_phone(
+    request: Request, person_id: uuid.UUID, phone_id: uuid.UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    return await _run_tool(
+        request, UpdatePhoneInput, update_phone, {**body, "phone_id": phone_id},
+        tool_name="update_phone",
+        owned=(person_id, Phone, phone_id),
+    )
+
+
+# ── Addresses ────────────────────────────────────────────────────────────────
+
+
+@router.patch("/{person_id}/addresses/{address_id}")
+async def update_person_address(
+    request: Request, person_id: uuid.UUID, address_id: uuid.UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    return await _run_tool(
+        request, UpdateAddressInput, update_address, {**body, "address_id": address_id},
+        tool_name="update_address",
+        owned=(person_id, PostalAddress, address_id),
+    )
+
+
+# ── Employment ───────────────────────────────────────────────────────────────
+
+
+@router.patch("/{person_id}/employment/{employment_id}")
+async def update_person_employment(
+    request: Request, person_id: uuid.UUID, employment_id: uuid.UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    return await _run_tool(
+        request, UpdateEmploymentInput, update_employment, {**body, "employment_id": employment_id},
+        tool_name="update_employment",
+        owned=(person_id, PersonOrgRole, employment_id),
     )
