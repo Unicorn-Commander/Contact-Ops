@@ -11,14 +11,18 @@ import { ContactDetailsEditor } from "@/components/domain/ContactDetailsEditor";
 // wrapper identity.
 const mutateAsync = vi.fn(async () => ({}));
 const pending = { isPending: false };
+// Scope gate for the "Mark verified" affordance; flipped per-test.
+const scopes = { hasVerify: false };
 
 vi.mock("@/hooks/useMcp", () => ({
-  useMcpMutation: () => ({ mutateAsync, isPending: pending.isPending })
+  useMcpMutation: () => ({ mutateAsync, isPending: pending.isPending }),
+  useHasScope: (scope: string) => scope === "identifier:verify" && scopes.hasVerify
 }));
 
 beforeEach(() => {
   mutateAsync.mockClear();
   pending.isPending = false;
+  scopes.hasVerify = false;
 });
 
 describe("ContactDetailsEditor", () => {
@@ -120,5 +124,48 @@ describe("ContactDetailsEditor", () => {
 
     expect(mutateAsync).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /edit handle/i })).toBeInTheDocument();
+  });
+
+  it("hides the Mark-verified affordance when the identifier:verify scope is absent", () => {
+    scopes.hasVerify = false;
+    render(
+      <ContactDetailsEditor
+        personId="p1"
+        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme" }] }}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /mark .* verified/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks an identifier verified via update_identifier when the scope is held", async () => {
+    scopes.hasVerify = true;
+    render(
+      <ContactDetailsEditor
+        personId="p1"
+        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme" }] }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /mark acme verified/i }));
+
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    expect(mutateAsync).toHaveBeenCalledWith({ identifier_id: "i1", verified: true });
+  });
+
+  it("hides the Mark-verified affordance for an already-verified identifier", () => {
+    scopes.hasVerify = true;
+    render(
+      <ContactDetailsEditor
+        personId="p1"
+        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme", verified: true }] }}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /mark acme verified/i })
+    ).not.toBeInTheDocument();
   });
 });

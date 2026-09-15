@@ -1,10 +1,10 @@
-import { Check, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import { Check, Pencil, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useMcpMutation } from "@/hooks/useMcp";
+import { useHasScope, useMcpMutation } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import type { ImHandle, PersonIdentifier, PersonUrl } from "@/lib/types";
 
@@ -250,6 +250,7 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
   const add = useMcpMutation(tools.addIdentifier);
   const update = useMcpMutation(tools.updateIdentifier);
   const remove = useMcpMutation(tools.removeIdentifier);
+  const canVerify = useHasScope("identifier:verify");
   const [namespace, setNamespace] = useState("");
   const [value, setValue] = useState("");
   const [url, setUrl] = useState("");
@@ -342,6 +343,20 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
                 key={item.id ?? item.value}
                 actions={
                   <>
+                    {canVerify && !item.verified ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Mark verified"
+                        aria-label={`Mark ${item.value} verified`}
+                        disabled={!item.id || update.isPending}
+                        onClick={() =>
+                          void update.mutateAsync({ identifier_id: item.id, verified: true })
+                        }
+                      >
+                        <ShieldCheck className="h-4 w-4 text-[oklch(var(--co-emerald-500))]" strokeWidth={1.6} />
+                      </Button>
+                    ) : null}
                     <Button
                       variant="ghost"
                       size="icon"
