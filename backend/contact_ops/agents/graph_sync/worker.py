@@ -182,6 +182,7 @@ async def claim_pending_rows(*, db: AsyncSession, batch_size: int) -> list[Graph
             SELECT id, entity_kind, entity_id, op, payload, tenant_id, graph_name, attempts
             FROM graph_sync_outbox
             WHERE status = 'pending'
+              AND payload->>'projection' IS DISTINCT FROM 'current_affiliations_v1'
             ORDER BY created_at
             LIMIT :batch_size
             FOR UPDATE SKIP LOCKED
@@ -214,8 +215,16 @@ async def process_outbox_row(
 ) -> bool:
     tenant_graph = TenantGraph(tenant_id=row.tenant_id, graph_name=row.graph_name)
     try:
-        write = build_write(row.entity_kind, row.op, row.payload)
-        await client.query(tenant_graph, write.cypher, write.params)
+        if row.payload.get("projection") == "current_affiliations_v1":
+            from contact_ops.agents.graph_sync.current_projection import project_current
+            try:
+                await project_current(db, client, row)
+            except Exception as exc:
+                # Avoid putting source names or graph query params into logs/DLQ.
+                raise RuntimeError("current graph projection failed: " + type(exc).__name__) from None
+        else:
+            write = build_write(row.entity_kind, row.op, row.payload)
+            await client.query(tenant_graph, write.cypher, write.params)
     except Exception as exc:
         attempts = row.attempts + 1
         decision = decide_retry(attempts)
