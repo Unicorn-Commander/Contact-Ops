@@ -231,6 +231,13 @@ function unwrapMcpResult<R>(result: unknown): R {
     } catch {
       // not JSON; firstText is already the message
     }
+    // Tool errors carry their machine-readable code in structuredContent;
+    // plain-text content remains the human explanation.
+    if (env.structuredContent && typeof env.structuredContent === "object") {
+      const detail = env.structuredContent as { code?: unknown; message?: unknown };
+      if (typeof detail.code === "string" || typeof detail.code === "number") code = detail.code;
+      if (typeof detail.message === "string") message = detail.message;
+    }
     throw new MCPError(code, message);
   }
 

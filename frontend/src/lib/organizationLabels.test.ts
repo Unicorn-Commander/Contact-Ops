@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { withOrganizationLabels } from "./mcp";
+import { describe, expect, it, vi } from "vitest";
+import { withOrganizationLabels, callTool } from "./mcp";
 
 describe("organization directory labels", () => {
   it("maps the API label while preserving pagination and missing affiliations", () => {
@@ -11,4 +11,17 @@ describe("organization directory labels", () => {
     expect(result.items.map(p => p.current_org)).toEqual(["Visible employer",null,"Legacy employer"]);
     expect(result.next_cursor).toBe("next");
   });
+});
+
+it("retains a structured tool error code when human content is plain text", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true, status: 200, json: async () => ({jsonrpc:"2.0",id:"test",result:{
+      isError:true, content:[{type:"text",text:"requires STAFF"}],
+      structuredContent:{code:"INSUFFICIENT_ROLE",message:"requires STAFF"}
+    }})
+  }));
+  try {
+    await expect(callTool("list_pending_proposals",{},"synthetic-token"))
+      .rejects.toMatchObject({code:"INSUFFICIENT_ROLE",message:"requires STAFF"});
+  } finally { vi.unstubAllGlobals(); }
 });
