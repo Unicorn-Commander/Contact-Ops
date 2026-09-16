@@ -154,7 +154,7 @@ export function GraphCanvas({
   /** Clicking empty canvas — used to dismiss the node detail drawer. */
   onBackgroundClick?: () => void;
 }) {
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [wrapElement, setWrapElement] = useState<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   const graph2dRef = useRef<ForceGraphMethods2D<GraphNode, GraphLink> | undefined>(undefined);
   const [size, setSize] = useState({ width: 900, height: 700 });
@@ -185,14 +185,18 @@ export function GraphCanvas({
   }, []);
 
   useEffect(() => {
-    if (!wrapRef.current) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const rect = entry.contentRect;
-      setSize({ width: Math.max(320, rect.width), height: Math.max(320, rect.height) });
-    });
-    observer.observe(wrapRef.current);
+    if (!wrapElement) return;
+    // Loading/empty states do not mount a canvas. Subscribe when its actual
+    // element appears, not only during the component's initial loading render.
+    const measure = (rect: Pick<DOMRectReadOnly, "width" | "height">) => {
+      const next = { width: Math.max(320, rect.width), height: Math.max(320, rect.height) };
+      setSize((previous) => previous.width === next.width && previous.height === next.height ? previous : next);
+    };
+    measure(wrapElement.getBoundingClientRect());
+    const observer = new ResizeObserver(([entry]) => measure(entry.contentRect));
+    observer.observe(wrapElement);
     return () => observer.disconnect();
-  }, []);
+  }, [wrapElement]);
 
 
   useEffect(() => {
@@ -287,12 +291,17 @@ export function GraphCanvas({
     if (userTookCameraRef.current) return;
     fitGraph(ms);
   }, [fitGraph]);
+  // Size changes update the renderer first, then fit the measured viewport.
+  // Do not reset userTookCameraRef: resizing must preserve a deliberate camera.
+  useEffect(() => {
+    autoFit(300);
+  }, [size.width, size.height, autoFit]);
   // The moment the user wheels/drags on the canvas, hand them the camera so we
   // stop re-framing. Bound in the CAPTURE phase so the WebGL canvas can't
   // swallow the event first; re-bound whenever the canvas (re)mounts or the
   // render mode flips. (autoRotate is programmatic and fires neither event.)
   useEffect(() => {
-    const el = wrapRef.current;
+    const el = wrapElement;
     if (!el) return;
     const mark = () => {
       userTookCameraRef.current = true;
@@ -304,7 +313,7 @@ export function GraphCanvas({
       el.removeEventListener("wheel", mark, opts);
       el.removeEventListener("pointerdown", mark, opts);
     };
-  }, [effectiveMode, FG3D, data.nodes.length]);
+  }, [wrapElement, effectiveMode, FG3D, data.nodes.length]);
   // Track the expanding force layout to a framed view across the settle window
   // (warmup 80 + cooldown 120 ticks ≈ a couple seconds). onEngineStop alone can
   // fire while a large graph is still mid-expansion — it then frames too tight
@@ -627,7 +636,7 @@ export function GraphCanvas({
       </div>
     </div>
   ) : effectiveMode === "2d" ? (
-    <div ref={wrapRef} className="relative h-full min-h-[520px] w-full overflow-hidden bg-background">
+    <div ref={setWrapElement} className="relative h-full min-h-[520px] w-full overflow-hidden bg-background">
       <ForceGraph2D
         ref={graph2dRef}
         width={size.width}
@@ -664,7 +673,7 @@ export function GraphCanvas({
       </div>
     </div>
   ) : (
-    <div ref={wrapRef} className="relative h-full min-h-[520px] w-full overflow-hidden bg-background">
+    <div ref={setWrapElement} className="relative h-full min-h-[520px] w-full overflow-hidden bg-background">
       {FG3D ? (
       <FG3D
         ref={graphRef}
