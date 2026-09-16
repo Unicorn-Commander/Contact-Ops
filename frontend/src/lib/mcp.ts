@@ -53,7 +53,7 @@ type MCPResponse<R = unknown> = {
 /** Adapt the server's tenant-fenced organization label to existing directory cards. */
 export function withOrganizationLabels(result: ListResult<PersonSummary>): ListResult<PersonSummary> {
   return { ...result, items: result.items.map(person => ({
-    ...person, current_org: person.current_org_name ?? person.current_org ?? null
+    ...person, current_org: person.current_org_name !== undefined ? person.current_org_name : person.current_org ?? null
   })) };
 }
 
