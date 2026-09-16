@@ -63,12 +63,14 @@ def person_summary(
     person: Person,
     primary_email: str | None = None,
     tags: list[str] | None = None,
+    current_org_name: str | None = None,
 ) -> PersonSummary:
     return PersonSummary(
         person_id=person.id,
         display_name=person.display_name,
         primary_email=primary_email,
         current_org_id=person.current_org_id,
+        current_org_name=current_org_name,
         last_interaction_at=person.last_interaction_at,
         communication_strength=float(person.communication_strength_score or 0),
         tags=tags or [],

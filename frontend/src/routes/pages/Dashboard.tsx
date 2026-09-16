@@ -1,3 +1,4 @@
+import { ProposalAccessNotice, isProposalRoleRestricted } from "@/components/dashboard/ProposalAccessNotice";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Activity,
@@ -215,6 +216,7 @@ export function DashboardRoute() {
   const events = useRecentEvents();
   const tools = useToolsList();
   const proposals = useInboxList(PROPOSAL_FILTERS);
+  const proposalRoleRestricted = isProposalRoleRestricted(proposals.error);
   const approve = useApproveMutation(PROPOSAL_FILTERS);
   const reject = useRejectMutation(PROPOSAL_FILTERS);
   // "Ask the Analyst" opens the SAME shell-owned panel as the top-bar Sparkles
@@ -346,7 +348,7 @@ export function DashboardRoute() {
         ? ` ${pending.toLocaleString()} ${pending === 1 ? "proposal is" : "proposals are"} waiting on your review${
             agentCount > 0 ? ` from ${agentCount} ${agentCount === 1 ? "agent" : "agents"}` : ""
           }.`
-        : " The review queue is clear — agents are keeping records clean.")
+        : proposals.isSuccess ? " The review queue is clear — agents are keeping records clean." : "")
     : undefined;
 
   // v2 command-center hero stat tiles — built ONLY from metrics the registry
@@ -429,15 +431,15 @@ export function DashboardRoute() {
                     <ListChecks className="h-4 w-4 text-[oklch(var(--co-amber-500))]" strokeWidth={1.8} />
                     Pending proposals
                   </CardTitle>
-                  <Button asChild variant="ghost" size="sm" className="text-link">
+                  {!proposalRoleRestricted ? <Button asChild variant="ghost" size="sm" className="text-link">
                     <Link to="/review">
                       Review all
                       <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.8} />
                     </Link>
-                  </Button>
+                  </Button> : null}
                 </CardHeader>
                 <CardContent>
-                  {proposals.isLoading ? (
+                  {proposalRoleRestricted ? <ProposalAccessNotice /> : proposals.isLoading ? (
                     <div className="space-y-2.5">
                       {Array.from({ length: 3 }).map((_, i) => (
                         <Skeleton key={i} className="h-14 w-full rounded-md" />

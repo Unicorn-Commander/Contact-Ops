@@ -1,3 +1,4 @@
+import { GraphEmptyState } from "@/components/graph/GraphEmptyState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ForceGraphMethods } from "react-force-graph-3d";
 import ForceGraph2D, { type ForceGraphMethods as ForceGraphMethods2D } from "react-force-graph-2d";
@@ -621,14 +622,8 @@ export function GraphCanvas({
           <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
             <Network className="h-5 w-5" />
           </div>
-          <div>
-            <h2 className="text-base font-semibold text-foreground">Select a person UUID</h2>
-            <p className="text-sm text-muted-foreground">Open a person route or paste a UUID above to draw the ego network.</p>
-          </div>
+          <GraphEmptyState rootPersonId={rootPersonId} />
         </div>
-        <p className="text-sm text-muted-foreground">
-          The canvas stays calm until the graph has a root person. Once a person is loaded, labels only appear on selection and hover.
-        </p>
       </div>
     </div>
   ) : effectiveMode === "2d" ? (

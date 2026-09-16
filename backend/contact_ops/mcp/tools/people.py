@@ -38,6 +38,7 @@ from contact_ops.models import (
     ActionEvent,
     Email,
     MergeCandidate,
+    Organization,
     Person,
     PersonTenantMembership,
     Phone,
@@ -851,6 +852,20 @@ def _apply_list_filters(
     return stmt
 
 
+async def _current_org_names(ctx: MCPContext, people: list[Person]) -> dict[uuid.UUID, str]:
+    """One query per page; never reveal a foreign tenant's organization name."""
+    ids = {p.current_org_id for p in people if p.current_org_id is not None}
+    if not ids:
+        return {}
+    rows = await ctx.db.execute(
+        select(Organization.id, Organization.display_name).where(
+            Organization.id.in_(ids),
+            Organization.canonical_owner_tenant_id == ctx.tenant_id,
+        )
+    )
+    return dict(rows.all())
+
+
 async def list_people(ctx: MCPContext, args: BaseModel) -> ListPeopleOutput:
     require_role(ctx, "CLIENT")
     require_scopes(ctx, ("person:read",))
@@ -877,7 +892,12 @@ async def list_people(ctx: MCPContext, args: BaseModel) -> ListPeopleOutput:
     )
     result = await ctx.db.execute(stmt)
     people = result.scalars().all()
-    items = [person_summary(person, await primary_email_for(ctx, person.id)) for person in people]
+    org_names = await _current_org_names(ctx, people)
+    items = [
+        person_summary(person, await primary_email_for(ctx, person.id),
+                       current_org_name=org_names.get(person.current_org_id))
+        for person in people
+    ]
     return ListPeopleOutput(items=items, count=len(items), next_cursor=None)
 
 
@@ -921,9 +941,11 @@ async def search_people(ctx: MCPContext, args: BaseModel) -> SearchPeopleOutput:
             )
         )
         cat_map = {pid: (attrs or {}).get("relationship_category") for pid, attrs in membership_rows}
+    org_names = await _current_org_names(ctx, rows)
     items = [
         SearchResult(
-            **person_summary(person, await primary_email_for(ctx, person.id)).model_dump(),
+            **person_summary(person, await primary_email_for(ctx, person.id),
+                             current_org_name=org_names.get(person.current_org_id)).model_dump(),
             match_score=1.0,
             match_snippets=[],
             relationship_category=cat_map.get(person.id),

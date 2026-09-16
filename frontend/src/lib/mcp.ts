@@ -50,6 +50,13 @@ type MCPResponse<R = unknown> = {
   id: string;
 };
 
+/** Adapt the server's tenant-fenced organization label to existing directory cards. */
+export function withOrganizationLabels(result: ListResult<PersonSummary>): ListResult<PersonSummary> {
+  return { ...result, items: result.items.map(person => ({
+    ...person, current_org: person.current_org_name ?? person.current_org ?? null
+  })) };
+}
+
 export class UnauthorizedError extends Error {
   constructor() {
     super("Authentication expired");
@@ -261,9 +268,9 @@ export const tools = {
       items: [],
       count: 0
     })),
-  listPeople: (args: Record<string, unknown>, token: string) => callTool<ListResult<PersonSummary>>("list_people", args, token),
+  listPeople: (args: Record<string, unknown>, token: string) => callTool<ListResult<PersonSummary>>("list_people", args, token).then(withOrganizationLabels),
   searchPeople: (args: Record<string, unknown>, token: string) =>
-    callTool<ListResult<PersonSummary>>("search_people", args, token),
+    callTool<ListResult<PersonSummary>>("search_people", args, token).then(withOrganizationLabels),
   /**
    * Field coverage for the dashboard "Data health" card. `search_people` caps at
    * 100 rows and exposes no cursor, so coverage is computed over a single

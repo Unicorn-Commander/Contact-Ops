@@ -14,6 +14,7 @@ export type PersonSummary = {
   primary_email?: string | null;
   primary_phone?: string | null;
   current_org?: string | null;
+  current_org_name?: string | null;
   current_org_id?: UUID | null;
   headline?: string | null;
   tags?: string[];
