@@ -7,7 +7,8 @@ those graphs and both accumulated forever without one:
 * ``event_outbox`` edge channels (``falkordb.edge.create`` from the dedup merge
   tools, ``graph.sync_edge`` from the voice-match resolver) — the rows that
   actually pile up on this branch. ``drain_edge_events`` applies them.
-* ``graph_sync_outbox`` — no producer on this branch (kept for any future one).
+* ``graph_sync_outbox`` — current-affiliation triggers queue source references;
+  older payload rows retain their original drain path.
   ``drain_pending_outbox`` claims it and no-ops when empty.
 
 This module is the runner for both: a sync ``@shared_task`` wired into the beat
@@ -85,6 +86,7 @@ async def _drain_async(settings: Settings) -> dict[str, int]:
     # it out of the module top so the beat scheduler can import this module to
     # register the task without those deps loading at schedule-build time.
     from contact_ops.agents.graph_sync import drain_edge_events, drain_pending_outbox
+    from contact_ops.agents.graph_sync.current_projection import drain_current_projection
 
     engine = create_async_engine(admin_url)
     sessions = async_sessionmaker(
@@ -93,15 +95,16 @@ async def _drain_async(settings: Settings) -> dict[str, int]:
     try:
         async with sessions() as db:
             batch = int(settings.GRAPH_SYNC_DRAIN_BATCH_LIMIT)
-            # ``graph_sync_outbox`` (kept for any future producer; empty today) and
+            # Reference-only current projection, legacy graph payloads, and
             # the real accumulating source: the ``event_outbox`` edge channels the
             # dedup + voice-match tools publish to.
+            current = await drain_current_projection(db=db, batch_size=batch)
             drained = await drain_pending_outbox(db=db, batch_size=batch)
             edges = await drain_edge_events(db=db, batch_size=batch)
     finally:
         await engine.dispose()
 
-    return {"drained": int(drained), "edges": int(edges)}
+    return {"drained": int(drained), "edges": int(edges), "current": int(current)}
 
 
 @shared_task(  # type: ignore[misc]

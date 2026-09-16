@@ -267,15 +267,6 @@ export function GraphRoute() {
         </div>
       ) : null}
 
-      {!graph.isLoading && hasGraph && nodeCount === 0 ? (
-        <div className="absolute inset-0 flex items-center justify-center px-4">
-          <div className="max-w-md rounded-lg border border-border bg-card/80 p-6 text-center text-sm text-muted-foreground shadow-[var(--shadow-2)] backdrop-blur-xl">
-            No connections to show yet. As contacts share organizations or get
-            linked, they&apos;ll appear here.
-          </div>
-        </div>
-      ) : null}
-
       <GraphCanvas
         graph={graph.data}
         selectedNodeId={selectedNodeId}
