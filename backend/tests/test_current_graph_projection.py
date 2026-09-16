@@ -538,3 +538,286 @@ async def test_migration_round_trip_preserves_sources_and_legacy_queue(postgres_
             await connection.run_sync(round_trip)
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collision", ["person", "organization", "relationship"])
+async def test_same_id_unowned_collision_preserves_existing_graph(
+    postgres_container, falkor_url, collision
+):
+    from contact_ops.agents.graph_sync.current_projection import (
+        ProjectionOwnershipError,
+        project_current,
+    )
+
+    engine = create_async_engine(postgres_container, poolclass=NullPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    client = client_for(falkor_url)
+    try:
+        async with sessions() as db:
+            data = await seed(db)
+        await drain(sessions, client)
+        # An obsolete owned edge must not be pruned when any desired object collides.
+        await client.query(
+            data.target,
+            "MATCH (p:Person)-[r:WORKS_AT]->(o) "
+            "CREATE (p)-[:WORKS_AT {id:'obsolete',tenant_id:$t,projection:$m}]->(o)",
+            {"t": str(data.tid), "m": PROJECTION},
+        )
+        if collision == "relationship":
+            await client.query(
+                data.target,
+                "MATCH ()-[r:WORKS_AT {id:$id}]->() "
+                "REMOVE r.projection SET r.title='Legacy untouched'",
+                {"id": str(data.role)},
+            )
+        else:
+            entity_id = data.person if collision == "person" else data.org
+            await client.query(
+                data.target,
+                "MATCH (n {id:$id}) REMOVE n.projection SET n.legacy='untouched'",
+                {"id": str(entity_id)},
+            )
+        before = (
+            await client.query(
+                data.target, "MATCH (a)-[r]->(b) RETURN a.id,r.id,b.id,r.projection ORDER BY r.id"
+            )
+        ).rows
+        async with sessions() as db:
+            row = SimpleNamespace(
+                tenant_id=data.tid,
+                graph_name=data.target.graph_name,
+                entity_kind="person",
+                entity_id=data.person,
+            )
+            with pytest.raises(ProjectionOwnershipError):
+                await project_current(db, client, row)
+        assert (
+            await client.query(
+                data.target, "MATCH (a)-[r]->(b) RETURN a.id,r.id,b.id,r.projection ORDER BY r.id"
+            )
+        ).rows == before
+        if collision != "relationship":
+            assert (
+                await client.query(
+                    data.target,
+                    "MATCH(n {id:$id}) RETURN n.projection,n.legacy",
+                    {"id": str(entity_id)},
+                )
+            ).rows == [[None, "untouched"]]
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_owned_node_with_unowned_incident_edges_refuses_deletion(
+    postgres_container, falkor_url
+):
+    from contact_ops.agents.graph_sync.current_projection import (
+        ProjectionOwnershipError,
+        project_current,
+    )
+
+    engine = create_async_engine(postgres_container, poolclass=NullPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    client = client_for(falkor_url)
+    try:
+        async with sessions() as db:
+            data = await seed(db)
+        await drain(sessions, client)
+        await client.query(
+            data.target,
+            "MATCH(p:Person {id:$p}) "
+            "CREATE (a:Legacy {id:'legacy-in'})-[:KNOWS {id:'legacy-in-edge'}]->(p) "
+            "CREATE (p)-[:KNOWS {id:'legacy-out-edge'}]->(b:Legacy {id:'legacy-out'})",
+            {"p": str(data.person)},
+        )
+        async with sessions() as db:
+            await db.execute(
+                text("UPDATE persons SET merge_status='archived' WHERE id=:p"), {"p": data.person}
+            )
+            await db.commit()
+            row = SimpleNamespace(
+                tenant_id=data.tid,
+                graph_name=data.target.graph_name,
+                entity_kind="person",
+                entity_id=data.person,
+            )
+            with pytest.raises(ProjectionOwnershipError):
+                await project_current(db, client, row)
+        # Drain must record a retry, never claim success for the refused source.
+        await drain(sessions, client)
+        async with sessions() as db:
+            result = (
+                await db.execute(
+                    text(
+                        "SELECT status,attempts FROM graph_sync_outbox "
+                        "WHERE entity_id=:p AND status='pending'"
+                    ),
+                    {"p": data.person},
+                )
+            ).one()
+            assert result == ("pending", 1)
+        assert (
+            await client.query(
+                data.target,
+                "MATCH(p:Person {id:$p})-[r]-() RETURN r.id ORDER BY r.id",
+                {"p": str(data.person)},
+            )
+        ).rows == sorted([[str(data.role)], ["legacy-in-edge"], ["legacy-out-edge"]])
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_role_reassignment_reconciles_exact_endpoint(postgres_container, falkor_url):
+    engine = create_async_engine(postgres_container, poolclass=NullPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    client = client_for(falkor_url)
+    try:
+        async with sessions() as db:
+            data = await seed(db)
+        await drain(sessions, client)
+        new_org = uuid.uuid4()
+        async with sessions() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO organizations(id,legal_name,display_name,"
+                    "canonical_owner_tenant_id) "
+                    "VALUES(:id,'New synthetic','New synthetic',:t)"
+                ),
+                {"id": new_org, "t": data.tid},
+            )
+            await db.execute(
+                text("UPDATE person_org_role SET organization_id=:o WHERE id=:r"),
+                {"o": new_org, "r": data.role},
+            )
+            await db.commit()
+        await drain(sessions, client)
+        assert (
+            await client.query(
+                data.target,
+                "MATCH(p)-[r:WORKS_AT {id:$id}]->(o) RETURN p.id,o.id",
+                {"id": str(data.role)},
+            )
+        ).rows == [[str(data.person), str(new_org)]]
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_atomic_write_guards_refuse_unowned_objects_without_preflight(
+    postgres_container, falkor_url
+):
+    from contact_ops.agents.graph_sync.current_projection import DELETE_NODE, LINK, PERSON
+
+    engine = create_async_engine(postgres_container, poolclass=NullPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    client = client_for(falkor_url)
+    try:
+        async with sessions() as db:
+            data = await seed(db)
+        params = {
+            "id": str(data.person),
+            "tenant_id": str(data.tid),
+            "projection": PROJECTION,
+            "name": "Must not replace",
+        }
+        await client.query(data.target, "CREATE (:Legacy {id:$id,name:'Existing'})", params)
+        assert not (await client.query(data.target, PERSON, params)).rows
+        assert (
+            await client.query(data.target, "MATCH(n) RETURN labels(n),n.name,n.projection")
+        ).rows == [["[Legacy]", "Existing", None]]
+        await client.query(data.target, "MATCH(n:Legacy) DELETE n")
+        await drain(sessions, client)
+        await client.query(data.target, "MATCH(p:Person)-[r:WORKS_AT]->(o) REMOVE r.projection")
+        link_params = {
+            **params,
+            "id": str(data.role),
+            "person_id": str(data.person),
+            "organization_id": str(data.org),
+            "title": "Must not replace",
+            "role_type": "employee",
+            "since": None,
+            "confidence": 1,
+        }
+        assert not (await client.query(data.target, LINK, link_params)).rows
+        # Atomic delete itself also refuses the unrelated incident edge.
+        assert not (await client.query(data.target, DELETE_NODE, params)).rows
+        assert (
+            await client.query(data.target, "MATCH(p)-[r]->(o) RETURN r.title,r.projection")
+        ).rows == [["Synthetic role", None]]
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_shared_carddav_write_fence_and_membership_archive_with_invoker_queue(
+    postgres_container,
+):
+    from contact_ops.carddav.addressbook import (
+        CrossTenantWriteRefused,
+        apply_vcard_text_to_db,
+        soft_delete_person_for_tenant,
+    )
+
+    engine = create_async_engine(postgres_container, poolclass=NullPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as db:
+            data = await seed(db)
+            await db.execute(
+                text("INSERT INTO person_tenant_membership(person_id,tenant_id) VALUES(:p,:t)"),
+                {"p": data.person, "t": data.foreign},
+            )
+            await db.commit()
+            await db.execute(text("SET LOCAL ROLE contact_ops_app"))
+            await db.execute(
+                text("SELECT set_config('app.tenant_id',:t,true)"), {"t": str(data.foreign)}
+            )
+            with pytest.raises(CrossTenantWriteRefused):
+                await apply_vcard_text_to_db(
+                    db,
+                    vcard_text=("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:shared-test\r\n"
+                        "FN:Must not replace\r\nEND:VCARD\r\n"),
+                    principal_tenant_id=data.foreign,
+                    principal_user_id=str(data.foreign),
+                    target_vcard_uid="shared-test",
+                    existing_person_id=data.person,
+                )
+            # Supported shared-tenant archive changes membership only and succeeds.
+            assert await soft_delete_person_for_tenant(
+                db, person_id=data.person, tenant_id=data.foreign
+            )
+            await db.commit()
+            assert (
+                await db.scalar(
+                    text(
+                        "SELECT visibility FROM person_tenant_membership "
+                        "WHERE person_id=:p AND tenant_id=:t"
+                    ),
+                    {"p": data.person, "t": data.foreign},
+                )
+                == "archived"
+            )
+            assert (
+                await db.execute(
+                    text("SELECT display_name,merge_status FROM persons WHERE id=:p"),
+                    {"p": data.person},
+                )
+            ).one() == ("Synthetic person", "canonical")
+            assert (
+                await db.scalar(
+                    text(
+                        "SELECT count(*) FROM graph_sync_outbox WHERE entity_id=:p AND tenant_id=:t"
+                    ),
+                    {"p": data.person, "t": data.foreign},
+                )
+                == 0
+            )
+    finally:
+        await engine.dispose()

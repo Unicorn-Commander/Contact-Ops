@@ -24,37 +24,119 @@ PROJECTION = "current_affiliations_v1"
 # Legacy edge channels retain their existing behavior and are not locked here.
 DRAIN_LOCK = 419493049
 
-PERSON = """
-MERGE (p:Person {id:$id, tenant_id:$tenant_id})
-SET p.display_name=$name, p.projection=$projection
-RETURN p.id
+
+class ProjectionOwnershipError(RuntimeError):
+    """Existing graph data is not exclusively owned by this projection."""
+
+
+def _node_write(label, name_field):
+    # The ownership condition and creation are one graph write query. A
+    # concurrent legacy writer cannot be adopted between preflight and MERGE.
+    return f"""
+OPTIONAL MATCH (existing {{id:$id}})
+WITH collect(existing) AS existing
+WHERE all(n IN existing WHERE n.tenant_id=$tenant_id
+    AND n.projection=$projection AND '{label}' IN labels(n))
+MERGE (n:{label} {{id:$id}})
+ON CREATE SET n.tenant_id=$tenant_id, n.projection=$projection
+WITH n WHERE n.tenant_id=$tenant_id AND n.projection=$projection
+SET n.{name_field}=$name RETURN n.id
 """
-ORG = """
-MERGE (o:Organization {id:$id, tenant_id:$tenant_id})
-SET o.name=$name, o.projection=$projection
-RETURN o.id
-"""
+
+
+PERSON = _node_write("Person", "display_name")
+ORG = _node_write("Organization", "name")
 LINK = """
-MATCH (p:Person {id:$person_id, tenant_id:$tenant_id})
-MATCH (o:Organization {id:$organization_id, tenant_id:$tenant_id})
+OPTIONAL MATCH ()-[existing {id:$id}]->()
+WITH collect(existing) AS existing
+WHERE all(r IN existing WHERE r.tenant_id=$tenant_id
+    AND r.projection=$projection AND type(r)='WORKS_AT')
+MATCH (p:Person {id:$person_id, tenant_id:$tenant_id, projection:$projection})
+MATCH (o:Organization {id:$organization_id, tenant_id:$tenant_id, projection:$projection})
 MERGE (p)-[r:WORKS_AT {id:$id}]->(o)
-SET r.tenant_id=$tenant_id, r.projection=$projection, r.title=$title,
-    r.role_type=$role_type, r.since=$since, r.until=null, r.confidence=$confidence
+ON CREATE SET r.tenant_id=$tenant_id, r.projection=$projection
+WITH r WHERE r.tenant_id=$tenant_id AND r.projection=$projection
+SET r.title=$title, r.role_type=$role_type, r.since=$since,
+    r.until=null, r.confidence=$confidence
 RETURN r.id
 """
 PRUNE = """
-MATCH (p:Person {id:$id, tenant_id:$tenant_id})-[r:WORKS_AT]->()
+MATCH (p:Person {id:$id, tenant_id:$tenant_id, projection:$projection})-[r:WORKS_AT]->()
 WHERE r.tenant_id=$tenant_id AND r.projection=$projection AND NOT r.id IN $active
 DELETE r
 """
-DELETE_PERSON = """
-MATCH (p:Person {id:$id, tenant_id:$tenant_id, projection:$projection})
-DETACH DELETE p
+PRUNE_ENDPOINT = """
+MATCH (a)-[r:WORKS_AT {id:$id}]->(b)
+WHERE r.tenant_id=$tenant_id AND r.projection=$projection
+  AND (a.id<>$person_id OR b.id<>$organization_id)
+DELETE r
 """
-DELETE_ORG = """
-MATCH (o:Organization {id:$id, tenant_id:$tenant_id, projection:$projection})
-DETACH DELETE o
+DELETE_NODE = """
+MATCH (n {id:$id, tenant_id:$tenant_id, projection:$projection})
+OPTIONAL MATCH (n)-[r]-()
+WITH n,count(r) AS total,
+ sum(CASE WHEN r.tenant_id=$tenant_id AND r.projection=$projection THEN 1 ELSE 0 END) AS owned
+WHERE total=owned
+WITH n,n.id AS deleted_id
+DETACH DELETE n RETURN deleted_id
 """
+
+
+async def _preflight(client, target, params, expected, role_ids=()):
+    rows = (
+        await client.query(
+            target,
+            "MATCH (n) WHERE n.id IN $ids RETURN n.id,n.tenant_id,n.projection,"
+            "'Person' IN labels(n),'Organization' IN labels(n)",
+            {"ids": list(expected)},
+        )
+    ).rows
+    seen = set()
+    for nid, tenant, marker, is_person, is_org in rows:
+        if (
+            nid in seen
+            or tenant != params["tenant_id"]
+            or marker != PROJECTION
+            or not (is_person if expected[nid] == "Person" else is_org)
+        ):
+            raise ProjectionOwnershipError("node ownership collision")
+        seen.add(nid)
+    if role_ids:
+        edges = (
+            await client.query(
+                target,
+                "MATCH ()-[r]->() WHERE r.id IN $ids RETURN r.tenant_id,r.projection,type(r)",
+                {"ids": list(role_ids)},
+            )
+        ).rows
+        if any(
+            t != params["tenant_id"] or m != PROJECTION or kind != "WORKS_AT"
+            for t, m, kind in edges
+        ):
+            raise ProjectionOwnershipError("relationship ownership collision")
+    return seen
+
+
+async def _write_node(client, target, query, params):
+    if len((await client.query(target, query, params)).rows) != 1:
+        raise ProjectionOwnershipError("node write ownership changed")
+
+
+async def _delete_node(client, target, params, label):
+    present = await _preflight(client, target, params, {params["id"]: label})
+    if not present:
+        return
+    # Check before any mutation; the write repeats the ownership condition
+    # atomically so newly attached unrelated edges cannot be detached.
+    edges = (
+        await client.query(
+            target, "MATCH (n {id:$id})-[r]-() RETURN r.tenant_id,r.projection", params
+        )
+    ).rows
+    if any(t != params["tenant_id"] or m != PROJECTION for t, m in edges):
+        raise ProjectionOwnershipError("unowned incident relationship")
+    if len((await client.query(target, DELETE_NODE, params)).rows) != 1:
+        raise ProjectionOwnershipError("deletion ownership changed")
 
 
 async def _target(db, row):
@@ -100,11 +182,11 @@ async def project_current(db: AsyncSession, client: FalkorDBGraphClient, row: Gr
             .mappings()
             .first()
         )
-        await client.query(
-            target,
-            ORG if org else DELETE_ORG,
-            {**params, "name": org["display_name"]} if org else params,
-        )
+        if org:
+            await _preflight(client, target, params, {params["id"]: "Organization"})
+            await _write_node(client, target, ORG, {**params, "name": org["display_name"]})
+        else:
+            await _delete_node(client, target, params, "Organization")
         return
     if row.entity_kind != "person":
         raise ValueError("unsupported current projection source")
@@ -122,7 +204,7 @@ async def project_current(db: AsyncSession, client: FalkorDBGraphClient, row: Gr
         .first()
     )
     if person is None:
-        await client.query(target, DELETE_PERSON, params)
+        await _delete_node(client, target, params, "Person")
         return
     # Match the supported active_only employment API: ended_at IS NULL.
     # Dates/equity/email/phone are not synthesized or exported as node metadata.
@@ -144,14 +226,32 @@ async def project_current(db: AsyncSession, client: FalkorDBGraphClient, row: Gr
         .mappings()
         .all()
     )
-    await client.query(target, PERSON, {**params, "name": person["display_name"]})
+    expected = {params["id"]: "Person"}
+    for link in links:
+        oid = str(link["organization_id"])
+        if oid in expected and expected[oid] != "Organization":
+            raise ProjectionOwnershipError("source entity ID collision")
+        expected[oid] = "Organization"
+    await _preflight(client, target, params, expected, [str(x["id"]) for x in links])
+    await _write_node(client, target, PERSON, {**params, "name": person["display_name"]})
     # Replay is a reconciliation, not an append: stale owned edges disappear.
     await client.query(target, PRUNE, {**params, "active": [str(x["id"]) for x in links]})
     for link in links:
-        await client.query(
+        await _write_node(
+            client,
             target,
             ORG,
             {**params, "id": str(link["organization_id"]), "name": link["display_name"]},
+        )
+        await client.query(
+            target,
+            PRUNE_ENDPOINT,
+            {
+                **params,
+                "id": str(link["id"]),
+                "person_id": str(row.entity_id),
+                "organization_id": str(link["organization_id"]),
+            },
         )
         result = await client.query(
             target,
@@ -167,7 +267,7 @@ async def project_current(db: AsyncSession, client: FalkorDBGraphClient, row: Gr
                 "confidence": float(link["confidence"] or 0),
             },
         )
-        if not result.rows:
+        if len(result.rows) != 1:
             raise RuntimeError("current employment endpoints were not projected")
 
 
