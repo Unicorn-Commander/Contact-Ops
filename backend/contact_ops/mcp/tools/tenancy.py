@@ -85,8 +85,19 @@ def _require_target_tenant(ctx: MCPContext, target_tenant_id: uuid.UUID) -> None
         )
 
 
-async def _load_tenant(ctx: MCPContext, tenant_id: uuid.UUID) -> Tenant:
-    tenant = await ctx.db.get(Tenant, tenant_id)
+async def _load_tenant(
+    ctx: MCPContext, tenant_id: uuid.UUID, *, for_update: bool = False
+) -> Tenant:
+    if for_update:
+        # Refresh even an already-cached ORM identity after acquiring the lock.
+        # The lock is held through the caller's transaction commit, so the next
+        # writer compares against the committed winner's token, not its old read.
+        tenant = await ctx.db.scalar(
+            select(Tenant).where(Tenant.id == tenant_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    else:
+        tenant = await ctx.db.get(Tenant, tenant_id)
     if tenant is None:
         raise ToolError(TENANT_NOT_FOUND, f"tenant {tenant_id} not found")
     return tenant
@@ -408,7 +419,7 @@ async def update_tenant_settings(
     require_scopes(ctx, ["tenant:write"])
     _require_target_tenant(ctx, req.tenant_id)
 
-    tenant = await _load_tenant(ctx, req.tenant_id)
+    tenant = await _load_tenant(ctx, req.tenant_id, for_update=True)
     if tenant.etag != req.etag:
         raise ToolError(
             VALIDATION_FAILED,
@@ -440,6 +451,7 @@ async def update_tenant_settings(
             status="applied",
         )
     await ctx.db.flush()
+    await ctx.db.refresh(tenant, attribute_names=["etag", "updated_at"])
     event_id = await emit_action_event(
         ctx,
         event_type="tenant.update",

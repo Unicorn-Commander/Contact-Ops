@@ -74,7 +74,9 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     updated_at: Mapped[datetime] = mapped_column(server_default=sa.text("now()"))
     deprecated_at: Mapped[datetime | None] = mapped_column()
-    etag: Mapped[str] = mapped_column(Text, default="")
+    etag: Mapped[str] = mapped_column(
+        Text, server_default=sa.FetchedValue(), server_onupdate=sa.FetchedValue()
+    )
 
 
 class Person(Base):
