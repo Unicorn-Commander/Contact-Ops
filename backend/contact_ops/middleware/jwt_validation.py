@@ -330,12 +330,9 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if brigade_claims is None:
             return None
 
-        # Canonical tenancy claim is workspace_id (SUITE-IDENTITY 0.1; Brigade
-        # retired org_id). Read workspace_id first, fall back to org_id for any
-        # legacy token still in flight.
-        tenant_id = str(
-            brigade_claims.get("workspace_id") or brigade_claims.get("org_id") or ""
-        )
+        # Preserve the deployed workspace_id-only tenant boundary. Legacy org_id
+        # has app-specific meanings and cannot select a Contact workspace.
+        tenant_id = str(brigade_claims.get("workspace_id") or "")
         uc_uid = str(brigade_claims.get("sub") or "")
         if not tenant_id or not uc_uid:
             logger.warning(
@@ -378,12 +375,15 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
                 # already-open session; check only when the flag is on (no
                 # behavior change otherwise). uc_uid here is the federated
                 # service-principal sub from the verified Brigade JWT. Fail-closed.
+                membership_role = None
+                if tenant is not None:
+                    member = await db.execute(text(
+                        "SELECT role FROM user_tenant_membership "
+                        "WHERE user_uc_uid=:u AND tenant_id=:t AND status='active'"
+                    ), {"u": uc_uid, "t": str(tenant["id"])})
+                    membership_role = member.scalar_one_or_none()
                 member_ok = (
-                    not self.settings.MEMBERSHIP_GATE_ENFORCED
-                    or (
-                        tenant is not None
-                        and await _user_is_active_member(db, uc_uid, str(tenant["id"]))
-                    )
+                    not self.settings.MEMBERSHIP_GATE_ENFORCED or membership_role is not None
                 )
         except Exception as exc:
             logger.warning(
@@ -414,6 +414,10 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         # contacts:write; CO's MCP tools gate on the internal person:read /
         # person:write. Map so a federated contacts:* token satisfies them.
         effective_scopes = {str(s) for s in scopes}
+        if membership_role == "viewer":
+            # A service token cannot exceed its current workspace membership.
+            effective_scopes &= {"contacts:read", "person:read", "organization:read", "tenant:read"}
+            role = "CLIENT"
         if "contacts:read" in effective_scopes or "contacts:write" in effective_scopes:
             effective_scopes.add("person:read")
         if "contacts:write" in effective_scopes:

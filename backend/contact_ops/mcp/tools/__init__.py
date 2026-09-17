@@ -79,6 +79,7 @@ def register_all_tools() -> None:
         register_relationship_tools()
     _import_optional_tool_modules()
     _import_phase_2_modules()
+    importlib.import_module("contact_ops.mcp.tools.customer_reader")
     _import_phase_3_modules()
     if get_tool("extract_ego_graph") is None:
         from contact_ops.mcp.tools.graph_admin import register_graph_tools
