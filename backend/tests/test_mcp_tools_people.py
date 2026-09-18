@@ -152,3 +152,35 @@ async def test_bulk_people_tools(db_session):
     assert output.created == 1
     archived = await bulk_archive_people(c, BulkArchivePeopleInput(person_ids=[output.results[0].person_id], reason="other"))
     assert archived.archived == 1
+
+
+@pytest.mark.asyncio
+async def test_structured_names_and_optional_handles_roundtrip(db_session):
+    from contact_ops.models import IMHandle, Identifier, Url
+    c = ctx(db_session)
+    created = await create_person(c, CreatePersonInput(display_name="Synthetic Contact"))
+    other = await create_person(c, CreatePersonInput(display_name="Other Synthetic"))
+    fields = dict(given_name="Synthetic", family_name="Contact", additional_names=["Middle"],
+                  nicknames=["Example"], phonetic_given_name="sin-THET-ik", file_as="Contact, Synthetic")
+    updated = await update_person(c, UpdatePersonInput(person_id=created.person_id, etag=created.etag, **fields))
+    db_session.add_all([
+        IMHandle(person_id=created.person_id, protocol="signal", handle="synthetic-handle"),
+        Identifier(person_id=created.person_id, namespace="example", value="synthetic-id"),
+        Url(person_id=created.person_id, url="https://example.invalid/profile"),
+        IMHandle(person_id=other.person_id, protocol="signal", handle="other-handle"),
+    ])
+    await db_session.flush()
+    fetched = await get_person(c, GetPersonInput(person_id=created.person_id))
+    for field, value in fields.items():
+        assert getattr(fetched, field) == value
+    assert fetched.im_handles is None and fetched.identifiers is None and fetched.urls is None
+    included = await get_person(c, GetPersonInput(person_id=created.person_id, include=["im_handles", "identifiers", "urls"]))
+    assert [row["handle"] for row in included.im_handles] == ["synthetic-handle"]
+    assert [row["value"] for row in included.identifiers] == ["synthetic-id"]
+    assert [row["url"] for row in included.urls] == ["https://example.invalid/profile"]
+    next_edit = await update_person(c, UpdatePersonInput(person_id=created.person_id, etag=updated.etag, headline="Updated"))
+    unchanged = await get_person(c, GetPersonInput(person_id=created.person_id))
+    assert unchanged.nicknames == ["Example"] and unchanged.additional_names == ["Middle"]
+    await update_person(c, UpdatePersonInput(person_id=created.person_id, etag=next_edit.etag, nicknames=[], additional_names=[]))
+    cleared = await get_person(c, GetPersonInput(person_id=created.person_id))
+    assert cleared.nicknames == [] and cleared.additional_names == []
