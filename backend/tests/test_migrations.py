@@ -133,6 +133,29 @@ def test_migration_idempotent(sync_engine):
     assert not missing, f"Tables missing after initial migration: {missing}"
 
 
+
+def test_voice_policy_downgrade_preserves_foundation_policies(postgres_container):
+    """0023 removes its policy while retaining 0015's RLS protection."""
+    os.environ["MIGRATION_DATABASE_URL"] = postgres_container
+    cfg = _make_config(_sync_url(postgres_container))
+    try:
+        _run_migration("downgrade", cfg, "0022")
+        eng = create_engine(_sync_url(postgres_container))
+        try:
+            with eng.connect() as conn:
+                policies = set(conn.execute(text(
+                    "SELECT policyname FROM pg_policies WHERE tablename='voice_fingerprints'"
+                )).scalars())
+                assert {"voice_fp_select", "voice_fp_modify"} <= policies
+                assert "tenant_isolation" not in policies
+                assert conn.scalar(text(
+                    "SELECT relrowsecurity FROM pg_class WHERE oid='voice_fingerprints'::regclass"
+                ))
+        finally:
+            eng.dispose()
+    finally:
+        _run_migration("upgrade", cfg, "head")
+
 def test_downgrade_base(postgres_container):
     """Downgrade to base drops everything cleanly."""
     import os as _os
