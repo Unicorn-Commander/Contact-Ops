@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useMcpMutation, usePersonNames } from "@/hooks/useMcp";
+import { useHasScope, useMcpMutation, usePersonNames } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
 import type { NameType, PersonName } from "@/lib/types";
 
@@ -27,6 +27,13 @@ const NAME_TYPES: NameType[] = [
  */
 export function PersonNamesEditor({ personId }: { personId: string }) {
   const names = usePersonNames(personId);
+  const canWrite = useHasScope("name:write");
+  const [error, setError] = useState<string>();
+  async function run(action: Promise<unknown>): Promise<boolean> {
+    setError(undefined);
+    try { await action; return true; }
+    catch { setError("Could not save this name. Your edit is kept; try again."); return false; }
+  }
   const add = useMcpMutation(tools.addPersonName);
   const update = useMcpMutation(tools.updatePersonName);
   const remove = useMcpMutation(tools.removePersonName);
@@ -42,8 +49,7 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!value.trim()) return;
-    await add.mutateAsync({ person_id: personId, name_type: nameType, value: value.trim() });
-    setValue("");
+    if (await run(add.mutateAsync({ person_id: personId, name_type: nameType, value: value.trim() }))) setValue("");
   }
 
   function startEdit(item: PersonName) {
@@ -53,7 +59,7 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
 
   async function saveEdit(item: PersonName) {
     if (draft.trim() && draft.trim() !== item.value) {
-      await update.mutateAsync({ person_name_id: item.person_name_id, value: draft.trim() });
+      if (!await run(update.mutateAsync({ person_name_id: item.person_name_id, value: draft.trim() }))) return;
     }
     setEditingId(null);
   }
@@ -67,6 +73,8 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+        {names.isError ? <p role="alert">Names could not be loaded. Check access and try again.</p> : null}
         {items.length ? (
           <ul className="space-y-2">
             {items.map((item) => {
@@ -84,7 +92,7 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
                       onChange={(e) => setDraft(e.target.value)}
                       aria-label={`Edit ${item.value}`}
                     />
-                    <Button size="sm" disabled={update.isPending} onClick={() => void saveEdit(item)}>
+                    <Button size="sm" disabled={!canWrite || update.isPending || !draft.trim()} onClick={() => void saveEdit(item)}>
                       <Check className="h-4 w-4" strokeWidth={1.6} />
                       Save
                     </Button>
@@ -120,9 +128,9 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
                         size="icon"
                         title="Make primary"
                         aria-label={`Make ${item.value} primary`}
-                        disabled={setPrimary.isPending}
+                        disabled={!canWrite || setPrimary.isPending}
                         onClick={() =>
-                          void setPrimary.mutateAsync({ person_name_id: item.person_name_id })
+                          void run(setPrimary.mutateAsync({ person_name_id: item.person_name_id }))
                         }
                       >
                         <Star className="h-4 w-4" strokeWidth={1.6} />
@@ -133,6 +141,7 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
                       size="icon"
                       title="Edit name"
                       aria-label={`Edit ${item.value}`}
+                      disabled={!canWrite}
                       onClick={() => startEdit(item)}
                     >
                       <Pencil className="h-4 w-4" strokeWidth={1.6} />
@@ -142,9 +151,9 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
                       size="icon"
                       title="Remove name"
                       aria-label={`Remove ${item.value}`}
-                      disabled={remove.isPending}
+                      disabled={!canWrite || remove.isPending}
                       onClick={() =>
-                        void remove.mutateAsync({ person_name_id: item.person_name_id })
+                        void run(remove.mutateAsync({ person_name_id: item.person_name_id }))
                       }
                     >
                       <Trash2 className="h-4 w-4" strokeWidth={1.6} />
@@ -155,10 +164,10 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
             })}
           </ul>
         ) : (
-          <p className="text-sm text-muted-foreground">No names recorded yet.</p>
+          <p className="text-sm text-muted-foreground">{names.isLoading ? "Loading names…" : names.isError ? "" : "No names recorded yet."}</p>
         )}
 
-        <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
+        {canWrite ? <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
           <select
             aria-label="Name type"
             value={nameType}
@@ -178,11 +187,11 @@ export function PersonNamesEditor({ personId }: { personId: string }) {
             onChange={(e) => setValue(e.target.value)}
             aria-label="Name"
           />
-          <Button type="submit" size="sm" disabled={add.isPending}>
+          <Button type="submit" size="sm" disabled={add.isPending || !value.trim()}>
             <Plus className="h-4 w-4" strokeWidth={1.6} />
             Add
           </Button>
-        </form>
+        </form> : null}
       </CardContent>
     </Card>
   );

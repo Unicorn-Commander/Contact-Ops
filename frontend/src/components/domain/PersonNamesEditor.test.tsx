@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -12,6 +12,13 @@ vi.mock("react-oidc-context", () => ({
     signinRedirect: vi.fn()
   })
 }));
+
+const permissions = vi.hoisted(() => ({ write: true }));
+vi.mock("@/hooks/useMcp", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useMcp")>(),
+  useHasScope: () => permissions.write
+}));
+beforeEach(() => { permissions.write = true; });
 
 function name(over: Partial<PersonName> = {}): PersonName {
   return {
@@ -91,4 +98,38 @@ describe("PersonNamesEditor", () => {
       )
     );
   });
+});
+
+
+it("keeps failed edits and reports the error", async () => {
+  vi.spyOn(tools, "listPersonNames").mockResolvedValue({ items: [name()], count: 1 });
+  vi.spyOn(tools, "updatePersonName").mockRejectedValue(new Error("conflict"));
+  const { PersonNamesEditor } = await import("@/components/domain/PersonNamesEditor");
+  render(<PersonNamesEditor personId="p1" />, { wrapper: withQueryClient(makeTestQueryClient()) });
+  await screen.findByText("Dizzy");
+  await userEvent.click(screen.getByRole("button", { name: "Edit Dizzy" }));
+  const input = screen.getByLabelText("Edit Dizzy");
+  await userEvent.clear(input);
+  await userEvent.type(input, "Synthetic edit");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Your edit is kept");
+  expect(input).toHaveValue("Synthetic edit");
+});
+
+it("disables writes without the name scope", async () => {
+  permissions.write = false;
+  vi.spyOn(tools, "listPersonNames").mockResolvedValue({ items: [name()], count: 1 });
+  const { PersonNamesEditor } = await import("@/components/domain/PersonNamesEditor");
+  render(<PersonNamesEditor personId="p1" />, { wrapper: withQueryClient(makeTestQueryClient()) });
+  await screen.findByText("Dizzy");
+  expect(screen.getByRole("button", { name: "Edit Dizzy" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
+});
+
+it("does not present a denied read as an empty names list", async () => {
+  vi.spyOn(tools, "listPersonNames").mockRejectedValue(new Error("denied"));
+  const { PersonNamesEditor } = await import("@/components/domain/PersonNamesEditor");
+  render(<PersonNamesEditor personId="p1" />, { wrapper: withQueryClient(makeTestQueryClient()) });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Names could not be loaded");
+  expect(screen.queryByText("No names recorded yet.")).not.toBeInTheDocument();
 });
