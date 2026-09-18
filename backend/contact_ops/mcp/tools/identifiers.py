@@ -127,6 +127,8 @@ async def _load_identifier(ctx: MCPContext, identifier_id: uuid.UUID) -> Identif
 async def add_identifier(ctx: MCPContext, req: AddIdentifierInput) -> IdentifierOutput:
     require_role(ctx, "STAFF")
     require_scopes(ctx, ["identifier:write"])
+    if req.verified:
+        require_scopes(ctx, ["identifier:verify"])
     await _assert_subject(ctx, req.subject_kind, req.subject_id)
     existing = await ctx.db.scalar(
         select(Identifier).where(

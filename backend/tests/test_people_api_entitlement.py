@@ -159,17 +159,13 @@ def test_tool_error_status_maps_billing_denials() -> None:
 
 def test_raise_tool_error_maps_entitlement_to_402() -> None:
     with pytest.raises(HTTPException) as exc:
-        people._raise_tool_error(
-            ToolError(ENTITLEMENT_REQUIRED, "needs pro", retryable=False)
-        )
+        people._raise_tool_error(ToolError(ENTITLEMENT_REQUIRED, "needs pro", retryable=False))
     assert exc.value.status_code == 402
 
 
 def test_raise_tool_error_maps_quota_to_403() -> None:
     with pytest.raises(HTTPException) as exc:
-        people._raise_tool_error(
-            ToolError(QUOTA_EXCEEDED, "over cap", retryable=False)
-        )
+        people._raise_tool_error(ToolError(QUOTA_EXCEEDED, "over cap", retryable=False))
     assert exc.value.status_code == 403
 
 
@@ -281,3 +277,19 @@ async def test_unauthorized_role_rejected_403_before_billing(
         )
     assert exc.value.status_code == 403
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_nested_update_rejects_role_before_resource_lookup(monkeypatch):
+    from contact_ops.models import IMHandle
+
+    class NoLookupDb(_FakeDb):
+        async def get(self, *args):
+            raise AssertionError("resource existence probed before RBAC")
+
+    _install_fakes(monkeypatch, db=NoLookupDb(), settings=_settings())
+    with pytest.raises(HTTPException) as exc:
+        await people.update_person_im_handle(
+            _make_request(role="CLIENT"), uuid.uuid4(), uuid.uuid4(), {"label": "Synthetic"}
+        )
+    assert exc.value.status_code == 403

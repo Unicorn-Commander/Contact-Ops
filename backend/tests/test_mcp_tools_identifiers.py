@@ -114,3 +114,17 @@ async def test_update_identifier_explicit_null_verified_is_no_change() -> None:
     with pytest.raises(Exception) as exc:
         await update_identifier(_ctx("STAFF", "identifier:write"), req)
     assert not isinstance(exc.value, ToolError) or exc.value.code != INSUFFICIENT_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_add_verified_identifier_requires_verify_scope_before_io():
+    req = AddIdentifierInput(
+        subject_kind="person",
+        subject_id=uuid.uuid4(),
+        namespace="synthetic",
+        value="example",
+        verified=True,
+    )
+    with pytest.raises(ToolError) as exc:
+        await add_identifier(_ctx("STAFF", "identifier:write"), req)
+    assert exc.value.code == INSUFFICIENT_SCOPE

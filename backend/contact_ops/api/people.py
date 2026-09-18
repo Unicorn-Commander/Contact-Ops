@@ -115,6 +115,7 @@ async def _run_tool(
     payload: dict[str, Any],
     *,
     tool_name: str,
+    owned: tuple[uuid.UUID, type[Any], uuid.UUID] | None = None,
 ) -> dict[str, Any]:
     """Invoke an MCP tool handler from a REST route with a JWT-built context.
 
@@ -165,6 +166,8 @@ async def _run_tool(
                     VALIDATION_FAILED, f"unknown tool: {tool_name}", retryable=False
                 )
             enforce_tool_rbac(ctx, tool)
+            if owned is not None:
+                await _assert_owned_by_person(ctx, *owned)
             # Billing gates (P-00075): mirror server.py — entitlement then quota,
             # run AFTER the RBAC guard above and BEFORE the handler (which still
             # re-checks RBAC internally). Lazy import (as server.py does) to avoid
@@ -201,30 +204,12 @@ async def _run_tool(
 
 
 async def _assert_owned_by_person(
-    request: Request,
-    person_id: uuid.UUID,
-    model: type[Any],
-    row_id: uuid.UUID,
+    ctx: MCPContext, person_id: uuid.UUID, model: type[Any], row_id: uuid.UUID,
 ) -> None:
-    """Reject an update/remove whose URL person_id does not own the resource.
-
-    The handlers gate on the resource's OWN tenant via ``load_person``, which
-    already blocks cross-tenant access; this check additionally keeps the nested
-    URL truthful by refusing to mutate (e.g.) person B's handle under person A's
-    path. Cheap PK lookup, RLS-bound, never commits.
-    """
-    claims = _claims(request)
-    settings = get_settings()
-    tenant_id = str(claims["tenant_id"])
-    uc_uid = claims.get("uc_uid") or claims.get("sub")
-    async with async_session_maker() as db:
-        await bind_session_context(db, tenant_id, uc_uid, settings)
-        row = await db.get(model, row_id)
-        if row is None or getattr(row, "person_id", None) != person_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="resource not found for this person",
-            )
+    """Check nested resource ownership after RBAC, in the mutation transaction."""
+    row = await ctx.db.get(model, row_id)
+    if row is None or getattr(row, "person_id", None) != person_id:
+        raise HTTPException(status_code=404, detail="resource not found for this person")
 
 
 # ── IM / social handles ──────────────────────────────────────────────────────
@@ -244,10 +229,10 @@ async def add_person_im_handle(
 async def update_person_im_handle(
     request: Request, person_id: uuid.UUID, im_handle_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
-    await _assert_owned_by_person(request, person_id, IMHandle, im_handle_id)
     return await _run_tool(
         request, UpdateImHandleInput, update_im_handle, {**body, "im_handle_id": im_handle_id},
         tool_name="update_im_handle",
+        owned=(person_id, IMHandle, im_handle_id),
     )
 
 
@@ -258,13 +243,13 @@ async def delete_person_im_handle(
     im_handle_id: uuid.UUID,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    await _assert_owned_by_person(request, person_id, IMHandle, im_handle_id)
     return await _run_tool(
         request,
         RemoveImHandleInput,
         remove_im_handle,
         {**(body or {}), "im_handle_id": im_handle_id},
         tool_name="remove_im_handle",
+        owned=(person_id, IMHandle, im_handle_id),
     )
 
 
@@ -288,13 +273,13 @@ async def add_person_identifier(
 async def update_person_identifier(
     request: Request, person_id: uuid.UUID, identifier_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
-    await _assert_owned_by_person(request, person_id, Identifier, identifier_id)
     return await _run_tool(
         request,
         UpdateIdentifierInput,
         update_identifier,
         {**body, "identifier_id": identifier_id},
         tool_name="update_identifier",
+        owned=(person_id, Identifier, identifier_id),
     )
 
 
@@ -305,13 +290,13 @@ async def delete_person_identifier(
     identifier_id: uuid.UUID,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    await _assert_owned_by_person(request, person_id, Identifier, identifier_id)
     return await _run_tool(
         request,
         RemoveIdentifierInput,
         remove_identifier,
         {**(body or {}), "identifier_id": identifier_id},
         tool_name="remove_identifier",
+        owned=(person_id, Identifier, identifier_id),
     )
 
 
@@ -332,10 +317,10 @@ async def add_person_url(
 async def update_person_url(
     request: Request, person_id: uuid.UUID, url_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
-    await _assert_owned_by_person(request, person_id, Url, url_id)
     return await _run_tool(
         request, UpdateUrlInput, update_url, {**body, "url_id": url_id},
         tool_name="update_url",
+        owned=(person_id, Url, url_id),
     )
 
 
@@ -346,8 +331,8 @@ async def delete_person_url(
     url_id: uuid.UUID,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    await _assert_owned_by_person(request, person_id, Url, url_id)
     return await _run_tool(
         request, RemoveUrlInput, remove_url, {**(body or {}), "url_id": url_id},
         tool_name="remove_url",
+        owned=(person_id, Url, url_id),
     )
