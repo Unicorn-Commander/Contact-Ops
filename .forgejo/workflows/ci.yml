@@ -46,7 +46,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: pip install -r requirements-dev.txt
       # CPU tensors for mocked voice-extractor tests; no models or GPU packages.
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install torch==2.14.0+cpu --index-url https://download.pytorch.org/whl/cpu
       - run: python -m compileall -q contact_ops
       - run: python -m pytest --timeout=60 --junitxml=/tmp/contact-tests.xml
   frontend:
