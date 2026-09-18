@@ -7,8 +7,7 @@ violating the repo policy that lost-update races return ``STALE_ETAG``
 drive the two guards with a fake DB (no Postgres) and assert:
 
   * a stale etag is rejected with STALE_ETAG before any mutation;
-  * genuine validation errors (row not found) still raise VALIDATION_FAILED /
-    TENANT_NOT_FOUND, i.e. nothing was over-reclassified.
+  * missing rows still raise ORG_NOT_FOUND / TENANT_NOT_FOUND, i.e. nothing was over-reclassified.
 
 The DB-backed paths (touch_updated trigger bumping updated_at on UPDATE) remain
 covered by the testcontainer migration roundtrip suite.
@@ -50,6 +49,10 @@ class _FakeDb:
 
     async def get(self, model: type, _ident: uuid.UUID) -> Any:
         return self._rows.get(model)
+
+    async def scalar(self, _statement: Any) -> Any:
+        # Current main refreshes a tenant under SELECT FOR UPDATE.
+        return self._rows.get(Tenant)
 
     async def flush(self) -> None:
         return None
