@@ -49,6 +49,13 @@ jobs:
       - run: pip install torch==2.14.0+cpu --index-url https://download.pytorch.org/whl/cpu
       - run: python -m compileall -q contact_ops
       - run: python -m pytest --timeout=60 --junitxml=/tmp/contact-tests.xml
+      - name: Preserve backend test receipt
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: contact-backend-tests
+          path: /tmp/contact-tests.xml
+          if-no-files-found: error
   frontend:
     runs-on: ubuntu-latest
     defaults:
