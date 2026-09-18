@@ -20,7 +20,8 @@ vi.mock("@/hooks/useMcp", () => ({
 }));
 
 beforeEach(() => {
-  mutateAsync.mockClear();
+  mutateAsync.mockReset();
+  mutateAsync.mockResolvedValue({});
   pending.isPending = false;
   scopes.hasVerify = false;
 });
@@ -31,7 +32,7 @@ describe("ContactDetailsEditor", () => {
       <ContactDetailsEditor
         personId="p1"
         data={{
-          im_handles: [{ id: "h1", protocol: "x", handle: "@acme", label: "work" }]
+          im_handles: [{ id: "h1", etag: "revision-1", protocol: "x", handle: "@acme", label: "work" }]
         }}
       />
     );
@@ -39,14 +40,14 @@ describe("ContactDetailsEditor", () => {
     await userEvent.click(screen.getByRole("button", { name: /make primary handle/i }));
 
     expect(mutateAsync).toHaveBeenCalledTimes(1);
-    expect(mutateAsync).toHaveBeenCalledWith({ im_handle_id: "h1", is_primary: true });
+    expect(mutateAsync).toHaveBeenCalledWith({ im_handle_id: "h1", etag: "revision-1", is_primary: true });
   });
 
   it("edits an IM handle in place and only sends changed fields", async () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ im_handles: [{ id: "h1", protocol: "x", handle: "@acme", label: "work" }] }}
+        data={{ im_handles: [{ id: "h1", etag: "revision-1", protocol: "x", handle: "@acme", label: "work" }] }}
       />
     );
 
@@ -57,7 +58,7 @@ describe("ContactDetailsEditor", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     expect(mutateAsync).toHaveBeenCalledTimes(1);
-    expect(mutateAsync).toHaveBeenCalledWith({ im_handle_id: "h1", handle: "@acmehq" });
+    expect(mutateAsync).toHaveBeenCalledWith({ im_handle_id: "h1", etag: "revision-1", handle: "@acmehq" });
   });
 
   it("hides the primary affordance for an already-primary URL and shows it for others", () => {
@@ -66,8 +67,8 @@ describe("ContactDetailsEditor", () => {
         personId="p1"
         data={{
           urls: [
-            { id: "u1", url: "https://a.example", type: "profile", is_primary: true },
-            { id: "u2", url: "https://b.example", type: "blog" }
+            { id: "u1", etag: "revision-1", url: "https://a.example", type: "profile", is_primary: true },
+            { id: "u2", etag: "revision-1", url: "https://b.example", type: "blog" }
           ]
         }}
       />
@@ -81,7 +82,7 @@ describe("ContactDetailsEditor", () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ urls: [{ id: "u1", url: "https://a.example", type: "profile" }] }}
+        data={{ urls: [{ id: "u1", etag: "revision-1", url: "https://a.example", type: "profile" }] }}
       />
     );
 
@@ -91,14 +92,14 @@ describe("ContactDetailsEditor", () => {
     await userEvent.type(urlInput, "https://new.example");
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
-    expect(mutateAsync).toHaveBeenCalledWith({ url_id: "u1", url: "https://new.example" });
+    expect(mutateAsync).toHaveBeenCalledWith({ url_id: "u1", etag: "revision-1", url: "https://new.example" });
   });
 
   it("edits an identifier in place via update_identifier", async () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme" }] }}
+        data={{ identifiers: [{ id: "i1", etag: "revision-1", namespace: "github", value: "acme" }] }}
       />
     );
 
@@ -108,14 +109,14 @@ describe("ContactDetailsEditor", () => {
     await userEvent.type(valueInput, "acme-inc");
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
-    expect(mutateAsync).toHaveBeenCalledWith({ identifier_id: "i1", value: "acme-inc" });
+    expect(mutateAsync).toHaveBeenCalledWith({ identifier_id: "i1", etag: "revision-1", value: "acme-inc" });
   });
 
   it("cancels an in-place edit without mutating", async () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ im_handles: [{ id: "h1", protocol: "x", handle: "@acme" }] }}
+        data={{ im_handles: [{ id: "h1", etag: "revision-1", protocol: "x", handle: "@acme" }] }}
       />
     );
 
@@ -131,7 +132,7 @@ describe("ContactDetailsEditor", () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme" }] }}
+        data={{ identifiers: [{ id: "i1", etag: "revision-1", namespace: "github", value: "acme" }] }}
       />
     );
 
@@ -145,14 +146,14 @@ describe("ContactDetailsEditor", () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme" }] }}
+        data={{ identifiers: [{ id: "i1", etag: "revision-1", namespace: "github", value: "acme" }] }}
       />
     );
 
     await userEvent.click(screen.getByRole("button", { name: /mark acme verified/i }));
 
     expect(mutateAsync).toHaveBeenCalledTimes(1);
-    expect(mutateAsync).toHaveBeenCalledWith({ identifier_id: "i1", verified: true });
+    expect(mutateAsync).toHaveBeenCalledWith({ identifier_id: "i1", etag: "revision-1", verified: true });
   });
 
   it("hides the Mark-verified affordance for an already-verified identifier", () => {
@@ -160,7 +161,7 @@ describe("ContactDetailsEditor", () => {
     render(
       <ContactDetailsEditor
         personId="p1"
-        data={{ identifiers: [{ id: "i1", namespace: "github", value: "acme", verified: true }] }}
+        data={{ identifiers: [{ id: "i1", etag: "revision-1", namespace: "github", value: "acme", verified: true }] }}
       />
     );
 
@@ -168,4 +169,32 @@ describe("ContactDetailsEditor", () => {
       screen.queryByRole("button", { name: /mark acme verified/i })
     ).not.toBeInTheDocument();
   });
+});
+
+
+it("keeps the edit-start etag across a background refetch", async () => {
+  const item = { id: "h1", etag: "revision-1", protocol: "signal", handle: "original" };
+  const { rerender } = render(<ContactDetailsEditor personId="p1" data={{im_handles:[item]}} />);
+  await userEvent.click(screen.getByRole("button", {name:"Edit handle"}));
+  await userEvent.type(screen.getByLabelText("Edit handle"), "-edit");
+  rerender(<ContactDetailsEditor personId="p1" data={{im_handles:[{...item, etag:"revision-2"}]}} />);
+  await userEvent.click(screen.getByRole("button", {name:"Save"}));
+  expect(mutateAsync).toHaveBeenCalledWith({im_handle_id:"h1", etag:"revision-1", handle:"original-edit"});
+});
+
+it("does not send an unchanged edit", async () => {
+  render(<ContactDetailsEditor personId="p1" data={{im_handles:[{id:"h1",etag:"revision-1",protocol:"signal",handle:"original"}]}} />);
+  await userEvent.click(screen.getByRole("button", {name:"Edit handle"}));
+  await userEvent.click(screen.getByRole("button", {name:"Save"}));
+  expect(mutateAsync).not.toHaveBeenCalled();
+});
+
+it("shows a stale-edit error and retains the draft", async () => {
+  mutateAsync.mockRejectedValueOnce(new Error("STALE_ETAG"));
+  render(<ContactDetailsEditor personId="p1" data={{im_handles:[{id:"h1",etag:"revision-1",protocol:"signal",handle:"original"}]}} />);
+  await userEvent.click(screen.getByRole("button", {name:"Edit handle"}));
+  await userEvent.type(screen.getByLabelText("Edit handle"), "-edit");
+  await userEvent.click(screen.getByRole("button", {name:"Save"}));
+  expect(await screen.findByRole("alert")).toHaveTextContent("reload before retrying");
+  expect(screen.getByLabelText("Edit handle")).toHaveValue("original-edit");
 });

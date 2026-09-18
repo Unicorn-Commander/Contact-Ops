@@ -10,6 +10,22 @@ import type { ImHandle, PersonIdentifier, PersonUrl } from "@/lib/types";
 
 type PersonId = string;
 
+function useContactAction() {
+  const [error, setError] = useState<string>();
+  async function run(promise: Promise<unknown>): Promise<boolean> {
+    setError(undefined);
+    try { await promise; return true; }
+    catch (cause) {
+      setError(cause instanceof Error && /stale|etag/i.test(cause.message)
+        ? "This contact changed. Copy your edit, then reload before retrying."
+        : "Could not save this change. Try again.");
+      return false;
+    }
+  }
+  return { error, run };
+}
+
+
 function SectionCard({
   title,
   description,
@@ -51,6 +67,7 @@ function Row({
 }
 
 function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImHandle[] }) {
+  const { error, run } = useContactAction();
   const add = useMcpMutation(tools.addImHandle);
   const update = useMcpMutation(tools.updateImHandle);
   const remove = useMcpMutation(tools.removeImHandle);
@@ -58,25 +75,27 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
   const [handle, setHandle] = useState("");
   const [label, setLabel] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingEtag, setEditingEtag] = useState<string>();
   const [draft, setDraft] = useState({ protocol: "", handle: "", label: "" });
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!protocol.trim() || !handle.trim()) return;
-    await add.mutateAsync({
+    if (!(await run(add.mutateAsync({
       person_id: personId,
       protocol: protocol.trim(),
       handle: handle.trim(),
       label: label.trim() || undefined
-    });
+    })))) return;
     setProtocol("");
     setHandle("");
     setLabel("");
   }
 
   function startEdit(item: ImHandle) {
-    if (!item.id) return;
+    if (!item.id || !item.etag) return;
     setEditingId(item.id);
+    setEditingEtag(item.etag);
     setDraft({
       protocol: item.protocol ?? "",
       handle: item.handle ?? "",
@@ -85,8 +104,8 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
   }
 
   async function saveEdit(item: ImHandle) {
-    if (!item.id) return;
-    const patch: Record<string, unknown> = { im_handle_id: item.id };
+    if (!item.id || !item.etag) return;
+    const patch: Record<string, unknown> = { im_handle_id: item.id, etag: editingEtag };
     if (draft.protocol.trim() && draft.protocol.trim() !== (item.protocol ?? "")) {
       patch.protocol = draft.protocol.trim();
     }
@@ -96,12 +115,13 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
     if (draft.label.trim() !== (item.label ?? "")) {
       patch.label = draft.label.trim();
     }
-    if (Object.keys(patch).length > 1) await update.mutateAsync(patch);
+    if (Object.keys(patch).length > 2 && !(await run(update.mutateAsync(patch)))) return;
     setEditingId(null);
   }
 
   return (
     <SectionCard title="IM & social handles" description="Instagram, X, Discord, Telegram, …">
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       {items?.length ? (
         <ul className="space-y-2">
           {items.map((item) => {
@@ -163,9 +183,9 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
                         size="icon"
                         title="Make primary"
                         aria-label="Make primary handle"
-                        disabled={!item.id || update.isPending}
+                        disabled={!item.id || !item.etag || update.isPending}
                         onClick={() =>
-                          void update.mutateAsync({ im_handle_id: item.id, is_primary: true })
+                          void run(update.mutateAsync({ im_handle_id: item.id, etag: item.etag, is_primary: true }))
                         }
                       >
                         <Star className="h-4 w-4" strokeWidth={1.6} />
@@ -176,7 +196,7 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
                       size="icon"
                       title="Edit handle"
                       aria-label="Edit handle"
-                      disabled={!item.id}
+                      disabled={!item.id || !item.etag}
                       onClick={() => startEdit(item)}
                     >
                       <Pencil className="h-4 w-4" strokeWidth={1.6} />
@@ -187,7 +207,7 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
                       title="Remove handle"
                       aria-label="Remove handle"
                       disabled={remove.isPending}
-                      onClick={() => void remove.mutateAsync({ im_handle_id: item.id })}
+                      onClick={() => void run(remove.mutateAsync({ im_handle_id: item.id }))}
                     >
                       <Trash2 className="h-4 w-4" strokeWidth={1.6} />
                     </Button>
@@ -247,6 +267,7 @@ function ImHandlesSection({ personId, items }: { personId: PersonId; items?: ImH
 }
 
 function IdentifiersSection({ personId, items }: { personId: PersonId; items?: PersonIdentifier[] }) {
+  const { error, run } = useContactAction();
   const add = useMcpMutation(tools.addIdentifier);
   const update = useMcpMutation(tools.updateIdentifier);
   const remove = useMcpMutation(tools.removeIdentifier);
@@ -255,32 +276,34 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
   const [value, setValue] = useState("");
   const [url, setUrl] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingEtag, setEditingEtag] = useState<string>();
   const [draft, setDraft] = useState({ namespace: "", value: "", url: "" });
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!namespace.trim() || !value.trim()) return;
-    await add.mutateAsync({
+    if (!(await run(add.mutateAsync({
       subject_kind: "person",
       subject_id: personId,
       namespace: namespace.trim(),
       value: value.trim(),
       url: url.trim() || undefined
-    });
+    })))) return;
     setNamespace("");
     setValue("");
     setUrl("");
   }
 
   function startEdit(item: PersonIdentifier) {
-    if (!item.id) return;
+    if (!item.id || !item.etag) return;
     setEditingId(item.id);
+    setEditingEtag(item.etag);
     setDraft({ namespace: item.namespace ?? "", value: item.value ?? "", url: item.url ?? "" });
   }
 
   async function saveEdit(item: PersonIdentifier) {
-    if (!item.id) return;
-    const patch: Record<string, unknown> = { identifier_id: item.id };
+    if (!item.id || !item.etag) return;
+    const patch: Record<string, unknown> = { identifier_id: item.id, etag: editingEtag };
     if (draft.namespace.trim() && draft.namespace.trim() !== (item.namespace ?? "")) {
       patch.namespace = draft.namespace.trim();
     }
@@ -290,12 +313,13 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
     if (draft.url.trim() !== (item.url ?? "")) {
       patch.url = draft.url.trim();
     }
-    if (Object.keys(patch).length > 1) await update.mutateAsync(patch);
+    if (Object.keys(patch).length > 2 && !(await run(update.mutateAsync(patch)))) return;
     setEditingId(null);
   }
 
   return (
     <SectionCard title="Identifiers" description="Handles, usernames and other namespaced ids.">
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       {items?.length ? (
         <ul className="space-y-2">
           {items.map((item) => {
@@ -349,9 +373,9 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
                         size="icon"
                         title="Mark verified"
                         aria-label={`Mark ${item.value} verified`}
-                        disabled={!item.id || update.isPending}
+                        disabled={!item.id || !item.etag || update.isPending}
                         onClick={() =>
-                          void update.mutateAsync({ identifier_id: item.id, verified: true })
+                          void run(update.mutateAsync({ identifier_id: item.id, etag: item.etag, verified: true }))
                         }
                       >
                         <ShieldCheck className="h-4 w-4 text-[oklch(var(--co-emerald-500))]" strokeWidth={1.6} />
@@ -362,7 +386,7 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
                       size="icon"
                       title="Edit identifier"
                       aria-label="Edit identifier"
-                      disabled={!item.id}
+                      disabled={!item.id || !item.etag}
                       onClick={() => startEdit(item)}
                     >
                       <Pencil className="h-4 w-4" strokeWidth={1.6} />
@@ -373,7 +397,7 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
                       title="Remove identifier"
                       aria-label="Remove identifier"
                       disabled={remove.isPending}
-                      onClick={() => void remove.mutateAsync({ identifier_id: item.id })}
+                      onClick={() => void run(remove.mutateAsync({ identifier_id: item.id }))}
                     >
                       <Trash2 className="h-4 w-4" strokeWidth={1.6} />
                     </Button>
@@ -430,6 +454,7 @@ function IdentifiersSection({ personId, items }: { personId: PersonId; items?: P
 }
 
 function UrlsSection({ personId, items }: { personId: PersonId; items?: PersonUrl[] }) {
+  const { error, run } = useContactAction();
   const add = useMcpMutation(tools.addUrl);
   const update = useMcpMutation(tools.updateUrl);
   const remove = useMcpMutation(tools.removeUrl);
@@ -437,30 +462,32 @@ function UrlsSection({ personId, items }: { personId: PersonId; items?: PersonUr
   const [type, setType] = useState("profile");
   const [label, setLabel] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingEtag, setEditingEtag] = useState<string>();
   const [draft, setDraft] = useState({ url: "", type: "", label: "" });
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!url.trim()) return;
-    await add.mutateAsync({
+    if (!(await run(add.mutateAsync({
       person_id: personId,
       url: url.trim(),
       type: type.trim() || "profile",
       label: label.trim() || undefined
-    });
+    })))) return;
     setUrl("");
     setLabel("");
   }
 
   function startEdit(item: PersonUrl) {
-    if (!item.id) return;
+    if (!item.id || !item.etag) return;
     setEditingId(item.id);
+    setEditingEtag(item.etag);
     setDraft({ url: item.url ?? "", type: item.type ?? "", label: item.label ?? "" });
   }
 
   async function saveEdit(item: PersonUrl) {
-    if (!item.id) return;
-    const patch: Record<string, unknown> = { url_id: item.id };
+    if (!item.id || !item.etag) return;
+    const patch: Record<string, unknown> = { url_id: item.id, etag: editingEtag };
     if (draft.url.trim() && draft.url.trim() !== (item.url ?? "")) {
       patch.url = draft.url.trim();
     }
@@ -470,12 +497,13 @@ function UrlsSection({ personId, items }: { personId: PersonId; items?: PersonUr
     if (draft.label.trim() !== (item.label ?? "")) {
       patch.label = draft.label.trim();
     }
-    if (Object.keys(patch).length > 1) await update.mutateAsync(patch);
+    if (Object.keys(patch).length > 2 && !(await run(update.mutateAsync(patch)))) return;
     setEditingId(null);
   }
 
   return (
     <SectionCard title="URLs" description="Website, portfolio, LinkedIn, …">
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       {items?.length ? (
         <ul className="space-y-2">
           {items.map((item) => {
@@ -529,8 +557,8 @@ function UrlsSection({ personId, items }: { personId: PersonId; items?: PersonUr
                         size="icon"
                         title="Make primary"
                         aria-label="Make primary URL"
-                        disabled={!item.id || update.isPending}
-                        onClick={() => void update.mutateAsync({ url_id: item.id, is_primary: true })}
+                        disabled={!item.id || !item.etag || update.isPending}
+                        onClick={() => void run(update.mutateAsync({ url_id: item.id, etag: item.etag, is_primary: true }))}
                       >
                         <Star className="h-4 w-4" strokeWidth={1.6} />
                       </Button>
@@ -540,7 +568,7 @@ function UrlsSection({ personId, items }: { personId: PersonId; items?: PersonUr
                       size="icon"
                       title="Edit URL"
                       aria-label="Edit URL"
-                      disabled={!item.id}
+                      disabled={!item.id || !item.etag}
                       onClick={() => startEdit(item)}
                     >
                       <Pencil className="h-4 w-4" strokeWidth={1.6} />
@@ -551,7 +579,7 @@ function UrlsSection({ personId, items }: { personId: PersonId; items?: PersonUr
                       title="Remove URL"
                       aria-label="Remove URL"
                       disabled={remove.isPending}
-                      onClick={() => void remove.mutateAsync({ url_id: item.id })}
+                      onClick={() => void run(remove.mutateAsync({ url_id: item.id }))}
                     >
                       <Trash2 className="h-4 w-4" strokeWidth={1.6} />
                     </Button>

@@ -46,6 +46,7 @@ export type Person = ToolEnvelope & {
 };
 
 export type ImHandle = {
+  etag?: string;
   id?: UUID;
   protocol?: string;
   handle?: string;
@@ -54,6 +55,7 @@ export type ImHandle = {
 };
 
 export type PersonIdentifier = {
+  etag?: string;
   id?: UUID;
   namespace?: string;
   value?: string;
@@ -62,6 +64,7 @@ export type PersonIdentifier = {
 };
 
 export type PersonUrl = {
+  etag?: string;
   id?: UUID;
   url?: string;
   type?: string;
