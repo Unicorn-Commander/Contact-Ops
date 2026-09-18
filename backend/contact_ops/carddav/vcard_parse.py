@@ -104,6 +104,8 @@ def parse_vcard_to_canonical(text: str) -> CanonicalContact:
         nicknames = [v for v in split_list(by_name["NICKNAME"][0].value) if v]
         nicknames = [unescape_text(n) for n in nicknames]
 
+    aka_names = [unescape_text(p.value) for p in by_name.get("X-AKA", []) if p.value.strip()]
+
     bday = _parse_date(_scalar(by_name, "BDAY"))
     anniversary = _parse_date(
         _scalar(by_name, "ANNIVERSARY") or _scalar(by_name, "X-ANNIVERSARY")
@@ -156,6 +158,7 @@ def parse_vcard_to_canonical(text: str) -> CanonicalContact:
         honorific_prefix=prefix or None,
         honorific_suffix=suffix or None,
         nicknames=nicknames,
+        aka_names=aka_names,
         phonetic_family_name=phonetic_last,
         phonetic_given_name=phonetic_first,
         birthday=bday,

@@ -133,6 +133,7 @@ class CanonicalContact:
     honorific_prefix: str | None = None
     honorific_suffix: str | None = None
     nicknames: list[str] = field(default_factory=list)
+    aka_names: list[str] = field(default_factory=list)
     phonetic_family_name: str | None = None
     phonetic_given_name: str | None = None
 
@@ -314,6 +315,12 @@ def _emit_identity(contact: CanonicalContact, out: list[VCardProperty]) -> None:
 
     if contact.nicknames:
         out.append(VCardProperty(name="NICKNAME", value=join_list(contact.nicknames)))
+
+    # Alternate names (also-known-as) — no RFC 6350 vocabulary, so use an
+    # X- property. Mirrors X-PRONOUNS / X-PHONETIC-* conventions above.
+    for aka in contact.aka_names:
+        if aka:
+            out.append(VCardProperty(name="X-AKA", value=escape_text(aka)))
 
     if contact.phonetic_family_name or contact.phonetic_given_name:
         # Apple emits X-PHONETIC-FIRST-NAME / X-PHONETIC-LAST-NAME.

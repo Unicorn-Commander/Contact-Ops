@@ -42,6 +42,7 @@ from contact_ops.models import (
     IMHandle,
     Organization,
     Person,
+    PersonName,
     PersonOrgRole,
     PersonPersonRelation,
     PersonTenantMembership,
@@ -52,6 +53,7 @@ from contact_ops.models import (
 from contact_ops.models.enums import (
     AddressType,
     EmailType,
+    NameType,
     PhoneType,
 )
 
@@ -171,6 +173,14 @@ async def load_canonical_from_person(
     )
     im_handles = await _load_active(session, IMHandle, person_id, None)
 
+    aka_rows = (
+        await session.execute(
+            select(PersonName).where(
+                PersonName.person_id == person_id, PersonName.name_type == NameType.aka
+            )
+        )
+    ).scalars().all()
+
     org_rows = (
         await session.execute(
             select(PersonOrgRole, Organization)
@@ -209,6 +219,7 @@ async def load_canonical_from_person(
         honorific_prefix=person.honorific_prefix,
         honorific_suffix=person.honorific_suffix,
         nicknames=list(person.nicknames or []),
+        aka_names=[n.value for n in aka_rows],
         phonetic_family_name=person.phonetic_family_name,
         phonetic_given_name=person.phonetic_given_name,
         birthday=_canonical_date_from_jsonb(person.birthday),
@@ -295,6 +306,7 @@ async def apply_vcard_text_to_db(
     await _sync_urls(session, person.id, canonical.urls)
     await _sync_addresses(session, person.id, canonical.addresses)
     await _sync_im_handles(session, person.id, canonical.im_handles)
+    await _sync_aka_names(session, person.id, canonical.aka_names)
     await _sync_organizations(session, person.id, canonical.organizations)
     await _sync_membership_metadata(
         session,
@@ -667,6 +679,35 @@ async def _sync_addresses(
         if key not in seen:
             row.valid_until = datetime.now(timezone.utc)
             row.is_primary = False
+    await session.flush()
+
+
+async def _sync_aka_names(
+    session: AsyncSession,
+    person_id: uuid.UUID,
+    canonical_aka: list[str],
+) -> None:
+    """Add inbound AKA names without letting lossy vCard clients erase names.
+
+    X-AKA is optional and not preserved by every client. Explicit removal belongs
+    to the names MCP/REST surface; neither omission nor a partial list deletes.
+    Existing values and primary preference remain authoritative.
+    """
+    rows = (await session.execute(select(PersonName).where(
+        PersonName.person_id == person_id, PersonName.name_type == NameType.aka
+    ))).scalars().all()
+    seen = {r.value.strip().lower() for r in rows}
+    has_primary = any(r.is_primary for r in rows)
+    for item in canonical_aka:
+        value = item.strip()
+        if not value or value.lower() in seen:
+            continue
+        session.add(PersonName(
+            person_id=person_id, name_type=NameType.aka, value=value,
+            is_primary=not has_primary, confidence=Decimal("1.000"),
+        ))
+        has_primary = True
+        seen.add(value.lower())
     await session.flush()
 
 

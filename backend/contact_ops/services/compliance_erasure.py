@@ -65,6 +65,7 @@ _CASCADE_CHILD_TABLES: tuple[tuple[str, str], ...] = (
     ("photos", "person_id"),
     ("person_org_role", "person_id"),
     ("person_alias", "current_canonical_id"),
+    ("person_names", "person_id"),
     ("person_tenant_membership", "person_id"),
     ("voice_consent", "person_id"),
     ("voice_fingerprints", "person_id"),
