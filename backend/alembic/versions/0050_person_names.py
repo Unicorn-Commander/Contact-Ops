@@ -1,7 +1,7 @@
 """typed names: person_names (legal/preferred/nickname/aka/former/maiden/stage)
 
-Revision ID: 0040
-Revises: 0039
+Revision ID: 0050
+Revises: 0049
 Create Date: 2026-09-15
 
 Adds the person_names table — typed alternate names on a person. Distinct from
@@ -22,8 +22,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0040"
-down_revision: Union[str, None] = "0039"
+revision: str = "0050"
+down_revision: Union[str, None] = "0049"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
