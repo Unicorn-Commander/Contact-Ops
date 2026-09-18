@@ -303,3 +303,6 @@ def _remove_rls_policies() -> None:
     op.execute("ALTER TABLE voice_consent NO FORCE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE voice_consent DISABLE ROW LEVEL SECURITY")
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON voice_consent")
+    # Leave the pre-existing 0015 voice_fp policies intact; remove only ours.
+    # Otherwise this policy keeps current_tenant_id() alive during downgrade.
+    op.execute("DROP POLICY IF EXISTS tenant_isolation ON voice_fingerprints")

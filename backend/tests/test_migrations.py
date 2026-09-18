@@ -9,6 +9,7 @@ migrations).  Verifies:
   - key schema artifacts exist afterwards
 """
 
+import asyncio
 import os
 from contextlib import ExitStack
 from pathlib import Path
@@ -56,6 +57,20 @@ def _make_config(sync_url: str) -> Config:
     return cfg
 
 
+def _run_migration(action: str, cfg: Config, target: str) -> None:
+    # Alembic's asyncio.run clears the current loop. The module-scoped setup
+    # runs before function-scoped autouse fixtures can preserve pytest's loop.
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = None
+    try:
+        getattr(command, action)(cfg, target)
+    finally:
+        if loop is not None and not loop.is_closed():
+            asyncio.set_event_loop(loop)
+
+
 @pytest.fixture(scope="module")
 def postgres_container():
     """Destructive roundtrips get a separate cluster, including global roles.
@@ -83,7 +98,7 @@ def postgres_container():
             url = pg.get_connection_url()
         try:
             os.environ["MIGRATION_DATABASE_URL"] = url
-            command.upgrade(_make_config(url), "head")
+            _run_migration("upgrade", _make_config(url), "head")
             yield url.replace("postgresql+psycopg2://", "postgresql+asyncpg://").replace("postgresql://", "postgresql+asyncpg://")
         finally:
             if previous is None:
@@ -126,7 +141,7 @@ def test_downgrade_base(postgres_container):
     _os.environ["MIGRATION_DATABASE_URL"] = postgres_container
     cfg = _make_config(sync_url)
 
-    command.downgrade(cfg, "base")
+    _run_migration("downgrade", cfg, "base")
 
     eng = create_engine(sync_url)
     with eng.connect() as conn:
@@ -150,10 +165,10 @@ def test_roundtrip(postgres_container):
     _os.environ["MIGRATION_DATABASE_URL"] = postgres_container
     cfg = _make_config(sync_url)
 
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
+    _run_migration("downgrade", cfg, "base")
+    _run_migration("upgrade", cfg, "head")
+    _run_migration("downgrade", cfg, "base")
+    _run_migration("upgrade", cfg, "head")
 
     eng = create_engine(sync_url)
     with eng.connect() as conn:
