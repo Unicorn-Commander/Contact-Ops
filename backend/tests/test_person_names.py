@@ -15,6 +15,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
 
 
 @pytest.fixture
@@ -64,6 +65,8 @@ async def test_person_name_visible_only_to_owning_tenant(
     name_id = uuid.uuid4()
 
     async with db_engine.connect() as conn:
+        await conn.execute(text("SET LOCAL ROLE contact_ops_app"))
+        assert await conn.scalar(text("SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=current_user"))
         # Insert the person_name under tenant A's GUC (owner).
         await conn.execute(
             text("SELECT set_config('app.tenant_id', :t, true)"),
@@ -99,10 +102,19 @@ async def test_person_name_visible_only_to_owning_tenant(
         ).fetchall()
         assert len(rows_b) == 0
 
+        # The foreign tenant cannot insert a child of the hidden parent either.
+        with pytest.raises(DBAPIError):
+            async with conn.begin_nested():
+                await conn.execute(
+                    text("INSERT INTO person_names (person_id, name_type, value) "
+                         "VALUES (:pid, 'aka', 'Foreign write')"),
+                    {"pid": s["person_a"]},
+                )
+
 
 @pytest.mark.asyncio
 async def test_person_name_backfill_from_nicknames(db_engine):
-    """The 0040 backfill seeds a nickname person_name from persons.nicknames."""
+    """The 0050 backfill seeds a nickname person_name from persons.nicknames."""
     tid = uuid.uuid4()
     person = uuid.uuid4()
 
@@ -122,7 +134,7 @@ async def test_person_name_backfill_from_nicknames(db_engine):
             ),
             {"id": person, "tid": tid},
         )
-        # Re-run the backfill INSERT from 0040 (idempotent).
+        # Re-run the backfill INSERT from 0050 (idempotent).
         await conn.execute(
             text(
                 "INSERT INTO person_names (person_id, name_type, value, is_primary) "

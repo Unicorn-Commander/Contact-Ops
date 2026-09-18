@@ -100,6 +100,7 @@ def upgrade() -> None:
         """
     )
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON person_names TO contact_ops_app")
+    op.execute("GRANT SELECT ON person_names TO contact_ops_ro, contact_ops_audit")
 
     # Backfill nickname person_names from persons.nicknames.
     op.execute(
