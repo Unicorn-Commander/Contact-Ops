@@ -1,0 +1,52 @@
+name: Contact-Ops CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: contact-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: contact_ops_test
+        options: >-
+          --health-cmd "pg_isready -U postgres -d contact_ops_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      CONTACT_OPS_TEST_DATABASE_URL: ${CONTACT_OPS_DATABASE_URL}
+      DATABASE_URL: postgresql+asyncpg://postgres:test@postgres:5432/contact_ops_test
+      ENV: test
+      STANDALONE_MODE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m compileall -q contact_ops
+      - run: python -m pytest --timeout=60 --junitxml=/tmp/contact-tests.xml
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

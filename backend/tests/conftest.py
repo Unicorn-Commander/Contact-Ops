@@ -52,6 +52,18 @@ def _sync_url(asyncpg_url: str) -> str:
 @pytest.fixture(scope="session")
 def postgres_container():
     """Postgres container with pgvector, alive for the whole test session."""
+    # CI services are reached by hostname on the job network, with no host ports.
+    # Local runs retain the existing self-contained testcontainers default.
+    external = _os_module.environ.get("CONTACT_OPS_TEST_DATABASE_URL")
+    if external:
+        from sqlalchemy.engine import make_url
+
+        if make_url(external).database != "contact_ops_test":
+            raise RuntimeError("CI database must be the throwaway contact_ops_test")
+        _run_migrations(external)
+        yield _asyncpg_url(external)
+        return
+
     from testcontainers.postgres import PostgresContainer
 
     with PostgresContainer(
