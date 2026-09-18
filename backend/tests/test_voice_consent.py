@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
+from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from contact_ops.models.voice_consent import VoiceConsent
@@ -249,7 +250,7 @@ class TestVoiceConsentService:
         }
         token = jwt.encode(expired_payload, "test-secret", algorithm="HS256")
 
-        with pytest.raises(jwt.PyJWTError):
+        with pytest.raises(JWTError):
             service.verify_consent_token(token)
 
     def test_verify_wrong_audience_raises(
@@ -271,7 +272,7 @@ class TestVoiceConsentService:
         }
         token = jwt.encode(bad_aud_payload, "test-secret", algorithm="HS256")
 
-        with pytest.raises(jwt.PyJWTError):
+        with pytest.raises(JWTError):
             service.verify_consent_token(token)
 
     def test_singleton(self) -> None:

@@ -20,6 +20,7 @@ Design:
 from __future__ import annotations
 
 import os as _os_module
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -47,6 +48,20 @@ def _asyncpg_url(sync_url: str) -> str:
 
 def _sync_url(asyncpg_url: str) -> str:
     return asyncpg_url.replace("postgresql+asyncpg://", "postgresql://")
+
+
+@pytest.fixture(autouse=True)
+def _preserve_session_loop_for_sync_helpers():
+    """asyncio.run in sync CLI/migration tests must not clear pytest's loop."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = None
+    try:
+        yield
+    finally:
+        if loop is not None and not loop.is_closed():
+            asyncio.set_event_loop(loop)
 
 
 @pytest.fixture(scope="session")
