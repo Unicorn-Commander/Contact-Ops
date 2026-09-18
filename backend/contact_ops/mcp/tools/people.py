@@ -795,6 +795,8 @@ async def update_person(ctx: MCPContext, args: BaseModel) -> UpdatePersonOutput:
     if changed:
         person.etag = str(uuid.uuid4())
     await ctx.db.flush()
+    # touch_updated replaces the etag in PostgreSQL; return/audit that stored version.
+    await ctx.db.refresh(person)
     event_id = await emit_action_event(
         ctx,
         event_type="person.update",

@@ -171,6 +171,7 @@ async def test_structured_names_and_optional_handles_roundtrip(db_session):
     ])
     await db_session.flush()
     fetched = await get_person(c, GetPersonInput(person_id=created.person_id))
+    assert fetched.etag == updated.etag
     for field, value in fields.items():
         assert getattr(fetched, field) == value
     assert fetched.im_handles is None and fetched.identifiers is None and fetched.urls is None
