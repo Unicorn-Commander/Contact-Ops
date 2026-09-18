@@ -19,6 +19,7 @@ from fastapi import APIRouter, Response, status
 
 from contact_ops.core.config import get_settings
 from contact_ops.core.database import engine
+from contact_ops.ops.rls_status import get_rls_status
 from contact_ops.ops.schema_guard import get_schema_version
 
 logger = structlog.get_logger(__name__)
@@ -105,6 +106,19 @@ async def liveness_check() -> dict[str, Any]:
         "status": "alive",
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+@router.get(
+    "/rls",
+    summary="RLS boot self-test status",
+    response_model=dict[str, Any],
+)
+async def rls_health_check(response: Response) -> dict[str, Any]:
+    """Report the process-local RLS boot self-test result."""
+    result = get_rls_status()
+    if result["status"] not in {"passed", "inert_privileged"}:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return result
 
 
 # ---------------------------------------------------------------------------
