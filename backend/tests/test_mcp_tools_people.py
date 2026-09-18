@@ -236,6 +236,7 @@ async def test_structured_names_and_optional_handles_roundtrip(db_session):
         assert getattr(fetched, field) == value
     assert fetched.im_handles is None and fetched.identifiers is None and fetched.urls is None
     included = await get_person(c, GetPersonInput(person_id=created.person_id, include=["im_handles", "identifiers", "urls"]))
+    assert all(row["etag"] for rows in (included.im_handles, included.identifiers, included.urls) for row in rows)
     assert [row["handle"] for row in included.im_handles] == ["synthetic-handle"]
     assert [row["value"] for row in included.identifiers] == ["synthetic-id"]
     assert [row["url"] for row in included.urls] == ["https://example.invalid/profile"]

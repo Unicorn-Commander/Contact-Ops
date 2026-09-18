@@ -1,7 +1,7 @@
 """add updated_at + touch_updated triggers to im_handles / urls / identifiers
 
-Revision ID: 0048
-Revises: 0047
+Revision ID: 0051
+Revises: 0050
 Create Date: 2026-09-15
 
 Additive: adds an ``updated_at timestamptz NOT NULL DEFAULT now()`` column to the
@@ -22,8 +22,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0048"
-down_revision: str | None = "0047"
+revision: str = "0051"
+down_revision: str | None = "0050"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

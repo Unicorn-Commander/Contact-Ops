@@ -28,6 +28,7 @@ class AddIdentifierInput(BaseModel):
 
 
 class IdentifierOutput(ToolOutput):
+    etag: str
     identifier_id: uuid.UUID
     subject_kind: str
     subject_id: uuid.UUID
@@ -147,6 +148,7 @@ async def add_identifier(ctx: MCPContext, req: AddIdentifierInput) -> Identifier
     if existing:
         return IdentifierOutput(
             identifier_id=existing.id,
+            etag=_etag(existing),
             subject_kind=req.subject_kind,
             subject_id=req.subject_id,
             namespace=existing.namespace,
@@ -183,6 +185,7 @@ async def add_identifier(ctx: MCPContext, req: AddIdentifierInput) -> Identifier
     )
     return IdentifierOutput(
         identifier_id=row.id,
+        etag=_etag(row),
         subject_kind=req.subject_kind,
         subject_id=req.subject_id,
         namespace=row.namespace,
@@ -239,6 +242,7 @@ async def list_identifiers(ctx: MCPContext, req: ListIdentifiersInput) -> ListId
         items=[
             {
                 "identifier_id": row.id,
+                "etag": _etag(row),
                 "namespace": row.namespace,
                 "value": row.value,
                 "url": row.url,
@@ -282,9 +286,7 @@ async def verify_identifier(ctx: MCPContext, req: VerifyIdentifierInput) -> Veri
     )
 
 
-async def update_identifier(
-    ctx: MCPContext, req: UpdateIdentifierInput
-) -> UpdateIdentifierOutput:
+async def update_identifier(ctx: MCPContext, req: UpdateIdentifierInput) -> UpdateIdentifierOutput:
     require_role(ctx, "STAFF")
     require_scopes(ctx, ["identifier:write"])
     # Verification state is controlled by the dedicated `identifier:verify` scope
@@ -297,6 +299,7 @@ async def update_identifier(
         require_scopes(ctx, ["identifier:write", "identifier:verify"])
     row = await _load_identifier(ctx, req.identifier_id)
     subject_id = row.person_id or row.organization_id
+    await ctx.db.refresh(row, with_for_update=True)
     if _etag(row) != req.etag:
         raise ToolError(STALE_ETAG, "stale identifier etag", retryable=False)
     before = {

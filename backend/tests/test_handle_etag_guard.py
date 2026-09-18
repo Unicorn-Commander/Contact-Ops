@@ -50,7 +50,7 @@ class _FakeDb:
     def add(self, _obj: Any) -> None:
         return None
 
-    async def refresh(self, _row: Any) -> None:
+    async def refresh(self, _row: Any, **_kwargs: Any) -> None:
         # No-op: in a real DB `refresh` reloads the row from the store. The
         # post-write bump is simulated by _TriggerDb below.
         return None
@@ -191,9 +191,7 @@ async def test_update_url_accepts_current_etag() -> None:
     row = _url()
     ctx = _ctx(_FakeDb({Url: row, Person: _person()}))
 
-    out = await update_url(
-        ctx, UpdateUrlInput(url_id=row.id, etag=row.updated_at.isoformat())
-    )
+    out = await update_url(ctx, UpdateUrlInput(url_id=row.id, etag=row.updated_at.isoformat()))
     assert out.etag == row.updated_at.isoformat()
     assert out.changed_fields == []
 
@@ -226,8 +224,9 @@ class _TriggerDb(_FakeDb):
         super().__init__(rows)
         self._bump_to = bump_to
 
-    async def refresh(self, row: Any) -> None:
-        row.updated_at = self._bump_to
+    async def refresh(self, row: Any, **_kwargs: Any) -> None:
+        if not _kwargs.get("with_for_update"):
+            row.updated_at = self._bump_to
 
 
 POST_WRITE = datetime(2026, 1, 1, 12, 0, 1, tzinfo=UTC)

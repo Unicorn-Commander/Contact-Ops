@@ -722,6 +722,7 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
         im_handles = [
             {
                 "id": str(row.id),
+                "etag": row.updated_at.isoformat(),
                 "protocol": row.protocol,
                 "handle": row.handle,
                 "label": row.label,
@@ -736,6 +737,7 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
         identifiers = [
             {
                 "id": str(row.id),
+                "etag": row.updated_at.isoformat(),
                 "namespace": row.namespace,
                 "value": row.value,
                 "url": row.url,
@@ -750,6 +752,7 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
         urls = [
             {
                 "id": str(row.id),
+                "etag": row.updated_at.isoformat(),
                 "url": row.url,
                 "type": row.type,
                 "label": row.label,

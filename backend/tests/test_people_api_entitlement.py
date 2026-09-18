@@ -290,6 +290,9 @@ async def test_nested_update_rejects_role_before_resource_lookup(monkeypatch):
     _install_fakes(monkeypatch, db=NoLookupDb(), settings=_settings())
     with pytest.raises(HTTPException) as exc:
         await people.update_person_im_handle(
-            _make_request(role="CLIENT"), uuid.uuid4(), uuid.uuid4(), {"label": "Synthetic"}
+            _make_request(role="CLIENT"),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            {"etag": "x", "label": "Synthetic"},
         )
     assert exc.value.status_code == 403

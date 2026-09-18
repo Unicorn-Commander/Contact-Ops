@@ -26,6 +26,7 @@ class AddUrlInput(BaseModel):
 
 
 class UrlOutput(ToolOutput):
+    etag: str
     url_id: uuid.UUID
     person_id: uuid.UUID
     url: str
@@ -112,6 +113,7 @@ async def add_url(ctx: MCPContext, req: AddUrlInput) -> UrlOutput:
     if existing:
         return UrlOutput(
             url_id=existing.id,
+            etag=_etag(existing),
             person_id=req.person_id,
             url=existing.url,
             type=existing.type,
@@ -145,6 +147,7 @@ async def add_url(ctx: MCPContext, req: AddUrlInput) -> UrlOutput:
     )
     return UrlOutput(
         url_id=row.id,
+        etag=_etag(row),
         person_id=req.person_id,
         url=row.url,
         type=row.type,
@@ -159,6 +162,7 @@ async def update_url(ctx: MCPContext, req: UpdateUrlInput) -> UpdateUrlOutput:
     require_scopes(ctx, ["person:write"])
     row = await _load_url(ctx, req.url_id)
     assert row.person_id is not None
+    await ctx.db.refresh(row, with_for_update=True)
     if _etag(row) != req.etag:
         raise ToolError(STALE_ETAG, "stale url etag", retryable=False)
     before = _payload(row)

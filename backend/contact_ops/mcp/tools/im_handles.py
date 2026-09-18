@@ -31,6 +31,7 @@ class AddImHandleInput(BaseModel):
 
 
 class ImHandleOutput(ToolOutput):
+    etag: str
     im_handle_id: uuid.UUID
     person_id: uuid.UUID
     protocol: str
@@ -122,6 +123,7 @@ async def add_im_handle(ctx: MCPContext, req: AddImHandleInput) -> ImHandleOutpu
     if existing:
         return ImHandleOutput(
             im_handle_id=existing.id,
+            etag=_etag(existing),
             person_id=req.person_id,
             protocol=existing.protocol,
             handle=existing.handle,
@@ -157,6 +159,7 @@ async def add_im_handle(ctx: MCPContext, req: AddImHandleInput) -> ImHandleOutpu
     )
     return ImHandleOutput(
         im_handle_id=row.id,
+        etag=_etag(row),
         person_id=req.person_id,
         protocol=row.protocol,
         handle=row.handle,
@@ -171,6 +174,7 @@ async def update_im_handle(ctx: MCPContext, req: UpdateImHandleInput) -> UpdateI
     require_scopes(ctx, ["person:write"])
     row = await _load_im_handle(ctx, req.im_handle_id)
     assert row.person_id is not None
+    await ctx.db.refresh(row, with_for_update=True)
     if _etag(row) != req.etag:
         raise ToolError(STALE_ETAG, "stale im_handle etag", retryable=False)
     before = _payload(row)
