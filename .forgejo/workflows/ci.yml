@@ -20,10 +20,20 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres -d contact_ops_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
+      migration-postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: contact_ops_test
+        options: >-
+          --health-cmd "pg_isready -U postgres -d contact_ops_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     defaults:
       run:
         working-directory: backend
     env:
+      CONTACT_OPS_MIGRATION_TEST_DATABASE_URL: ${CONTACT_OPS_DATABASE_URL}
       CONTACT_OPS_TEST_DATABASE_URL: ${CONTACT_OPS_DATABASE_URL}
       DATABASE_URL: postgresql+asyncpg://postgres:test@postgres:5432/contact_ops_test
       ENV: test
@@ -35,6 +45,8 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: pip install -r requirements-dev.txt
+      # CPU tensors for mocked voice-extractor tests; no models or GPU packages.
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python -m compileall -q contact_ops
       - run: python -m pytest --timeout=60 --junitxml=/tmp/contact-tests.xml
   frontend:

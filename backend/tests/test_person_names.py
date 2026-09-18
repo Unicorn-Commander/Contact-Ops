@@ -48,7 +48,7 @@ async def person_name_setup(db_session: AsyncSession):
         ),
         {"id": person_b, "tid": tenant_b},
     )
-    await db_session.commit()
+    await db_session.flush()
     return {
         "tenant_a": tenant_a,
         "tenant_b": tenant_b,
@@ -59,58 +59,58 @@ async def person_name_setup(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_person_name_visible_only_to_owning_tenant(
-    db_engine, person_name_setup: dict,
+    db_session, person_name_setup: dict,
 ):
     s = person_name_setup
     name_id = uuid.uuid4()
 
-    async with db_engine.connect() as conn:
-        await conn.execute(text("SET LOCAL ROLE contact_ops_app"))
-        assert await conn.scalar(text("SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=current_user"))
-        # Insert the person_name under tenant A's GUC (owner).
-        await conn.execute(
-            text("SELECT set_config('app.tenant_id', :t, true)"),
-            {"t": str(s["tenant_a"])},
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO person_names (id, person_id, name_type, value) "
-                "VALUES (:id, :pid, 'nickname', 'Diesel')"
-            ),
-            {"id": name_id, "pid": s["person_a"]},
-        )
+    # Use the fixture transaction: its savepoint is not visible on another connection.
+    conn = await db_session.connection()
+    await conn.execute(text("SET LOCAL ROLE contact_ops_app"))
+    assert await conn.scalar(text("SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=current_user"))
+    # Insert the person_name under tenant A's GUC (owner).
+    await conn.execute(
+        text("SELECT set_config('app.tenant_id', :t, true)"),
+        {"t": str(s["tenant_a"])},
+    )
+    await conn.execute(
+        text(
+            "INSERT INTO person_names (id, person_id, name_type, value) "
+            "VALUES (:id, :pid, 'nickname', 'Diesel')"
+        ),
+        {"id": name_id, "pid": s["person_a"]},
+    )
 
-        # Under tenant A: visible.
-        rows_a = (
+    # Under tenant A: visible.
+    rows_a = (
+        await conn.execute(
+            text("SELECT id FROM person_names WHERE id = :id"),
+            {"id": name_id},
+        )
+    ).fetchall()
+    assert len(rows_a) == 1
+
+    # Under tenant B: RLS hides it.
+    await conn.execute(
+        text("SELECT set_config('app.tenant_id', :t, true)"),
+        {"t": str(s["tenant_b"])},
+    )
+    rows_b = (
+        await conn.execute(
+            text("SELECT id FROM person_names WHERE id = :id"),
+            {"id": name_id},
+        )
+    ).fetchall()
+    assert len(rows_b) == 0
+
+    # The foreign tenant cannot insert a child of the hidden parent either.
+    with pytest.raises(DBAPIError):
+        async with conn.begin_nested():
             await conn.execute(
-                text("SELECT id FROM person_names WHERE id = :id"),
-                {"id": name_id},
+                text("INSERT INTO person_names (person_id, name_type, value) "
+                     "VALUES (:pid, 'aka', 'Foreign write')"),
+                {"pid": s["person_a"]},
             )
-        ).fetchall()
-        assert len(rows_a) == 1
-
-        # Under tenant B: RLS hides it.
-        await conn.execute(
-            text("SELECT set_config('app.tenant_id', :t, true)"),
-            {"t": str(s["tenant_b"])},
-        )
-        rows_b = (
-            await conn.execute(
-                text("SELECT id FROM person_names WHERE id = :id"),
-                {"id": name_id},
-            )
-        ).fetchall()
-        assert len(rows_b) == 0
-
-        # The foreign tenant cannot insert a child of the hidden parent either.
-        with pytest.raises(DBAPIError):
-            async with conn.begin_nested():
-                await conn.execute(
-                    text("INSERT INTO person_names (person_id, name_type, value) "
-                         "VALUES (:pid, 'aka', 'Foreign write')"),
-                    {"pid": s["person_a"]},
-                )
-
 
 @pytest.mark.asyncio
 async def test_person_name_backfill_from_nicknames(db_engine):

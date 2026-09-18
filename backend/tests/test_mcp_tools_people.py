@@ -72,6 +72,7 @@ def ctx(db_session, role: str = "STAFF", scopes: str = "person:read person:write
 
 @pytest.mark.asyncio
 async def test_create_update_get_person_flow_and_audit(db_session):
+    before = await db_session.scalar(select(__import__("sqlalchemy").func.count()).select_from(ActionEvent))
     c = ctx(db_session)
     created = await create_person(
         c,
@@ -83,7 +84,7 @@ async def test_create_update_get_person_flow_and_audit(db_session):
     assert fetched.emails and fetched.emails[0]["address"] == "REMOVED"
     assert updated.changed_fields == ["headline"]
     count = await db_session.scalar(select(__import__("sqlalchemy").func.count()).select_from(ActionEvent))
-    assert count == 2
+    assert count - before == 2
 
 
 @pytest.mark.asyncio

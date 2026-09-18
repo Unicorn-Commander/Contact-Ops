@@ -9,6 +9,8 @@ migrations).  Verifies:
   - key schema artifacts exist afterwards
 """
 
+import os
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -52,6 +54,42 @@ def _make_config(sync_url: str) -> Config:
     cfg.set_main_option("script_location", str(alemsrc))
     cfg.set_main_option("sqlalchemy.url", sync_url)
     return cfg
+
+
+@pytest.fixture(scope="module")
+def postgres_container():
+    """Destructive roundtrips get a separate cluster, including global roles.
+
+    Reusing the business-test cluster would delete their committed fixtures and
+    DROP ROLE would affect every database in that cluster.
+    """
+    from sqlalchemy.engine import make_url
+    from conftest import _run_migrations, _asyncpg_url
+
+    previous = os.environ.get("MIGRATION_DATABASE_URL")
+    with ExitStack() as stack:
+        url = os.environ.get("CONTACT_OPS_MIGRATION_TEST_DATABASE_URL")
+        if url:
+            if make_url(url).database != "contact_ops_test":
+                raise RuntimeError("Migration test database must be contact_ops_test")
+            shared = os.environ.get("CONTACT_OPS_TEST_DATABASE_URL")
+            if shared and make_url(url).host == make_url(shared).host and make_url(url).port == make_url(shared).port:
+                raise RuntimeError("Destructive migrations require a separate test cluster")
+        else:
+            from testcontainers.postgres import PostgresContainer
+            pg = stack.enter_context(PostgresContainer(
+                "pgvector/pgvector:pg16", username="postgres", password="test",
+                dbname="contact_ops_test", driver="psycopg2",
+            ))
+            url = pg.get_connection_url()
+        try:
+            _run_migrations(url)
+            yield _asyncpg_url(url)
+        finally:
+            if previous is None:
+                os.environ.pop("MIGRATION_DATABASE_URL", None)
+            else:
+                os.environ["MIGRATION_DATABASE_URL"] = previous
 
 
 @pytest.fixture
