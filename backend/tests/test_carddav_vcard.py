@@ -327,4 +327,3 @@ def test_aka_names_escaping_survives_roundtrip() -> None:
     )
     reparsed = parse_vcard_to_canonical(serialize_canonical_to_vcard(contact))
     assert reparsed.aka_names == ["O'Hara, Sr."]
-
