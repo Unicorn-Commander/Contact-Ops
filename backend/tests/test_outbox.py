@@ -185,6 +185,8 @@ async def test_claim_batch_for_update_skip_locked_concurrency(db_engine):
         )
         await setup_session.commit()
 
+    both_claimed = asyncio.Barrier(2)
+
     async def _claim() -> list:
         async with AsyncSession(db_engine) as s:
             msgs = await outbox.claim_batch(
@@ -193,12 +195,16 @@ async def test_claim_batch_for_update_skip_locked_concurrency(db_engine):
                 consumer_id="t",
                 min_age_seconds=0,
             )
+            # Test overlapping transactions: releasing the first lock before
+            # the second SELECT is allowed to reclaim an unprocessed event.
+            await asyncio.wait_for(both_claimed.wait(), timeout=10)
             await s.commit()
             return msgs
 
     results = await asyncio.gather(_claim(), _claim())
     total_claimed = sum(len(r) for r in results)
     assert total_claimed == 1
+    assert [msg.id for batch in results for msg in batch] == [outbox_id]
 
     async with AsyncSession(db_engine) as cleanup:
         await cleanup.execute(

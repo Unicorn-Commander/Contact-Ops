@@ -64,7 +64,6 @@ def postgres_container():
     DROP ROLE would affect every database in that cluster.
     """
     from sqlalchemy.engine import make_url
-    from conftest import _run_migrations, _asyncpg_url
 
     previous = os.environ.get("MIGRATION_DATABASE_URL")
     with ExitStack() as stack:
@@ -83,8 +82,9 @@ def postgres_container():
             ))
             url = pg.get_connection_url()
         try:
-            _run_migrations(url)
-            yield _asyncpg_url(url)
+            os.environ["MIGRATION_DATABASE_URL"] = url
+            command.upgrade(_make_config(url), "head")
+            yield url.replace("postgresql+psycopg2://", "postgresql+asyncpg://").replace("postgresql://", "postgresql+asyncpg://")
         finally:
             if previous is None:
                 os.environ.pop("MIGRATION_DATABASE_URL", None)

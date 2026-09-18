@@ -75,34 +75,34 @@ class TestWeSpeakerExtractor:
         assert emb.dtype == np.float32
 
     @pytest.mark.asyncio
-    async def test_output_is_l2_normalized(self) -> None:
+    async def test_output_is_l2_normalized(self, mock_pyannote_model) -> None:
         """Extracted embedding has unit L2 norm."""
         extractor = WeSpeakerExtractor(device="cpu")
         with patch.object(extractor, "_load_model", new_callable=AsyncMock):
-            with patch.object(extractor, "_model", MagicMock()):
+            with patch.object(extractor, "_model", mock_pyannote_model):
                 audio = np.zeros((1, 16000), dtype=np.float32)
                 emb = await extractor.extract_embedding(audio, sr=16000)
 
         norm = np.linalg.norm(emb)
-        assert abs(norm - 1.0) < 1e-5 or norm == 0.0
+        assert abs(norm - 1.0) < 1e-5
 
     @pytest.mark.asyncio
-    async def test_handles_mono_audio(self) -> None:
+    async def test_handles_mono_audio(self, mock_pyannote_model) -> None:
         """1D mono audio does not crash."""
         extractor = WeSpeakerExtractor(device="cpu")
         with patch.object(extractor, "_load_model", new_callable=AsyncMock):
-            with patch.object(extractor, "_model", MagicMock()):
+            with patch.object(extractor, "_model", mock_pyannote_model):
                 audio = np.zeros(16000, dtype=np.float32)
                 emb = await extractor.extract_embedding(audio, sr=16000)
 
         assert emb.shape == (EMBEDDING_DIM,)
 
     @pytest.mark.asyncio
-    async def test_handles_stereo_audio(self) -> None:
+    async def test_handles_stereo_audio(self, mock_pyannote_model) -> None:
         """2-channel audio does not crash (pyannote auto-downmixes)."""
         extractor = WeSpeakerExtractor(device="cpu")
         with patch.object(extractor, "_load_model", new_callable=AsyncMock):
-            with patch.object(extractor, "_model", MagicMock()):
+            with patch.object(extractor, "_model", mock_pyannote_model):
                 audio = np.zeros((2, 16000), dtype=np.float32)
                 emb = await extractor.extract_embedding(audio, sr=16000)
 
