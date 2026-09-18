@@ -5,12 +5,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import text
-from test_person_names import person_name_setup  # noqa: F401
 
 from contact_ops.mcp.errors import ToolError
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools import identifiers, im_handles, urls
 from contact_ops.models import Identifier, IMHandle, Url
+
+from .test_person_names import person_name_setup  # noqa: F401
 
 
 @pytest.mark.asyncio
