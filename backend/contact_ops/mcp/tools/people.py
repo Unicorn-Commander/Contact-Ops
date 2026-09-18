@@ -117,6 +117,13 @@ class CreatePersonInput(BaseModel):
     idempotency_key: uuid.UUID | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
 
+    @field_validator("emails", "phones", "im_handles")
+    @classmethod
+    def validate_single_primary(cls, value):
+        if sum(item.is_primary for item in value) > 1:
+            raise ValueError("Only one primary contact point is allowed per collection")
+        return value
+
     @field_validator("preferred_languages")
     @classmethod
     def validate_languages(cls, value: list[str]) -> list[str]:
@@ -446,26 +453,29 @@ async def _insert_person(ctx: MCPContext, data: CreatePersonInput) -> Person:
             added_by=uuid.UUID(ctx.user_id) if _is_uuid(ctx.user_id) else None,
         )
     )
+    primary_index = next((i for i, item in enumerate(data.emails) if item.is_primary), 0)
     for index, email_item in enumerate(data.emails):
         ctx.db.add(
             Email(
                 person_id=person.id,
                 address=str(email_item.address).lower(),
                 type=_email_type(email_item.type),
-                is_primary=email_item.is_primary or index == 0,
+                is_primary=index == primary_index,
                 confidence=data.confidence,
             )
         )
+    primary_index = next((i for i, item in enumerate(data.phones) if item.is_primary), 0)
     for index, phone_item in enumerate(data.phones):
         ctx.db.add(
             Phone(
                 person_id=person.id,
                 e164=phone_item.e164,
                 type=_phone_type(phone_item.type),
-                is_primary=phone_item.is_primary or index == 0,
+                is_primary=index == primary_index,
                 confidence=data.confidence,
             )
         )
+    primary_index = next((i for i, item in enumerate(data.im_handles) if item.is_primary), 0)
     for index, handle_item in enumerate(data.im_handles):
         ctx.db.add(
             IMHandle(
@@ -473,7 +483,7 @@ async def _insert_person(ctx: MCPContext, data: CreatePersonInput) -> Person:
                 protocol=handle_item.protocol.strip().lower(),
                 handle=handle_item.handle.strip(),
                 label=handle_item.label,
-                is_primary=handle_item.is_primary or index == 0,
+                is_primary=index == primary_index,
                 confidence=data.confidence,
             )
         )
@@ -508,6 +518,13 @@ async def _ensure_im_handles(
     ).scalars().all()
     seen = {(h.protocol.strip().lower(), h.handle.strip().lower()) for h in existing}
     has_primary = any(h.is_primary for h in existing)
+    preferred_key = next(
+        ((h.protocol.strip().lower(), h.handle.strip().lower()) for h in handles if h.is_primary),
+        None,
+    )
+    # Preserve existing preferences; only choose among new rows on ingestion.
+    if preferred_key in seen:
+        preferred_key = None
     for item in handles:
         key = (item.protocol.strip().lower(), item.handle.strip().lower())
         if key in seen:
@@ -516,7 +533,7 @@ async def _ensure_im_handles(
         # add/create semantics); an explicitly primary incoming handle wins the
         # still-open primary slot. We never demote an existing primary on upsert —
         # ingestion must not silently reorder a contact's preferred channel.
-        make_primary = not has_primary and (item.is_primary or not added)
+        make_primary = not has_primary and (key == preferred_key if preferred_key else not added)
         row = IMHandle(
             person_id=person.id,
             protocol=item.protocol.strip().lower(),
