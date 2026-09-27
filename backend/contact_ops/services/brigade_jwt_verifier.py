@@ -289,9 +289,12 @@ def _verify_brigade_jwt_with_reason(
         )
     if not claims.get("sub"):
         return _reject("missing-sub", kid=kid)
-    # Canonical tenancy claim is workspace_id (SUITE-IDENTITY 0.1; Brigade
-    # retired org_id). Accept either; the legacy org_id is a fallback.
-    if not (claims.get("workspace_id") or claims.get("org_id")):
+    # Canonical tenancy claim is workspace_id. org_id is intentionally not a
+    # fallback: it has divergent meanings across older suite apps and accepting
+    # it here would turn an ambiguous legacy claim into the RLS tenant binding.
+    # (Production has enforced this since deploy/contact-meeting-federation-20260724;
+    # ported to main 2026-09-27 so a rebuild from main does not loosen it.)
+    if not claims.get("workspace_id"):
         return _reject("missing-workspace-id", kid=kid)
 
     return BrigadeJWTVerificationResult(valid=True, claims=claims, reason=None)
