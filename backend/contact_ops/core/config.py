@@ -176,7 +176,11 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return []
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            # Accept the legacy JSON-list spelling (RLS_SELFTEST_TENANT_IDS=["a","b"]) as well as
+            # the documented comma-separated form: dogfood's .env used the JSON form until 2026-09-27
+            # and the strict parser refused boot on '["a"' (measured, restart loop, 2 min outage).
+            cleaned = value.strip().strip("[]")
+            return [item.strip().strip("\"'") for item in cleaned.split(",") if item.strip().strip("\"'")]
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
         raise TypeError("RLS_SELFTEST_TENANT_IDS must be a comma-separated UUID list")

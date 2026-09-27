@@ -275,3 +275,11 @@ async def test_rls_health_details_require_admin_debug() -> None:
     assert ordinary == {"status": "failed", "reason": "cross_tenant_leak"}
     assert detail["bound_tenant"] == "tenant-a"
     assert detail["cross_tenant_person_counts"] == [1, 0]
+
+
+def test_rls_selftest_tenant_ids_accept_json_list_spelling():
+    from contact_ops.core.config import Settings
+
+    parsed = Settings._parse_rls_selftest_tenant_ids('["01a0e3da-4e25-790a-893b-410e71935ac1","01a0e3da-4e2f-75d1-b697-2cad0bf81dd0"]')
+    assert parsed == ["01a0e3da-4e25-790a-893b-410e71935ac1", "01a0e3da-4e2f-75d1-b697-2cad0bf81dd0"]
+    assert Settings._parse_rls_selftest_tenant_ids("a, b") == ["a", "b"]
