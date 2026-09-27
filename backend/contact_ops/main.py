@@ -80,19 +80,19 @@ logger = structlog.get_logger(__name__)
 
 
 async def _rls_boot_self_test(settings: Any) -> None:
-    """Adaptive RLS self-test. Safe to run pre-cutover (privileged role today).
+    """Run the fail-closed RLS self-test before serving traffic.
 
     In a throwaway, always-rolled-back transaction on ``engine``:
 
     * Reads ``rolsuper``/``rolbypassrls`` for ``current_user``.
-    * Requires two configured, distinct UUIDs. For each probe tenant, confirms
+    * Requires two configured, distinct UUIDs for a non-privileged role. For
+      each probe tenant, confirms
       that it is strict-mode and has at least one owned person visible, then
       counts persons owned by the OTHER tenant while the first tenant is bound.
       Strict probe tenants are required because standard-mode membership/ACL
       sharing is an intentional, authorized cross-tenant read.
-    * Privileged role (superuser or bypassrls): RLS is inert — log a LOUD
-      WARNING (``rls_inert_privileged_role``) but DO NOT refuse boot. This is
-      today's pre-cutover state.
+    * Privileged role (superuser or bypassrls): an empty probe list is inert —
+      log a LOUD WARNING (``rls_inert_privileged_role``) but DO NOT refuse boot.
     * Non-privileged role: a non-zero cross-tenant count means RLS is not
       isolating — RAISE (``rls_self_test_failed``) to refuse boot. Zero ->
       ``rls_self_test_passed``.
@@ -120,6 +120,18 @@ async def _rls_boot_self_test(settings: Any) -> None:
             privileged = is_super or is_bypassrls
 
             configured = [str(t).strip() for t in (settings.RLS_SELFTEST_TENANT_IDS or []) if t]
+            if not configured and privileged:
+                logger.warning(
+                    "rls_inert_privileged_role",
+                    note=(
+                        "Runtime role is superuser/bypassrls and no RLS self-test "
+                        "probe tenants are configured; RLS is NOT DB-enforced."
+                    ),
+                    rolsuper=is_super,
+                    rolbypassrls=is_bypassrls,
+                )
+                set_rls_status("inert_privileged")
+                return
             try:
                 tenant_ids = [str(UUID(t)) for t in configured]
             except ValueError as exc:
@@ -195,9 +207,6 @@ async def _rls_boot_self_test(settings: Any) -> None:
                     ),
                     rolsuper=is_super,
                     rolbypassrls=is_bypassrls,
-                    bound_tenant=bound_tenant,
-                    other_tenant=other_tenant,
-                    cross_tenant_person_counts=cross_counts,
                 )
                 set_rls_status(
                     "inert_privileged",
@@ -209,8 +218,7 @@ async def _rls_boot_self_test(settings: Any) -> None:
 
             logger.info(
                 "rls_self_test_passed",
-                bound_tenant=bound_tenant,
-                other_tenant=other_tenant,
+                probe_tenant_count=len(tenant_ids),
             )
             set_rls_status(
                 "passed",
@@ -256,14 +264,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # restarts/holds instead of serving a broken box.
         # NB: a refused/timed-out connection surfaces as ConnectionRefusedError /
         # TimeoutError (OSError subclasses) on asyncpg, NOT SQLAlchemy
-        # OperationalError — so OSError must be caught here too, or the down-DB
-        # case falls through to the warn-and-continue handler below.
-        logger.error("db_unreachable_at_boot", error=str(exc))
+        # OperationalError. Do not serialize the exception: driver errors can
+        # include bound probe UUIDs or counts.
+        logger.error("db_unreachable_at_boot", error_type=type(exc).__name__)
         set_rls_status("failed", reason="database_unreachable")
         raise
     except Exception as exc:  # noqa: BLE001 — fail closed on every self-test error
         set_rls_status("failed", reason="self_test_error")
-        logger.error("rls_self_test_errored", error=str(exc), exc_info=True)
+        # Keep driver exception text/tracebacks out of ordinary logs because
+        # they may include bound probe UUIDs or result counts.
+        logger.error("rls_self_test_errored", error_type=type(exc).__name__)
         raise
 
     # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is

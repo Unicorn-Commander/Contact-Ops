@@ -65,9 +65,14 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return value
         parsed = urlsplit(value)
-        if not parsed.scheme.startswith("postgresql") or not parsed.netloc:
+        if (
+            not parsed.scheme.startswith("postgresql")
+            or not parsed.netloc
+            or not parsed.path.strip("/")
+        ):
             raise ValueError(
-                "MIGRATION_DATABASE_URL must be a PostgreSQL connection URL"
+                "MIGRATION_DATABASE_URL must be a PostgreSQL connection URL "
+                "with a database name"
             )
         return value
 
