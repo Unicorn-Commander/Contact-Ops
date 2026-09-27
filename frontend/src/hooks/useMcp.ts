@@ -38,6 +38,51 @@ export function useQueryKeys(): TenantKeyFactory {
   return useMemo(() => tenantKey(tenantId), [tenantId]);
 }
 
+/**
+ * Decode a JWT payload without verifying its signature. Verification is the
+ * BACKEND's job — this only feeds advisory UI gating, so a tampered token can
+ * at most reveal a button that the server will still reject with a scope error.
+ */
+function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
+  const part = token.split(".")[1];
+  if (!part) return undefined;
+  try {
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const json = decodeURIComponent(
+      atob(padded)
+        .split("")
+        .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join("")
+    );
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether the signed-in user holds a given OAuth scope.
+ *
+ * Read from the live ACCESS token's `scope` claim — NOT `user.profile`, which is
+ * the ID-token/userinfo claim set and does not carry `scope`. This is the same
+ * space-delimited string the backend `contact_ops.mcp.rbac.get_scopes` parses.
+ * Advisory UI gating only: the backend re-checks every scope on the tool call.
+ */
+export function useHasScope(scope: string): boolean {
+  const auth = useAuth();
+  const token = auth.user?.access_token;
+  const claims = token ? decodeJwtPayload(token) : undefined;
+  const raw = claims?.["scope"];
+  const granted =
+    typeof raw === "string"
+      ? raw.split(" ")
+      : Array.isArray(raw)
+        ? raw.map(String)
+        : [];
+  return granted.includes(scope);
+}
+
 function useAuthedQuery<T>(
   key: readonly unknown[],
   queryFn: (token: string) => Promise<T>,
@@ -100,6 +145,14 @@ export const useAllPeople = (args: { query?: string }) => {
 export const usePerson = (id: string) => {
   const qk = useQueryKeys();
   return useAuthedQuery(qk.person(id), (token) => tools.getPerson(id, token), Boolean(id));
+};
+export const usePersonNames = (personId: string) => {
+  const qk = useQueryKeys();
+  return useAuthedQuery(
+    qk.personNames(personId),
+    (token) => tools.listPersonNames(personId, token),
+    Boolean(personId)
+  );
 };
 export const useOrganizations = (args: Record<string, unknown>) => {
   const qk = useQueryKeys();

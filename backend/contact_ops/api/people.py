@@ -62,6 +62,18 @@ from contact_ops.mcp.tools.im_handles import (
     remove_im_handle,
     update_im_handle,
 )
+from contact_ops.mcp.tools.person_names import (
+    AddPersonNameInput,
+    ListPersonNamesInput,
+    PersonNameIdInput,
+    RemovePersonNameInput,
+    UpdatePersonNameInput,
+    add_person_name,
+    list_person_names,
+    remove_person_name,
+    set_primary_person_name,
+    update_person_name,
+)
 from contact_ops.mcp.tools.phones import UpdatePhoneInput, update_phone
 from contact_ops.mcp.tools.urls import (
     AddUrlInput,
@@ -75,6 +87,7 @@ from contact_ops.models import (
     Email,
     Identifier,
     IMHandle,
+    PersonName,
     PersonOrgRole,
     Phone,
     PostalAddress,
@@ -143,9 +156,7 @@ async def _run_tool(
     actor_chain = getattr(request.state, "actor_chain", {"sub": user_id})
     if not isinstance(actor_chain, dict):
         actor_chain = {"sub": user_id}
-    human_authority = str(
-        getattr(request.state, "human_authority", user_id) or user_id
-    )
+    human_authority = str(getattr(request.state, "human_authority", user_id) or user_id)
     request_id = str(
         getattr(request.state, "request_id", "")
         or request.headers.get("x-request-id")
@@ -174,9 +185,7 @@ async def _run_tool(
             # prevent (server.py deliberately runs RBAC before entitlement).
             tool = get_tool(tool_name)
             if tool is None:
-                raise ToolError(
-                    VALIDATION_FAILED, f"unknown tool: {tool_name}", retryable=False
-                )
+                raise ToolError(VALIDATION_FAILED, f"unknown tool: {tool_name}", retryable=False)
             enforce_tool_rbac(ctx, tool)
             if owned is not None:
                 await _assert_owned_by_person(ctx, *owned)
@@ -216,7 +225,10 @@ async def _run_tool(
 
 
 async def _assert_owned_by_person(
-    ctx: MCPContext, person_id: uuid.UUID, model: type[Any], row_id: uuid.UUID,
+    ctx: MCPContext,
+    person_id: uuid.UUID,
+    model: type[Any],
+    row_id: uuid.UUID,
 ) -> None:
     """Check nested resource ownership after RBAC, in the mutation transaction."""
     row = await ctx.db.get(model, row_id)
@@ -232,7 +244,10 @@ async def add_person_im_handle(
     request: Request, person_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, AddImHandleInput, add_im_handle, {**body, "person_id": person_id},
+        request,
+        AddImHandleInput,
+        add_im_handle,
+        {**body, "person_id": person_id},
         tool_name="add_im_handle",
     )
 
@@ -242,7 +257,10 @@ async def update_person_im_handle(
     request: Request, person_id: uuid.UUID, im_handle_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, UpdateImHandleInput, update_im_handle, {**body, "im_handle_id": im_handle_id},
+        request,
+        UpdateImHandleInput,
+        update_im_handle,
+        {**body, "im_handle_id": im_handle_id},
         tool_name="update_im_handle",
         owned=(person_id, IMHandle, im_handle_id),
     )
@@ -320,7 +338,10 @@ async def add_person_url(
     request: Request, person_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, AddUrlInput, add_url, {**body, "person_id": person_id},
+        request,
+        AddUrlInput,
+        add_url,
+        {**body, "person_id": person_id},
         tool_name="add_url",
     )
 
@@ -330,7 +351,10 @@ async def update_person_url(
     request: Request, person_id: uuid.UUID, url_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, UpdateUrlInput, update_url, {**body, "url_id": url_id},
+        request,
+        UpdateUrlInput,
+        update_url,
+        {**body, "url_id": url_id},
         tool_name="update_url",
         owned=(person_id, Url, url_id),
     )
@@ -344,7 +368,10 @@ async def delete_person_url(
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, RemoveUrlInput, remove_url, {**(body or {}), "url_id": url_id},
+        request,
+        RemoveUrlInput,
+        remove_url,
+        {**(body or {}), "url_id": url_id},
         tool_name="remove_url",
         owned=(person_id, Url, url_id),
     )
@@ -358,7 +385,10 @@ async def update_person_email(
     request: Request, person_id: uuid.UUID, email_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, UpdateEmailInput, update_email, {**body, "email_id": email_id},
+        request,
+        UpdateEmailInput,
+        update_email,
+        {**body, "email_id": email_id},
         tool_name="update_email",
         owned=(person_id, Email, email_id),
     )
@@ -372,7 +402,10 @@ async def update_person_phone(
     request: Request, person_id: uuid.UUID, phone_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, UpdatePhoneInput, update_phone, {**body, "phone_id": phone_id},
+        request,
+        UpdatePhoneInput,
+        update_phone,
+        {**body, "phone_id": phone_id},
         tool_name="update_phone",
         owned=(person_id, Phone, phone_id),
     )
@@ -386,7 +419,10 @@ async def update_person_address(
     request: Request, person_id: uuid.UUID, address_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, UpdateAddressInput, update_address, {**body, "address_id": address_id},
+        request,
+        UpdateAddressInput,
+        update_address,
+        {**body, "address_id": address_id},
         tool_name="update_address",
         owned=(person_id, PostalAddress, address_id),
     )
@@ -400,7 +436,76 @@ async def update_person_employment(
     request: Request, person_id: uuid.UUID, employment_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
     return await _run_tool(
-        request, UpdateEmploymentInput, update_employment, {**body, "employment_id": employment_id},
+        request,
+        UpdateEmploymentInput,
+        update_employment,
+        {**body, "employment_id": employment_id},
         tool_name="update_employment",
         owned=(person_id, PersonOrgRole, employment_id),
+    )
+
+
+@router.get("/{person_id}/names")
+async def get_person_names(request: Request, person_id: uuid.UUID) -> dict[str, Any]:
+    return await _run_tool(
+        request,
+        ListPersonNamesInput,
+        list_person_names,
+        {"person_id": person_id},
+        tool_name="list_person_names",
+    )
+
+
+@router.post("/{person_id}/names", status_code=status.HTTP_201_CREATED)
+async def post_person_name(
+    request: Request, person_id: uuid.UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    return await _run_tool(
+        request,
+        AddPersonNameInput,
+        add_person_name,
+        {**body, "person_id": person_id},
+        tool_name="add_person_name",
+    )
+
+
+@router.patch("/{person_id}/names/{name_id}")
+async def patch_person_name(
+    request: Request, person_id: uuid.UUID, name_id: uuid.UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    return await _run_tool(
+        request,
+        UpdatePersonNameInput,
+        update_person_name,
+        {**body, "person_name_id": name_id},
+        tool_name="update_person_name",
+        owned=(person_id, PersonName, name_id),
+    )
+
+
+@router.delete("/{person_id}/names/{name_id}")
+async def delete_person_name(
+    request: Request, person_id: uuid.UUID, name_id: uuid.UUID
+) -> dict[str, Any]:
+    return await _run_tool(
+        request,
+        RemovePersonNameInput,
+        remove_person_name,
+        {"person_name_id": name_id},
+        tool_name="remove_person_name",
+        owned=(person_id, PersonName, name_id),
+    )
+
+
+@router.post("/{person_id}/names/{name_id}/primary")
+async def primary_person_name(
+    request: Request, person_id: uuid.UUID, name_id: uuid.UUID
+) -> dict[str, Any]:
+    return await _run_tool(
+        request,
+        PersonNameIdInput,
+        set_primary_person_name,
+        {"person_name_id": name_id},
+        tool_name="set_primary_person_name",
+        owned=(person_id, PersonName, name_id),
     )

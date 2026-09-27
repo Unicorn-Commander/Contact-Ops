@@ -46,6 +46,7 @@ export type Person = ToolEnvelope & {
 };
 
 export type ImHandle = {
+  etag?: string;
   id?: UUID;
   protocol?: string;
   handle?: string;
@@ -54,6 +55,7 @@ export type ImHandle = {
 };
 
 export type PersonIdentifier = {
+  etag?: string;
   id?: UUID;
   namespace?: string;
   value?: string;
@@ -62,6 +64,7 @@ export type PersonIdentifier = {
 };
 
 export type PersonUrl = {
+  etag?: string;
   id?: UUID;
   url?: string;
   type?: string;
@@ -79,6 +82,27 @@ export type ContactMethod = {
   value?: string;
   confidence?: number;
   source_label?: string;
+};
+
+/** Typed person-name kinds (backend NameType enum, mcp/tools/person_names.py). */
+export type NameType =
+  | "legal"
+  | "preferred"
+  | "nickname"
+  | "aka"
+  | "former"
+  | "maiden"
+  | "stage";
+
+/** Row shape returned by `list_person_names` (person_names MCP tool). */
+export type PersonName = {
+  person_name_id: UUID;
+  name_type: NameType;
+  value: string;
+  given_name?: string | null;
+  family_name?: string | null;
+  is_primary: boolean;
+  confidence?: number;
 };
 
 export type OrganizationSummary = {

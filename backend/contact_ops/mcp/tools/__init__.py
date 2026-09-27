@@ -22,6 +22,7 @@ _OPTIONAL_TOOL_MODULES = (
     "import_csv",
     "notes",
     "orgs",
+    "person_names",
     "phones",
     "personal_access_tokens",
     "tags",

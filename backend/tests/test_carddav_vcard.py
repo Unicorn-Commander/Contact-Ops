@@ -304,3 +304,26 @@ def test_minimal_contact_renders_required_fields_only() -> None:
     assert "FN:Just A Name" in text
     assert "EMAIL" not in text  # no emails -> no EMAIL line
     assert "END:VCARD" in text
+
+
+def test_aka_names_roundtrip_via_x_aka() -> None:
+    contact = CanonicalContact(
+        vcard_uid="urn:uuid:aka",
+        display_name="Robert Smith",
+        aka_names=["Bob Smith", "Bobby S"],
+    )
+    rendered = serialize_canonical_to_vcard(contact)
+    assert "X-AKA:Bob Smith" in rendered
+    assert "X-AKA:Bobby S" in rendered
+    reparsed = parse_vcard_to_canonical(rendered)
+    assert reparsed.aka_names == ["Bob Smith", "Bobby S"]
+
+
+def test_aka_names_escaping_survives_roundtrip() -> None:
+    contact = CanonicalContact(
+        vcard_uid="urn:uuid:aka2",
+        display_name="Someone",
+        aka_names=["O'Hara, Sr."],
+    )
+    reparsed = parse_vcard_to_canonical(serialize_canonical_to_vcard(contact))
+    assert reparsed.aka_names == ["O'Hara, Sr."]

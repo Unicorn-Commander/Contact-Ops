@@ -45,6 +45,7 @@ export function tenantKey(tenantId: TenantId) {
     people: (args: Record<string, unknown>) => [...base, "people", args] as const,
     peopleAll: (args: Record<string, unknown>) => [...base, "people-all", args] as const,
     person: (id: string) => [...base, "person", id] as const,
+    personNames: (personId: string) => [...base, "person-names", personId] as const,
     orgs: (args: Record<string, unknown>) => [...base, "orgs", args] as const,
     org: (id: string) => [...base, "org", id] as const,
     tags: [...base, "tags"] as const,

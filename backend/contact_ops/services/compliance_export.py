@@ -160,6 +160,9 @@ async def _gather_person_record(
     related["person_org_role"] = await q(
         "SELECT * FROM person_org_role WHERE person_id = CAST(:pid AS uuid) ORDER BY created_at"
     )
+    related["person_names"] = await q(
+        "SELECT * FROM person_names WHERE person_id = CAST(:pid AS uuid) ORDER BY created_at"
+    )
     related["person_aliases"] = await q(
         "SELECT * FROM person_alias WHERE current_canonical_id = CAST(:pid AS uuid) ORDER BY created_at"
     )

@@ -57,3 +57,50 @@ async def test_patch_http_boundary(monkeypatch, path, model, factory, scenario, 
     assert response.status_code == expected, response.text
     if scenario == "stale":
         assert "stale" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,suffix,body,scenario",
+    [
+        (method, suffix, body, scenario)
+        for method, suffix, body in [
+            ("POST", "", {"name_type": "aka", "value": "Synthetic"}),
+            ("PATCH", "/row", {"value": "Synthetic"}),
+            ("DELETE", "/row", None),
+            ("POST", "/row/primary", None),
+        ]
+        for scenario in ["client", "no-scope", "wrong-person"]
+        if suffix or scenario != "wrong-person"
+    ],
+)
+async def test_names_http_boundary(monkeypatch, method, suffix, body, scenario):
+    from types import SimpleNamespace
+
+    person, row_id = _person(), uuid.uuid4()
+
+    class Db:
+        async def get(self, *args):
+            if scenario != "wrong-person":
+                raise AssertionError("unauthorized caller reached resource lookup")
+            return SimpleNamespace(person_id=person.id)
+
+    _install_fakes(monkeypatch, db=Db(), settings=_settings())
+    state = _make_request(
+        role="CLIENT" if scenario == "client" else "STAFF",
+        scopes="" if scenario == "no-scope" else "name:write name:read",
+    ).state
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def identity(request, call_next):
+        request.state.jwt_claims = state.jwt_claims
+        return await call_next(request)
+
+    app.include_router(people.router)
+    suffix = suffix.replace("row", str(row_id))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.request(
+            method, f"/api/people/{uuid.uuid4()}/names{suffix}", json=body
+        )
+    assert response.status_code == (404 if scenario == "wrong-person" else 403), response.text

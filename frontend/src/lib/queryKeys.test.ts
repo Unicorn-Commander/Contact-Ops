@@ -18,6 +18,7 @@ describe("tenant query-key prefixing", () => {
 
   it("prefixes every parametric key with the tenant sentinel + id", () => {
     expect(qk.person("p1").slice(0, 2)).toEqual(["t", "tenant-abc"]);
+    expect(qk.personNames("p1").slice(0, 2)).toEqual(["t", "tenant-abc"]);
     expect(qk.org("o1").slice(0, 2)).toEqual(["t", "tenant-abc"]);
     expect(qk.people({ query: "x" }).slice(0, 2)).toEqual(["t", "tenant-abc"]);
     expect(qk.inbox({ status: "proposed" }).slice(0, 2)).toEqual(["t", "tenant-abc"]);
