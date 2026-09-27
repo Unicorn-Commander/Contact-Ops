@@ -47,7 +47,7 @@ def test_valid_brigade_jwt_for_existing_user_resolves(
     assert result.valid is True
     assert result.claims is not None
     assert result.claims["sub"] == "uc-user-1"
-    assert result.claims["org_id"] == "00000000-0000-0000-0000-000000000001"
+    assert result.claims["workspace_id"] == "00000000-0000-0000-0000-000000000001"
 
 
 def test_wrong_audience_rejected(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,6 +72,30 @@ def test_expired_token_rejected(settings: Settings, monkeypatch: pytest.MonkeyPa
 
     assert result.valid is False
     assert result.reason == "expired"
+
+
+def test_legacy_org_id_without_workspace_id_rejected(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = _rsa_keypair("brigade-key-1")
+    cache = _cache(settings, monkeypatch, [key["jwk"]])
+    token = _token(
+        settings,
+        key["private_key"],
+        "brigade-key-1",
+        workspace_id=None,
+        org_id="00000000-0000-0000-0000-000000000001",
+    )
+
+    result = _verify_brigade_jwt_with_reason(
+        token,
+        settings=settings,
+        jwks_cache=cache,
+    )
+
+    assert result.valid is False
+    assert result.reason == "missing-workspace-id"
 
 
 def test_wrong_signing_key_rejected(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,7 +138,7 @@ def test_eddsa_algorithm_rejected(settings: Settings, monkeypatch: pytest.Monkey
         "iss": settings.BRIGADE_TRUSTED_ISSUER,
         "aud": settings.BRIGADE_EXPECTED_AUDIENCE,
         "sub": "uc-user-1",
-        "org_id": "00000000-0000-0000-0000-000000000001",
+        "workspace_id": "00000000-0000-0000-0000-000000000001",
         "iat": now,
         "nbf": now - 1,
         "exp": now + 300,
@@ -344,7 +368,7 @@ def _token(
         "iss": settings.BRIGADE_TRUSTED_ISSUER,
         "aud": settings.BRIGADE_EXPECTED_AUDIENCE,
         "sub": "uc-user-1",
-        "org_id": "00000000-0000-0000-0000-000000000001",
+        "workspace_id": "00000000-0000-0000-0000-000000000001",
         "scopes": ["read:contacts", "write:contacts"],
         "iat": now,
         "nbf": now - 1,
