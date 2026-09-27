@@ -14,6 +14,7 @@ import binascii
 import json
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -57,6 +58,18 @@ class Settings(BaseSettings):
     # Migration database — synchronous DSN used by Alembic. Connects as a
     # migration superuser so it can ALTER TABLE, CREATE EXTENSION, etc.
     MIGRATION_DATABASE_URL: str | None = None
+
+    @field_validator("MIGRATION_DATABASE_URL")
+    @classmethod
+    def _validate_migration_database_url(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return value
+        parsed = urlsplit(value)
+        if not parsed.scheme.startswith("postgresql") or not parsed.netloc:
+            raise ValueError(
+                "MIGRATION_DATABASE_URL must be a PostgreSQL connection URL"
+            )
+        return value
 
     # Redis
     REDIS_URL: str = "redis://unicorn-redis:6379/5"

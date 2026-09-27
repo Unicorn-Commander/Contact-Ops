@@ -48,7 +48,11 @@ from contact_ops.middleware import (
     SecurityHeadersMiddleware,
 )
 from contact_ops.observability.sentry import init_sentry
-from contact_ops.ops.rls_status import set_rls_status
+from contact_ops.ops.rls_status import (
+    RLSSelfTestError,
+    evaluate_rls_isolation,
+    set_rls_status,
+)
 from contact_ops.routers import health_router
 from contact_ops.services.brigade_jwt_verifier import prime_brigade_jwks_cache
 from contact_ops.services.brigade_registration import register_with_brigade
@@ -75,15 +79,6 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
-class RLSSelfTestError(RuntimeError):
-    """Raised to refuse boot when the RLS self-test cannot prove isolation.
-
-    This includes invalid/missing probe configuration, missing probe data, and
-    the non-privileged-role case where a cross-tenant ``persons`` count came
-    back non-zero.
-    """
-
-
 async def _rls_boot_self_test(settings: Any) -> None:
     """Adaptive RLS self-test. Safe to run pre-cutover (privileged role today).
 
@@ -91,8 +86,10 @@ async def _rls_boot_self_test(settings: Any) -> None:
 
     * Reads ``rolsuper``/``rolbypassrls`` for ``current_user``.
     * Requires two configured, distinct UUIDs. For each probe tenant, confirms
-      that at least one owned person is visible with that tenant bound, then
-      counts persons owned by any OTHER tenant while the first tenant is bound.
+      that it is strict-mode and has at least one owned person visible, then
+      counts persons owned by the OTHER tenant while the first tenant is bound.
+      Strict probe tenants are required because standard-mode membership/ACL
+      sharing is an intentional, authorized cross-tenant read.
     * Privileged role (superuser or bypassrls): RLS is inert — log a LOUD
       WARNING (``rls_inert_privileged_role``) but DO NOT refuse boot. This is
       today's pre-cutover state.
@@ -100,9 +97,8 @@ async def _rls_boot_self_test(settings: Any) -> None:
       isolating — RAISE (``rls_self_test_failed``) to refuse boot. Zero ->
       ``rls_self_test_passed``.
 
-    Resilience: unrelated diagnostic failures are logged as warnings by the
-    lifespan handler, while explicit self-test contract failures propagate and
-    refuse boot.
+    Every database/diagnostic failure propagates to the lifespan handler, which
+    records a failed status and refuses boot. There is no silent skip path.
     """
     from contact_ops.core.database import engine
 
@@ -138,11 +134,21 @@ async def _rls_boot_self_test(settings: Any) -> None:
                 )
 
             bound_tenant, other_tenant = tenant_ids[0], tenant_ids[1]
+            probe_counts: list[int] = []
+            cross_counts: list[int] = []
             for probe_tenant in tenant_ids:
                 await conn.execute(
                     text("SELECT set_config(:k, :v, true)"),
                     {"k": settings.TENANT_GUC_NAME, "v": probe_tenant},
                 )
+                isolation_mode = (
+                    await conn.execute(text("SELECT current_tenant_isolation()"))
+                ).scalar_one()
+                if not privileged and isolation_mode != "strict":
+                    set_rls_status("failed", reason="probe_tenant_not_strict")
+                    raise RLSSelfTestError(
+                        "RLS self-test probe tenants must both use strict isolation"
+                    )
                 probe_count = (
                     await conn.execute(
                         text(
@@ -152,28 +158,34 @@ async def _rls_boot_self_test(settings: Any) -> None:
                         {"tenant": probe_tenant},
                     )
                 ).scalar_one()
-                if probe_count == 0:
-                    set_rls_status("failed", reason="probe_tenant_has_no_visible_persons")
-                    raise RLSSelfTestError(
-                        "RLS self-test probe tenant has no visible persons: "
-                        f"{probe_tenant}"
+                probe_counts.append(int(probe_count))
+                cross_count = (
+                    await conn.execute(
+                        text(
+                            "SELECT count(*) FROM persons "
+                            "WHERE canonical_owner_tenant_id <> CAST(:bound AS uuid)"
+                        ),
+                        {"bound": probe_tenant},
                     )
+                ).scalar_one()
+                cross_counts.append(int(cross_count))
 
-            await conn.execute(
-                text("SELECT set_config(:k, :v, true)"),
-                {"k": settings.TENANT_GUC_NAME, "v": bound_tenant},
-            )
-            cross_count = (
-                await conn.execute(
-                    text(
-                        "SELECT count(*) FROM persons "
-                        "WHERE canonical_owner_tenant_id <> CAST(:bound AS uuid)"
-                    ),
-                    {"bound": bound_tenant},
+            try:
+                decision = evaluate_rls_isolation(
+                    privileged=privileged,
+                    probe_counts=(probe_counts[0], probe_counts[1]),
+                    cross_counts=(cross_counts[0], cross_counts[1]),
                 )
-            ).scalar_one()
+            except RLSSelfTestError:
+                set_rls_status(
+                    "failed",
+                    bound_tenant=bound_tenant,
+                    other_tenant=other_tenant,
+                    cross_tenant_person_counts=cross_counts,
+                )
+                raise
 
-            if privileged:
+            if decision == "inert_privileged":
                 logger.warning(
                     "rls_inert_privileged_role",
                     note=(
@@ -185,37 +197,15 @@ async def _rls_boot_self_test(settings: Any) -> None:
                     rolbypassrls=is_bypassrls,
                     bound_tenant=bound_tenant,
                     other_tenant=other_tenant,
-                    cross_tenant_person_count=cross_count,
+                    cross_tenant_person_counts=cross_counts,
                 )
                 set_rls_status(
                     "inert_privileged",
                     bound_tenant=bound_tenant,
                     other_tenant=other_tenant,
-                    cross_tenant_person_count=cross_count,
+                    cross_tenant_person_counts=cross_counts,
                 )
                 return
-
-            if cross_count != 0:
-                logger.error(
-                    "rls_self_test_failed",
-                    note=(
-                        "Non-privileged role can read another tenant's persons "
-                        "under RLS. Refusing to boot."
-                    ),
-                    bound_tenant=bound_tenant,
-                    other_tenant=other_tenant,
-                    cross_tenant_person_count=cross_count,
-                )
-                set_rls_status(
-                    "failed",
-                    bound_tenant=bound_tenant,
-                    other_tenant=other_tenant,
-                    cross_tenant_person_count=cross_count,
-                )
-                raise RLSSelfTestError(
-                    "RLS self-test failed: cross-tenant person count "
-                    f"={cross_count} under non-privileged role"
-                )
 
             logger.info(
                 "rls_self_test_passed",
@@ -226,7 +216,7 @@ async def _rls_boot_self_test(settings: Any) -> None:
                 "passed",
                 bound_tenant=bound_tenant,
                 other_tenant=other_tenant,
-                cross_tenant_person_count=cross_count,
+                cross_tenant_person_counts=cross_counts,
             )
         finally:
             # Always discard — this transaction is purely diagnostic.
@@ -271,9 +261,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.error("db_unreachable_at_boot", error=str(exc))
         set_rls_status("failed", reason="database_unreachable")
         raise
-    except Exception as exc:  # noqa: BLE001 — other diagnostic errors must not crash boot
+    except Exception as exc:  # noqa: BLE001 — fail closed on every self-test error
         set_rls_status("failed", reason="self_test_error")
-        logger.warning("rls_self_test_errored", error=str(exc), exc_info=True)
+        logger.error("rls_self_test_errored", error=str(exc), exc_info=True)
+        raise
 
     # OTel SDK init for agent tracing. Idempotent; no-op when the SDK is
     # missing (e.g. dev without OTel installed).
