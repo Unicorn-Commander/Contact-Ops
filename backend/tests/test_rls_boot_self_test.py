@@ -66,6 +66,13 @@ def test_privileged_rls_decision_is_explicitly_inert() -> None:
     ) == "inert_privileged"
 
 
+def test_rls_decision_rejects_unseeded_probe() -> None:
+    with pytest.raises(RLSSelfTestError, match="no visible persons"):
+        evaluate_rls_isolation(
+            privileged=False, probe_counts=(1, 0), cross_counts=(0, 0)
+        )
+
+
 def test_migration_database_url_is_validated() -> None:
     with pytest.raises(ValueError):
         Settings(
