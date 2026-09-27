@@ -15,10 +15,12 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 
 from contact_ops.core.config import get_settings
 from contact_ops.core.database import engine
+from contact_ops.mcp.rbac import get_role, get_scopes
+from contact_ops.ops.rls_status import get_rls_status
 from contact_ops.ops.schema_guard import get_schema_version
 
 logger = structlog.get_logger(__name__)
@@ -104,6 +106,34 @@ async def liveness_check() -> dict[str, Any]:
     return {
         "status": "alive",
         "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+@router.get(
+    "/rls",
+    summary="RLS boot self-test status",
+    response_model=dict[str, Any],
+)
+async def rls_health_check(request: Request, response: Response) -> dict[str, Any]:
+    """Report safe RLS status; reveal probe details only to admin debug callers."""
+    result = get_rls_status()
+    if result["status"] not in {"passed", "inert_privileged"}:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    claims = getattr(request.state, "jwt_claims", {})
+    if (
+        isinstance(claims, dict)
+        and get_role(claims) == "ADMIN"
+        and "admin:debug" in get_scopes(claims)
+    ):
+        return result
+    return {
+        "status": result.get("status", "not_run"),
+        "reason": result.get("reason")
+        or {
+            "passed": "self_test_passed",
+            "inert_privileged": "privileged_role_not_proven",
+            "not_run": "self_test_not_run",
+        }.get(result.get("status"), "self_test_failed"),
     }
 
 

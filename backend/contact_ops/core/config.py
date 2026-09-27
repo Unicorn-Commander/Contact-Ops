@@ -13,10 +13,11 @@ import base64
 import binascii
 import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -57,6 +58,23 @@ class Settings(BaseSettings):
     # Migration database — synchronous DSN used by Alembic. Connects as a
     # migration superuser so it can ALTER TABLE, CREATE EXTENSION, etc.
     MIGRATION_DATABASE_URL: str | None = None
+
+    @field_validator("MIGRATION_DATABASE_URL")
+    @classmethod
+    def _validate_migration_database_url(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return value
+        parsed = urlsplit(value)
+        if (
+            not parsed.scheme.startswith("postgresql")
+            or not parsed.netloc
+            or not parsed.path.strip("/")
+        ):
+            raise ValueError(
+                "MIGRATION_DATABASE_URL must be a PostgreSQL connection URL "
+                "with a database name"
+            )
+        return value
 
     # Redis
     REDIS_URL: str = "redis://unicorn-redis:6379/5"
@@ -146,13 +164,22 @@ class Settings(BaseSettings):
     SENTRY_TRACES_SAMPLE_RATE: float = 0.0
     SENTRY_PROFILES_SAMPLE_RATE: float = 0.0
     METRICS_HTTP_ENABLED: bool = True
-    # Boot RLS self-test probe tenants. Under the runtime role the self-test
-    # cannot enumerate tenants (RLS hides them with no GUC bound), so it skips.
-    # Provide >=2 known tenant ids here so it can actively assert cross-tenant
-    # isolation at boot. Empty -> falls back to enumerating tenants (works under
-    # a privileged/dev role). Safe if stale: a wrong id yields a trivially-
-    # passing test, never a false refuse-to-boot.
-    RLS_SELFTEST_TENANT_IDS: list[str] = []
+    # Boot RLS self-test probe tenants. Configure exactly two distinct UUIDs as
+    # a comma-separated env value (for example, ``id-a,id-b``). The runtime
+    # role cannot enumerate tenants without a tenant GUC, so boot must not fall
+    # back to an unasserted "fewer than two" path.
+    RLS_SELFTEST_TENANT_IDS: Annotated[list[str], NoDecode] = []
+
+    @field_validator("RLS_SELFTEST_TENANT_IDS", mode="before")
+    @classmethod
+    def _parse_rls_selftest_tenant_ids(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        raise TypeError("RLS_SELFTEST_TENANT_IDS must be a comma-separated UUID list")
 
     # Keycloak — uchub realm
     KEYCLOAK_ISSUER: str = Field(
