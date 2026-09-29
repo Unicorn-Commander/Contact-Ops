@@ -77,6 +77,11 @@ export function PersonCard({ person }: { person: PersonSummary }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <p className="truncate font-medium">{person.display_name}</p>
+              {person.category === "PROSPECT" ? (
+                <Badge variant="info" className="shrink-0">
+                  Prospect
+                </Badge>
+              ) : null}
               {person.relationship_category ? (
                 <Badge variant="outline" className="shrink-0 capitalize">
                   {person.relationship_category}
@@ -199,6 +204,7 @@ export function PersonGridCard({ person }: { person: PersonSummary }) {
             <p className="truncate font-medium">{person.display_name}</p>
             <p className="truncate text-sm text-muted-foreground">{person.headline ?? person.current_org ?? "No organization"}</p>
           </div>
+          {person.category === "PROSPECT" ? <Badge variant="info">Prospect</Badge> : null}
           {person.relationship_temperature ? (
             <Badge variant="secondary" className="capitalize">
               {person.relationship_temperature}

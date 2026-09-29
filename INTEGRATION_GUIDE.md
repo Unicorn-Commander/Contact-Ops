@@ -319,6 +319,24 @@ When in doubt: if it's about an entity your tenant actively manages, use Contact
 
 ---
 
+### 4.5 Contact category (PERSONAL and PROSPECT)
+
+`persons.category` is `PERSONAL` or `PROSPECT` (uppercase labels, not null, server default `PERSONAL`). `PERSONAL` is the owner's own network. `PROSPECT` is a sourced lead: not someone the owner knows, and not a customer yet. This is not `persons.is_personal` and not the free-text relationship category (`friend`, `coworker`, …).
+
+Indexed with the tenant key: `(canonical_owner_tenant_id, category)`.
+
+**Who sees which rows.** List, search, find-by-identifier, tag search, and tenant export take `category` (`PERSONAL`, `PROSPECT`, or `ALL`).
+
+- A human signed in through the UI (Keycloak session, or the standalone owner session) sees both categories unless they pass a filter. `get_person` by id is unchanged. The device address book (CardDAV) is that same owner's phone book and is not narrowed.
+- A service or agent principal sees **PROSPECT only** when `category` is omitted. That includes a personal access token, a Brigade / federation actor (Customer-Ops `upsertContact` uses this), a Keycloak service account (`preferred_username` like `service-account-…`), and any token with a nested RFC 8693 `act` claim. Passing `ALL` does not widen that default.
+- Reading `PERSONAL` requires the caller to pass `category=PERSONAL` **and** hold `contacts:read_personal`. Service tokens are not granted that scope. A one-person export of a `PERSONAL` row is refused without it. Row-level security is unchanged; this filter sits on top of it.
+
+**Writes.** `create_person` and `upsert_person` accept `category`. An explicit value wins. If it is omitted, a human write stays `PERSONAL` and a service or agent write is stored as `PROSPECT`. That is how Customer-Ops lead intake (`LeadIntakeService.ingest_lead` → `upsertContact` → `upsert_person`) lands a prospect without sending the field. A membership tag `sourced-prospect` also forces `PROSPECT` when category is omitted. `bulk_upsert_people` uses the same rule per row. A service may write `PERSONAL` only by passing `category=PERSONAL` and holding `contacts:read_personal`.
+
+**No silent merge across the line.** An email, phone, or exact display-name match between a `PROSPECT` and a `PERSONAL` record does not update, merge, or overwrite the other row. The write creates (or keeps) the incoming record, links the two with `person_person_relation.relation_type = suspected_same_as` ("possible same person"), and raises a review item: action event `person.possible_same_person` with status `proposed`. The dedup agent will not auto-merge that pair, even when the email or phone matches; it links `suspected_same_as` and leaves `dedup.propose_merge` for a person to approve. `merge_people` from an automation is rejected when the categories differ. A human can merge them on purpose. The graph alias edge is not written for that pair unless the merge was human-authorized.
+
+Prospects join organizations the same way personal contacts do. `infer_orgs_from_email_domains` already scans every person in the tenant; there is no second org-from-domain path.
+
 ## 5. Interpreting action_event audit entries
 
 When you call Contact-Ops, every mutation lands in `action_event` with your service in the actor chain. You can read your own audit trail via `list_audit_log`:

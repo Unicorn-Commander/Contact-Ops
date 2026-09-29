@@ -18,6 +18,7 @@ export type PersonSummary = {
   current_org_id?: UUID | null;
   headline?: string | null;
   tags?: string[];
+  category?: "PERSONAL" | "PROSPECT" | null;
   relationship_temperature?: string | null;
   relationship_category?: string | null;
   last_interaction_at?: string | null;
