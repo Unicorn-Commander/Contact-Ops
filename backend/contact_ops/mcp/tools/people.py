@@ -443,26 +443,34 @@ def _scope_denied(exc: CategoryScopeDenied) -> ToolError:
     )
 
 
+def _principal_of(ctx: MCPContext) -> tuple[dict, object, object]:
+    """Claims, actor chain and human authority of the caller. Internal tool contexts and thin test contexts carry
+    none of them; by the category rule a caller with no issuer is a person, so absent means empty, never an error."""
+    return (getattr(ctx, "claims", None) or {}, getattr(ctx, "actor_chain", None), getattr(ctx, "human_authority", None))
+
+
 def _category_for_write(ctx: MCPContext, explicit: str | None, tags: list[str]) -> ContactCategory:
+    claims, actor_chain, human_authority = _principal_of(ctx)
     try:
         return category_for_write(
-            ctx.claims,
+            claims,
             explicit,
             tags,
-            actor_chain=ctx.actor_chain,
-            human_authority=ctx.human_authority,
+            actor_chain=actor_chain,
+            human_authority=human_authority,
         )
     except CategoryScopeDenied as exc:
         raise _scope_denied(exc) from exc
 
 
 def _resolved_read_category(ctx: MCPContext, requested: str | None) -> ContactCategory | None:
+    claims, actor_chain, human_authority = _principal_of(ctx)
     try:
         return resolve_category_filter(
-            ctx.claims,
+            claims,
             requested,
-            actor_chain=ctx.actor_chain,
-            human_authority=ctx.human_authority,
+            actor_chain=actor_chain,
+            human_authority=human_authority,
         )
     except CategoryScopeDenied as exc:
         raise _scope_denied(exc) from exc
