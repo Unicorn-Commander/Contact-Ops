@@ -30,6 +30,17 @@ class PersonKind(str, enum.Enum):
     location_alias = "location_alias"
 
 
+class ContactCategory(str, enum.Enum):
+    """Owner network vs sourced lead.
+
+    Stored as the uppercase labels PERSONAL and PROSPECT. This is not
+    ``persons.is_personal`` and not the free-text relationship_category.
+    """
+
+    PERSONAL = "PERSONAL"
+    PROSPECT = "PROSPECT"
+
+
 class OrgKind(str, enum.Enum):
     company = "company"
     nonprofit = "nonprofit"
