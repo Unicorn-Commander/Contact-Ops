@@ -153,10 +153,15 @@ class InferOrgsOutput(ToolOutput):
 async def infer_orgs_from_email_domains(
     ctx: MCPContext, req: InferOrgsInput
 ) -> InferOrgsOutput:
+    """Group people by corporate email domain and attach them to organizations.
+
+    Scans every person in the tenant. PERSONAL and PROSPECT rows are both
+    included; this is the only org-from-domain derivation.
+    """
     require_role(ctx, "STAFF")
     require_scopes(ctx, ("org:write",))
 
-    # 1) People in this tenant (RLS-scoped) → id→name.
+    # 1) People in this tenant (RLS-scoped) → id→name. Personal and prospect.
     person_rows = (await ctx.db.execute(select(Person.id, Person.display_name))).all()
     person_name = {row[0]: row[1] for row in person_rows}
     if not person_name:

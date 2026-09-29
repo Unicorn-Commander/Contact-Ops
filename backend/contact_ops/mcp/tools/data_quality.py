@@ -42,6 +42,10 @@ from contact_ops.mcp.tools.common import ToolOutput, register
 from contact_ops.models import Organization, Person, PersonOrgRole, PersonTenantMembership
 from contact_ops.models.email import Email
 from contact_ops.models.enums import MergeStatus
+from contact_ops.services.contact_category import (
+    categories_conflict,
+    is_service_principal,
+)
 
 # ---- normalization primitives -------------------------------------------------
 
@@ -840,7 +844,12 @@ async def _load_person(ctx: MCPContext, person_id: uuid.UUID) -> Person:
 
 
 async def _enqueue_person_graph_sync(
-    ctx: MCPContext, survivor_id: uuid.UUID, loser_id: uuid.UUID, op: str
+    ctx: MCPContext,
+    survivor_id: uuid.UUID,
+    loser_id: uuid.UUID,
+    op: str,
+    *,
+    human_authorized: bool = False,
 ) -> None:
     """Best-effort FalkorDB sync. Never fails the merge if the outbox is absent."""
     import json
@@ -861,6 +870,7 @@ async def _enqueue_person_graph_sync(
                         "survivor_id": str(survivor_id),
                         "alias_id": str(loser_id),
                         "edge_label": "dedup:alias_of",
+                        "human_authorized": human_authorized,
                     }
                 ),
             },
@@ -1032,6 +1042,18 @@ async def merge_people(ctx: MCPContext, req: MergePeopleInput) -> MergePeopleOut
             raise ToolError(VALIDATION_FAILED, f"person {lid} is already merged/archived", retryable=False)
         loser_persons.append(loser)
 
+    # An automation must not collapse a personal contact into a prospect, or the
+    # reverse. A human merge (no actor chain) is the deliberate path.
+    if is_service_principal(ctx.claims, ctx.actor_chain, ctx.human_authority) and any(
+        categories_conflict(survivor.category, loser.category) for loser in loser_persons
+    ):
+        raise ToolError(
+            VALIDATION_FAILED,
+            "automation cannot merge a PERSONAL contact with a PROSPECT",
+            retryable=False,
+            hint="a human can merge these from the review queue",
+        )
+
     if req.dry_run:
         emails = phones = edges = 0
         for loser in loser_persons:
@@ -1084,7 +1106,15 @@ async def merge_people(ctx: MCPContext, req: MergePeopleInput) -> MergePeopleOut
         loser.merged_into_id = req.survivor_id
         loser.etag = uuid.uuid4().hex
         await ctx.db.flush()
-        await _enqueue_person_graph_sync(ctx, req.survivor_id, loser.id, "person_merge_applied")
+        await _enqueue_person_graph_sync(
+            ctx,
+            req.survivor_id,
+            loser.id,
+            "person_merge_applied",
+            human_authorized=not is_service_principal(
+                ctx.claims, ctx.actor_chain, ctx.human_authority
+            ),
+        )
 
     event_id = await emit_action_event(
         ctx,

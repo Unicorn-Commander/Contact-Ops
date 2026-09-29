@@ -12,6 +12,7 @@ from __future__ import annotations
 from contact_ops.agents.dedup.agent import (
     _AUTO_MERGE_FLOOR,
     _REVIEW_CONFIDENCE_CAP,
+    _apply_automerge_guardrail,
     _determine_band,
     _has_identifier_corroboration,
 )
@@ -32,16 +33,13 @@ def test_review_cap_routes_out_of_auto_merge_band():
     assert _determine_band(_REVIEW_CONFIDENCE_CAP) == "single_review"
 
 
-def _decision(prob: float, blocking_keys: list[str]) -> tuple[float, str | None]:
-    """Mirror the inline guardrail decision in DedupAgent._run."""
-    band = _determine_band(prob)
-    corroborated = _has_identifier_corroboration(blocking_keys)
-    decision_confidence = prob
-    decision_band = band
-    if prob >= _AUTO_MERGE_FLOOR and not corroborated:
-        decision_confidence = _REVIEW_CONFIDENCE_CAP
-        decision_band = _determine_band(decision_confidence) or band
-    return decision_confidence, decision_band
+def _decision(
+    prob: float, blocking_keys: list[str], *, categories_differ: bool = False
+) -> tuple[float, str | None]:
+    """The guardrail DedupAgent._run applies before it proposes a merge."""
+    return _apply_automerge_guardrail(
+        prob, blocking_keys, categories_differ=categories_differ
+    )
 
 
 def test_name_only_perfect_score_is_capped_to_review():

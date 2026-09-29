@@ -17,6 +17,7 @@ from contact_ops.mcp.errors import (
     AMBIGUOUS_MATCH,
     CONFIRMATION_PHRASE_MISMATCH,
     DEPENDENCY_VIOLATION,
+    INSUFFICIENT_SCOPE,
     NO_FILTER_PROVIDED,
     STALE_ETAG,
     ToolError,
@@ -48,12 +49,22 @@ from contact_ops.models import (
     Url,
 )
 from contact_ops.models.enums import (
+    ContactCategory,
     EmailType,
     MergeStatus,
     PersonKind,
     PhoneType,
     PreferredContact,
     TemperatureState,
+)
+from contact_ops.services.contact_category import (
+    POSSIBLE_SAME_PERSON_EVENT,
+    CategoryScopeDenied,
+    categories_conflict,
+    category_for_write,
+    link_suspected_same_as,
+    normalize_display_name,
+    resolve_category_filter,
 )
 
 
@@ -113,6 +124,9 @@ class CreatePersonInput(BaseModel):
     phones: list[PhoneInput] = Field(default_factory=list, max_length=20)
     im_handles: list[IMHandleInput] = Field(default_factory=list, max_length=20)
     initial_tags: list[str] = Field(default_factory=list, max_length=20)
+    # PERSONAL is the owner's network. PROSPECT is a sourced lead. Omitted on a
+    # human write stays PERSONAL; omitted on a service/agent write becomes PROSPECT.
+    category: Literal["PERSONAL", "PROSPECT"] | None = None
     tenant_membership_notes: str | None = Field(default=None, max_length=2000)
     idempotency_key: uuid.UUID | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
@@ -177,6 +191,7 @@ class GetPersonOutput(ToolOutput):
     vcard_uid: str | None
     display_name: str
     kind: str
+    category: str | None = None
     status: str
     merged_into_id: uuid.UUID | None = None
     # Name fields (exposed end-to-end; see CO-expose-fields).
@@ -292,6 +307,8 @@ class ListPeopleInput(BaseModel):
     has_email: bool | None = None
     has_email_domain: str | None = Field(default=None, max_length=253)
     relationship_temperature_any: list[Literal["cold", "warm", "hot", "dormant"]] | None = None
+    # Omitted: a human sees both categories; a service or agent sees PROSPECT only.
+    category: Literal["PERSONAL", "PROSPECT", "ALL"] | None = None
     include_archived: bool = False
     sort: Literal["display_name", "last_interaction_at", "created_at", "communication_strength"] = (
         "display_name"
@@ -331,6 +348,7 @@ class SearchPeopleOutput(ToolOutput):
 class FindPersonByIdentifierInput(BaseModel):
     identifiers: list[IdentifierInput] = Field(min_length=1, max_length=10)
     match_mode: Literal["all_must_match", "any_can_match"] = "any_can_match"
+    category: Literal["PERSONAL", "PROSPECT", "ALL"] | None = None
 
 
 class IdentifierMatch(BaseModel):
@@ -417,11 +435,54 @@ def _phone_type(value: str) -> PhoneType:
     return PhoneType(value)
 
 
-async def _insert_person(ctx: MCPContext, data: CreatePersonInput) -> Person:
+def _scope_denied(exc: CategoryScopeDenied) -> ToolError:
+    return ToolError(
+        INSUFFICIENT_SCOPE,
+        f"missing required scope(s): {exc.scope}",
+        retryable=False,
+    )
+
+
+def _category_for_write(ctx: MCPContext, explicit: str | None, tags: list[str]) -> ContactCategory:
+    try:
+        return category_for_write(
+            ctx.claims,
+            explicit,
+            tags,
+            actor_chain=ctx.actor_chain,
+            human_authority=ctx.human_authority,
+        )
+    except CategoryScopeDenied as exc:
+        raise _scope_denied(exc) from exc
+
+
+def _resolved_read_category(ctx: MCPContext, requested: str | None) -> ContactCategory | None:
+    try:
+        return resolve_category_filter(
+            ctx.claims,
+            requested,
+            actor_chain=ctx.actor_chain,
+            human_authority=ctx.human_authority,
+        )
+    except CategoryScopeDenied as exc:
+        raise _scope_denied(exc) from exc
+
+
+def _same_category(person: Person, category: ContactCategory) -> bool:
+    return not categories_conflict(person.category, category)
+
+
+async def _insert_person(
+    ctx: MCPContext, data: CreatePersonInput, *, category: ContactCategory | None = None
+) -> Person:
     etag = str(uuid.uuid4())
+    resolved = category if category is not None else _category_for_write(
+        ctx, data.category, data.initial_tags
+    )
     person = Person(
         id=uuid.uuid4(),
         display_name=data.display_name,
+        category=resolved,
         kind=_kind(data.kind),
         given_name=data.given_name,
         family_name=data.family_name,
@@ -563,6 +624,7 @@ async def create_person(ctx: MCPContext, args: BaseModel) -> CreatePersonOutput:
     if cached is not None:
         return CreatePersonOutput.model_validate(cached)
     person = await _insert_person(ctx, data)
+    await _flag_cross_category_collisions(ctx, person, include_names=True)
     event_id = await emit_action_event(
         ctx,
         event_type="person.create",
@@ -635,18 +697,26 @@ async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
     )
     if cached is not None:
         return UpsertPersonOutput.model_validate(cached)
+    incoming_category = _category_for_write(ctx, data.category, data.initial_tags)
     matches = await _find_by_identifier(ctx, data.match_by)
-    if len(matches) > 1:
+    same = [
+        (person, found) for person, found in matches if _same_category(person, incoming_category)
+    ]
+    other = [person for person, _found in matches if not _same_category(person, incoming_category)]
+    if len(same) > 1:
         raise ToolError(AMBIGUOUS_MATCH, "multiple natural-key matches found", retryable=False)
-    if not matches:
+    if not same:
         if data.display_name is None:
             raise ToolError(VALIDATION_FAILED, "display_name is required when creating")
-        person = await _insert_person(ctx, data)
+        # An opposite-category email/phone hit is a different record. Do not
+        # update, merge, or overwrite it.
+        person = await _insert_person(ctx, data, category=incoming_category)
         event_type = "person.upsert.create"
         action: Literal["created", "updated", "noop"] = "created"
         changed_fields = ["*"]
+        await _flag_cross_category_collisions(ctx, person, include_names=True, also=other)
     else:
-        person = matches[0][0]
+        person = same[0][0]
         changed_fields = []
         for field in (
             "display_name",
@@ -672,6 +742,7 @@ async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
             person.etag = str(uuid.uuid4())
         action = "updated" if changed_fields else "noop"
         event_type = "person.upsert.update"
+        await _flag_cross_category_collisions(ctx, person, include_names=False, also=other)
     await ctx.db.flush()
     event_id = await emit_action_event(
         ctx,
@@ -793,6 +864,7 @@ async def get_person(ctx: MCPContext, args: BaseModel) -> GetPersonOutput:
         vcard_uid=person.vcard_uid,
         display_name=person.display_name,
         kind=person.kind.value,
+        category=person.category.value if hasattr(person.category, "value") else person.category,
         status="archived" if person.merge_status == MergeStatus.archived else "active",
         merged_into_id=person.merged_into_id,
         given_name=person.given_name,
@@ -1000,6 +1072,113 @@ async def delete_person(ctx: MCPContext, args: BaseModel) -> DeletePersonOutput:
     )
 
 
+async def _has_open_possible_same(ctx: MCPContext, left: uuid.UUID, right: uuid.UUID) -> bool:
+    row = await ctx.audit_db.execute(
+        sa.text(
+            """
+            SELECT 1
+            FROM action_event
+            WHERE tenant_id = CAST(:tenant AS uuid)
+              AND event_type = 'person.possible_same_person'
+              AND status = 'proposed'
+              AND payload->'after'->>'person_a_id' IN (:a, :b)
+              AND payload->'after'->>'person_b_id' IN (:a, :b)
+            LIMIT 1
+            """
+        ),
+        {"tenant": str(ctx.tenant_id), "a": str(left), "b": str(right)},
+    )
+    return row.first() is not None
+
+
+async def _opposite_identifier_ids(ctx: MCPContext, person: Person) -> list[uuid.UUID]:
+    addresses = (
+        await ctx.db.scalars(select(Email.address).where(Email.person_id == person.id))
+    ).all()
+    phones = (await ctx.db.scalars(select(Phone.e164).where(Phone.person_id == person.id))).all()
+    identifiers = [
+        IdentifierInput(namespace="email", value=address) for address in addresses if address
+    ]
+    identifiers.extend(
+        IdentifierInput(namespace="phone", value=phone) for phone in phones if phone
+    )
+    if not identifiers:
+        return []
+    matches = await _find_by_identifier(ctx, identifiers)
+    found: list[uuid.UUID] = []
+    for other, _matched in matches:
+        if other.id == person.id or other.merge_status == MergeStatus.merged_into:
+            continue
+        if categories_conflict(person.category, other.category):
+            found.append(other.id)
+    return found
+
+
+async def _opposite_name_ids(ctx: MCPContext, person: Person) -> list[uuid.UUID]:
+    normalized_name = normalize_display_name(person.display_name)
+    if not normalized_name:
+        return []
+    stored_name = func.lower(
+        func.regexp_replace(func.btrim(Person.display_name), r"\s+", " ", "g")
+    )
+    rows = await ctx.db.scalars(
+        select(Person.id).where(
+            Person.canonical_owner_tenant_id == ctx.tenant_id,
+            Person.id != person.id,
+            Person.category != person.category,
+            Person.merge_status != MergeStatus.merged_into,
+            stored_name == normalized_name,
+        )
+    )
+    return list(rows.all())
+
+
+async def _flag_cross_category_collisions(
+    ctx: MCPContext,
+    person: Person,
+    *,
+    include_names: bool,
+    also: list[Person] | None = None,
+) -> None:
+    """Link and review opposite-category matches. Never writes the other row."""
+    other_ids: list[uuid.UUID] = []
+    for other in also or []:
+        if other.id == person.id or other.merge_status == MergeStatus.merged_into:
+            continue
+        if categories_conflict(person.category, other.category):
+            other_ids.append(other.id)
+    other_ids.extend(await _opposite_identifier_ids(ctx, person))
+    if include_names:
+        other_ids.extend(await _opposite_name_ids(ctx, person))
+    seen: set[uuid.UUID] = set()
+    for other_id in other_ids:
+        if other_id in seen or other_id == person.id:
+            continue
+        seen.add(other_id)
+        await link_suspected_same_as(
+            ctx.db, tenant_id=ctx.tenant_id, left_id=person.id, right_id=other_id
+        )
+        if await _has_open_possible_same(ctx, person.id, other_id):
+            continue
+        await emit_action_event(
+            ctx,
+            event_type=POSSIBLE_SAME_PERSON_EVENT,
+            aggregate_type="person",
+            aggregate_id=person.id,
+            affected_ids=[other_id],
+            payload_before=None,
+            payload_after={
+                "person_a_id": str(person.id),
+                "person_b_id": str(other_id),
+                "marker": "suspected_same_as",
+                "reason": "possible same person",
+            },
+            status="proposed",
+            confidence=0.5,
+            rationale="Cross-category identity collision; the records were not merged.",
+        )
+
+
 def _apply_list_filters(
     stmt: Select[tuple[Person]], ctx: MCPContext, data: ListPeopleInput
 ) -> Select[tuple[Person]]:
@@ -1026,6 +1205,9 @@ def _apply_list_filters(
                 )
             )
         )
+    resolved = _resolved_read_category(ctx, data.category)
+    if resolved is not None:
+        stmt = stmt.where(Person.category == resolved)
     return stmt
 
 
@@ -1142,7 +1324,10 @@ async def find_person_by_identifier(
     require_role(ctx, "CLIENT")
     require_scopes(ctx, ("person:read",))
     data = FindPersonByIdentifierInput.model_validate(args)
+    resolved = _resolved_read_category(ctx, data.category)
     matches = await _find_by_identifier(ctx, data.identifiers)
+    if resolved is not None:
+        matches = [(person, found) for person, found in matches if _same_category(person, resolved)]
     if data.match_mode == "all_must_match":
         needed = {(i.namespace.lower(), i.value.lower()) for i in data.identifiers}
         matches = [

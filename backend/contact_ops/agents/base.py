@@ -199,6 +199,7 @@ class BaseAgent(ABC):
         rationale: str,
         allow_replay: bool = True,
         target_tenant_id: UUID | None = None,
+        force_proposed: bool = False,
     ) -> ProposedAction:
         """Emit an ``action_event``. Auto-apply when policy permits.
 
@@ -210,6 +211,8 @@ class BaseAgent(ABC):
 
         Auto-apply policy:
             * ``Reversibility.IRREVERSIBLE`` -> never auto-apply.
+            * ``force_proposed`` stays in the review queue even when the tier
+              would auto-apply.
             * Otherwise see ``_should_auto_apply``.
 
         Phase 3.3a additions: after the proposal is persisted, runs a
@@ -254,7 +257,7 @@ class BaseAgent(ABC):
             )
 
         tier = await self._current_tier(ctx)
-        auto_apply = self._should_auto_apply(
+        auto_apply = False if force_proposed else self._should_auto_apply(
             tier=tier,
             confidence=confidence,
             reversibility=reversibility,

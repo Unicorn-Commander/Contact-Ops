@@ -38,10 +38,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from contact_ops.core.config import get_settings
+from contact_ops.mcp.errors import INSUFFICIENT_SCOPE, ToolError
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import register
+from contact_ops.models import Person
 from contact_ops.services import compliance_erasure, compliance_export
+from contact_ops.services.contact_category import (
+    CategoryScopeDenied,
+    assert_personal_subject_readable,
+    resolve_category_filter,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +85,22 @@ async def export_subject_data(
     require_role(ctx, "ADMIN")
     require_scopes(ctx, ("person:read",))
 
+    person = await ctx.db.get(Person, req.person_id)
+    if person is not None and person.canonical_owner_tenant_id == ctx.tenant_id:
+        try:
+            assert_personal_subject_readable(
+                ctx.claims,
+                person.category,
+                actor_chain=ctx.actor_chain,
+                human_authority=ctx.human_authority,
+            )
+        except CategoryScopeDenied as exc:
+            raise ToolError(
+                INSUFFICIENT_SCOPE,
+                f"missing required scope(s): {exc.scope}",
+                retryable=False,
+            ) from exc
+
     result = await compliance_export.export_subject_data(
         ctx.db,
         ctx.tenant_id,
@@ -101,6 +124,8 @@ async def export_subject_data(
 class ExportTenantDataInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    category: Literal["PERSONAL", "PROSPECT", "ALL"] | None = None
+
 
 class ExportTenantDataOutput(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -120,10 +145,25 @@ async def export_tenant_data(
     require_role(ctx, "ADMIN")
     require_scopes(ctx, ("person:read",))
 
+    try:
+        resolved = resolve_category_filter(
+            ctx.claims,
+            req.category,
+            actor_chain=ctx.actor_chain,
+            human_authority=ctx.human_authority,
+        )
+    except CategoryScopeDenied as exc:
+        raise ToolError(
+            INSUFFICIENT_SCOPE,
+            f"missing required scope(s): {exc.scope}",
+            retryable=False,
+        ) from exc
+
     result = await compliance_export.export_tenant_data(
         ctx.db,
         ctx.tenant_id,
         settings=get_settings(),
+        category=None if resolved is None else resolved.value,
     )
     return ExportTenantDataOutput(
         tenant_id=ctx.tenant_id,
