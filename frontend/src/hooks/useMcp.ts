@@ -129,7 +129,7 @@ export const usePeople = (args: Record<string, unknown>) => {
  * (offset), so this walks every page — the People view fetches them all to
  * render an A→Z directory instead of a truncated first page.
  */
-export const useAllPeople = (args: { query?: string }) => {
+export const useAllPeople = (args: { query?: string; category?: "PERSONAL" | "PROSPECT" }) => {
   const auth = useAuth();
   const token = auth.user?.access_token;
   const qk = useQueryKeys();

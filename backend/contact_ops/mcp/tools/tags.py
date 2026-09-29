@@ -9,11 +9,21 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from contact_ops.mcp.audit_helper import emit_action_event
-from contact_ops.mcp.errors import BATCH_TOO_LARGE, VALIDATION_FAILED, ToolError
+from contact_ops.mcp.errors import (
+    BATCH_TOO_LARGE,
+    INSUFFICIENT_SCOPE,
+    VALIDATION_FAILED,
+    ToolError,
+)
 from contact_ops.mcp.rbac import require_role, require_scopes
 from contact_ops.mcp.registry import MCPContext
 from contact_ops.mcp.tools.common import ToolOutput, load_person, register
 from contact_ops.models import Person, PersonTenantMembership, Tag
+from contact_ops.services.contact_category import (
+    CategoryScopeDenied,
+    categories_conflict,
+    resolve_category_filter,
+)
 
 TAG_RE = re.compile(r"^[a-zA-Z0-9_\-\.\: ]+$")
 
@@ -90,6 +100,7 @@ class BulkTagOutput(ToolOutput):
 class SearchByTagInput(BaseModel):
     tags_any: list[str] | None = None
     tags_all: list[str] | None = None
+    category: Literal["PERSONAL", "PROSPECT", "ALL"] | None = None
     limit: int = Field(default=25, ge=1, le=100)
     cursor: str | None = None
 
@@ -262,6 +273,19 @@ async def search_by_tag(ctx: MCPContext, req: SearchByTagInput) -> SearchByTagOu
     tags_all = set(req.tags_all or [])
     if not tags_any and not tags_all:
         raise ToolError(VALIDATION_FAILED, "at least one of tags_any or tags_all is required")
+    try:
+        resolved_category = resolve_category_filter(
+            ctx.claims,
+            req.category,
+            actor_chain=ctx.actor_chain,
+            human_authority=ctx.human_authority,
+        )
+    except CategoryScopeDenied as exc:
+        raise ToolError(
+            INSUFFICIENT_SCOPE,
+            f"missing required scope(s): {exc.scope}",
+            retryable=False,
+        ) from exc
     rows = (
         (
             await ctx.db.execute(
@@ -283,11 +307,22 @@ async def search_by_tag(ctx: MCPContext, req: SearchByTagInput) -> SearchByTagOu
         person = await ctx.db.get(Person, row.person_id)
         if person is None:
             continue
+        if resolved_category is not None and categories_conflict(
+            person.category, resolved_category
+        ):
+            continue
+        category_value = (
+            person.category.value if hasattr(person.category, "value") else person.category
+        )
         items.append(
             {
                 "subject_kind": "person",
                 "subject_id": person.id,
-                "summary": {"display_name": person.display_name, "etag": person.etag},
+                "summary": {
+                    "display_name": person.display_name,
+                    "etag": person.etag,
+                    "category": category_value,
+                },
                 "matched_tags": sorted(row_tags & (tags_any | tags_all)),
             }
         )

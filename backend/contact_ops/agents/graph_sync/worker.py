@@ -157,6 +157,14 @@ async def drain_edge_events(
                     processed += 1
                     continue
                 try:
+                    if channel == "falkordb.edge.create" and await _blocked_cross_category_alias(
+                        db, msg.payload
+                    ):
+                        # Leave the two person nodes. A human merge sets
+                        # human_authorized and is applied; an unmerge still deletes.
+                        await outbox.mark_processed(db=db, outbox_id=msg.id)
+                        processed += 1
+                        continue
                     write = build_edge_event_write(channel, msg.payload)
                     await graph_client.query(tenant_graph, write.cypher, write.params)
                     await outbox.mark_processed(db=db, outbox_id=msg.id)
@@ -173,6 +181,42 @@ async def drain_edge_events(
     finally:
         if own_client:
             await graph_client.close()
+
+
+async def _blocked_cross_category_alias(db: AsyncSession, payload: dict[str, Any]) -> bool:
+    from contact_ops.services.contact_category import (
+        pair_categories,
+        should_skip_alias_collapse,
+    )
+
+    if not isinstance(payload, dict):
+        return False
+    op_type = str(payload.get("type") or "")
+    entity = str(payload.get("entity") or "")
+    human_authorized = payload.get("human_authorized") is True
+    category_a = category_b = None
+    survivor = payload.get("survivor_id")
+    alias = payload.get("alias_id")
+    if (
+        entity == "person"
+        and survivor
+        and alias
+        and not op_type.endswith("unmerge")
+        and not human_authorized
+    ):
+        try:
+            category_a, category_b = await pair_categories(
+                db, UUID(str(survivor)), UUID(str(alias))
+            )
+        except (TypeError, ValueError):
+            category_a = category_b = None
+    return should_skip_alias_collapse(
+        op_type=op_type,
+        entity=entity,
+        human_authorized=human_authorized,
+        category_a=category_a,
+        category_b=category_b,
+    )
 
 
 async def claim_pending_rows(*, db: AsyncSession, batch_size: int) -> list[GraphOutboxRow]:

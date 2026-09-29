@@ -435,6 +435,7 @@ async def export_tenant_data(
     tenant_id: uuid.UUID,
     *,
     settings: "Settings",
+    category: str | None = None,
 ) -> dict[str, Any]:
     """GDPR export for an ENTIRE tenant (every person + the tenant record).
 
@@ -454,16 +455,16 @@ async def export_tenant_data(
     tenant_rows = _rows(tenant_result)
     tenant_row = tenant_rows[0] if tenant_rows else None
 
-    id_result = await db.execute(
-        text(
-            """
+    person_sql = """
             SELECT id FROM persons
             WHERE canonical_owner_tenant_id = CAST(:tid AS uuid)
-            ORDER BY created_at
             """
-        ),
-        {"tid": str(tenant_id)},
-    )
+    person_params: dict[str, Any] = {"tid": str(tenant_id)}
+    if category:
+        person_sql += " AND category = CAST(:category AS contact_category)"
+        person_params["category"] = category
+    person_sql += " ORDER BY created_at"
+    id_result = await db.execute(text(person_sql), person_params)
     person_ids = [row[0] for row in id_result.all()]
 
     subjects: list[dict[str, Any]] = []

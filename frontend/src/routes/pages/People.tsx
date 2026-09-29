@@ -161,7 +161,7 @@ function EmptyPeople({ filtered, onAdd }: { filtered: boolean; onAdd: () => void
           <h2 className="text-lg font-semibold">{filtered ? "No matches" : "No people yet"}</h2>
           <p className="mx-auto max-w-md text-sm text-muted-foreground">
             {filtered
-              ? "No people match the current filters. Try clearing the search or the has-email filter."
+              ? "No people match the current filters. Try clearing the search or filters."
               : "Start building your network by adding your first person. They'll appear here once created."}
           </p>
         </div>
@@ -180,9 +180,13 @@ export function PeopleRoute() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [hasEmailOnly, setHasEmailOnly] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<"ALL" | "PERSONAL" | "PROSPECT">("ALL");
   const [layout, setLayout] = useState<DirectoryLayout>("list");
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const people = useAllPeople({ query: query.trim() || undefined });
+  const people = useAllPeople({
+    query: query.trim() || undefined,
+    ...(categoryFilter === "ALL" ? {} : { category: categoryFilter }),
+  });
   const tags = useTags();
 
   // Walk every page so the directory shows ALL people (grouped A→Z), not a
@@ -214,7 +218,7 @@ export function PeopleRoute() {
     }
     return [...byKey.values()];
   }, [tagItems]);
-  const filtered = Boolean(query) || hasEmailOnly;
+  const filtered = Boolean(query) || hasEmailOnly || categoryFilter !== "ALL";
 
   const totalPeople = people.data?.pages?.[0]?.total_count ?? items.length;
   const loadingAll = people.isLoading || people.hasNextPage || people.isFetchingNextPage;
@@ -316,6 +320,25 @@ export function PeopleRoute() {
               ) : (
                 <p className="text-sm text-muted-foreground">No tags yet.</p>
               )}
+            </div>
+
+            <div>
+              <label htmlFor="people-category" className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Category
+              </label>
+              <select
+                id="people-category"
+                aria-label="Category"
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+                value={categoryFilter}
+                onChange={(event) =>
+                  setCategoryFilter(event.target.value as "ALL" | "PERSONAL" | "PROSPECT")
+                }
+              >
+                <option value="ALL">All</option>
+                <option value="PERSONAL">Personal</option>
+                <option value="PROSPECT">Prospects</option>
+              </select>
             </div>
 
             <div>

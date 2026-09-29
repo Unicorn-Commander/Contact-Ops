@@ -15,6 +15,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
 
 from contact_ops.models.enums import (
+    ContactCategory,
     ContactChannel,
     MergeStatus,
     OrgKind,
@@ -118,6 +119,18 @@ class Person(Base):
     current_org_role_id: Mapped[uuid_module.UUID | None] = mapped_column(PGUUID)
     canonical_owner_tenant_id: Mapped[uuid_module.UUID] = mapped_column(ForeignKey("tenants.id"))
     is_personal: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Owner network vs sourced lead. Not is_personal, and not relationship_category.
+    category: Mapped[ContactCategory] = mapped_column(
+        Enum(
+            ContactCategory,
+            name="contact_category",
+            create_type=False,
+            values_callable=enum_values,
+        ),
+        nullable=False,
+        default=ContactCategory.PERSONAL,
+        server_default=sa.text("'PERSONAL'"),
+    )
     vcard_uid: Mapped[str | None] = mapped_column(Text, unique=True)
     source_pid_map: Mapped[dict] = mapped_column(JSONB, default=dict)
     merge_status: Mapped[MergeStatus] = mapped_column(

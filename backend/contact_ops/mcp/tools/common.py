@@ -33,6 +33,7 @@ class PersonSummary(BaseModel):
     communication_strength: float | None = None
     tags: list[str] = Field(default_factory=list)
     etag: str | None = None
+    category: str | None = None
 
 
 def stable_hash(model: BaseModel) -> bytes:
@@ -75,6 +76,7 @@ def person_summary(
         communication_strength=float(person.communication_strength_score or 0),
         tags=tags or [],
         etag=person.etag,
+        category=person.category.value if hasattr(person.category, "value") else person.category,
     )
 
 

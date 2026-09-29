@@ -204,6 +204,11 @@ class DedupAgent(BaseAgent):
         # review queue (queue flood) or already merged. Fetched once per run.
         open_pairs, noncanonical_ids = await self._dedup_rerun_skips(db)
 
+        from contact_ops.services.contact_category import (
+            link_suspected_same_as,
+            pair_categories,
+        )
+
         # Step 5 -- process each final edge
         for edge in final_edges:
             pair_key = frozenset({edge.person_a_id, edge.person_b_id})
@@ -260,12 +265,25 @@ class DedupAgent(BaseAgent):
             # Auto-merge guardrail: identifier-less matches cannot reach the
             # auto-merge band, however high the model score, so a name-only
             # collision is surfaced for review instead of silently merged.
+            # A PERSONAL/PROSPECT pair is capped the same way even when an
+            # email or phone matches: an automation must not merge across that
+            # line. The suspected_same_as link is the "possible same person"
+            # marker; this proposal is the review item. force_proposed keeps a
+            # promoted agent (T3 auto-applies at 0.85, T4 always) from applying
+            # it and rolling the review item back.
             corroborated = _has_identifier_corroboration(blocking_keys)
-            decision_confidence = prob
-            decision_band = band
-            if prob >= _AUTO_MERGE_FLOOR and not corroborated:
-                decision_confidence = _REVIEW_CONFIDENCE_CAP
-                decision_band = _determine_band(decision_confidence) or band
+            cat_a, cat_b = await pair_categories(db, edge.person_a_id, edge.person_b_id)
+            categories_differ = cat_a is not None and cat_b is not None and cat_a != cat_b
+            decision_confidence, decision_band = _apply_automerge_guardrail(
+                prob, blocking_keys, categories_differ=categories_differ
+            )
+            if categories_differ:
+                await link_suspected_same_as(
+                    db,
+                    tenant_id=tenant_id,
+                    left_id=edge.person_a_id,
+                    right_id=edge.person_b_id,
+                )
 
             await self.propose_action(
                 ctx=ctx,
@@ -281,12 +299,14 @@ class DedupAgent(BaseAgent):
                     "splink_model_version": splink_result.model_version,
                     "cluster_repair_applied": repair_result.black_holes_detected > 0,
                     "identifier_corroborated": corroborated,
+                    "categories_differ": categories_differ,
                 },
                 rationale=(
                     f"Splink scored {prob:.4f} via {band} band; decision "
                     f"confidence {decision_confidence:.4f} ({decision_band}); "
                     f"blocking keys: {blocking_keys}"
                 ),
+                force_proposed=categories_differ,
             )
             proposals_emitted += 1
 
@@ -621,6 +641,25 @@ def _add_lookup_pair(
     """Add ``{suffix}_l`` and ``{suffix}_r`` from a UUID-keyed lookup map."""
     row[f"{suffix}_l"] = lookup_map.get(pid_a)
     row[f"{suffix}_r"] = lookup_map.get(pid_b)
+
+
+def _apply_automerge_guardrail(
+    prob: float,
+    blocking_keys: list[str],
+    *,
+    categories_differ: bool = False,
+) -> tuple[float, str | None]:
+    """Confidence and band actually used to decide auto-merge.
+
+    Identifier-less matches, and any PERSONAL/PROSPECT pair, stay below the
+    auto-merge floor so they are reviewed instead of merged.
+    """
+    band = _determine_band(prob)
+    corroborated = _has_identifier_corroboration(blocking_keys)
+    if prob >= _AUTO_MERGE_FLOOR and (categories_differ or not corroborated):
+        capped = _determine_band(_REVIEW_CONFIDENCE_CAP) or band
+        return _REVIEW_CONFIDENCE_CAP, capped
+    return prob, band
 
 
 def _determine_band(prob: float) -> str | None:
