@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 import testcontainers.core.utils
 
@@ -43,7 +43,15 @@ from contact_ops.mcp.tools.people import (
     UpsertPersonInput,
     upsert_person,
 )
-from contact_ops.models import ActionEvent, Email, Person
+from contact_ops.models import (
+    ActionEvent,
+    Email,
+    Organization,
+    Person,
+    PersonOrgRole,
+    PersonTenantMembership,
+    Phone,
+)
 from contact_ops.models.enums import MergeStatus
 
 
@@ -124,6 +132,208 @@ async def test_upsert_person_updates_existing_by_email(db_session):
     )
     assert output.action == "updated"
     assert output.person_id == first.person_id
+
+
+@pytest.mark.asyncio
+async def test_create_person_attaches_organization_and_current_projection(db_session):
+    c = ctx(db_session)
+    created = await create_person(
+        c,
+        CreatePersonInput(
+            display_name="Tornado Lead",
+            organization={
+                "name": "  Tornado   Exteriors ",
+                "role": "owner",
+                "title": "Founder",
+                "domain": "https://www.tornado.example",
+            },
+        ),
+    )
+
+    person = await db_session.get(Person, created.person_id)
+    organization = await db_session.scalar(
+        select(Organization).where(
+            Organization.canonical_owner_tenant_id == TENANT_ID,
+            Organization.display_name == "Storm Roofing",
+        )
+    )
+    role = await db_session.scalar(
+        select(PersonOrgRole).where(PersonOrgRole.person_id == created.person_id)
+    )
+
+    assert person is not None
+    assert organization is not None
+    assert organization.domain == "tornado.example"
+    assert role is not None
+    assert role.organization_id == organization.id
+    assert role.role_type.value == "owner"
+    assert role.title == "Founder"
+    assert role.is_primary is True
+    assert person.current_org_id == organization.id
+    assert person.current_org_role_id == role.id
+
+
+@pytest.mark.asyncio
+async def test_upsert_existing_merges_contacts_tags_and_organization_idempotently(db_session):
+    c = ctx(db_session)
+    first = await create_person(
+        c,
+        CreatePersonInput(
+            display_name="Cody Tutoring",
+            emails=[{"address": "REMOVED", "is_primary": True}],
+            phones=[{"e164": "+15551234567", "is_primary": True}],
+            initial_tags=["lead"],
+        ),
+    )
+    request = UpsertPersonInput(
+        match_by=[IdentifierInput(namespace="email", value="REMOVED")],
+        emails=[
+            {"address": "REMOVED"},
+            {"address": "REMOVED", "is_primary": True},
+        ],
+        phones=[
+            {"e164": "+15551234567"},
+            {"e164": "+15557654321", "is_primary": True},
+        ],
+        initial_tags=["lead", "new tag"],
+        organization={
+            "name": "Cody   Math LLC",
+            "role": "owner",
+            "title": "Managing Member",
+            "domain": "cody-tutoring.example",
+        },
+    )
+
+    updated = await upsert_person(c, request)
+    assert updated.action == "updated"
+    assert {"emails", "phones", "initial_tags", "organization"}.issubset(
+        updated.changed_fields
+    )
+
+    email_rows = (
+        await db_session.execute(
+            select(Email).where(Email.person_id == first.person_id).order_by(Email.address)
+        )
+    ).scalars().all()
+    phone_rows = (
+        await db_session.execute(
+            select(Phone).where(Phone.person_id == first.person_id).order_by(Phone.e164)
+        )
+    ).scalars().all()
+    membership = await db_session.get(
+        PersonTenantMembership, (first.person_id, TENANT_ID)
+    )
+    person = await db_session.get(Person, first.person_id)
+    organization = await db_session.scalar(
+        select(Organization).where(
+            Organization.canonical_owner_tenant_id == TENANT_ID,
+            Organization.domain == "cody-tutoring.example",
+        )
+    )
+    role = await db_session.scalar(
+        select(PersonOrgRole).where(PersonOrgRole.person_id == first.person_id)
+    )
+
+    assert [row.address for row in email_rows] == [
+        "REMOVED",
+        "REMOVED",
+    ]
+    assert email_rows[0].is_primary is True
+    assert email_rows[1].is_primary is False
+    assert [row.e164 for row in phone_rows] == ["+15551234567", "+15557654321"]
+    assert phone_rows[0].is_primary is True
+    assert phone_rows[1].is_primary is False
+    assert membership is not None
+    assert set(membership.tags) == {"lead", "new-tag"}
+    assert person is not None and organization is not None and role is not None
+    assert person.current_org_id == organization.id
+    assert role.organization_id == organization.id
+
+    counts_before = {
+        "emails": await db_session.scalar(
+            select(func.count()).select_from(Email).where(Email.person_id == first.person_id)
+        ),
+        "phones": await db_session.scalar(
+            select(func.count()).select_from(Phone).where(Phone.person_id == first.person_id)
+        ),
+        "roles": await db_session.scalar(
+            select(func.count())
+            .select_from(PersonOrgRole)
+            .where(PersonOrgRole.person_id == first.person_id)
+        ),
+        "organizations": await db_session.scalar(
+            select(func.count())
+            .select_from(Organization)
+            .where(Organization.canonical_owner_tenant_id == TENANT_ID)
+        ),
+    }
+    again = await upsert_person(c, request)
+    counts_after = {
+        "emails": await db_session.scalar(
+            select(func.count()).select_from(Email).where(Email.person_id == first.person_id)
+        ),
+        "phones": await db_session.scalar(
+            select(func.count()).select_from(Phone).where(Phone.person_id == first.person_id)
+        ),
+        "roles": await db_session.scalar(
+            select(func.count())
+            .select_from(PersonOrgRole)
+            .where(PersonOrgRole.person_id == first.person_id)
+        ),
+        "organizations": await db_session.scalar(
+            select(func.count())
+            .select_from(Organization)
+            .where(Organization.canonical_owner_tenant_id == TENANT_ID)
+        ),
+    }
+    assert again.action == "noop"
+    assert again.changed_fields == []
+    assert counts_after == counts_before
+
+
+@pytest.mark.asyncio
+async def test_upsert_without_organization_leaves_org_projection_unchanged(db_session):
+    c = ctx(db_session)
+    first = await create_person(
+        c,
+        CreatePersonInput(display_name="No Organization", emails=[{"address": "REMOVED"}]),
+    )
+    person = await db_session.get(Person, first.person_id)
+    before_orgs = await db_session.scalar(
+        select(func.count())
+        .select_from(Organization)
+        .where(Organization.canonical_owner_tenant_id == TENANT_ID)
+    )
+    before_roles = await db_session.scalar(
+        select(func.count())
+        .select_from(PersonOrgRole)
+        .where(PersonOrgRole.person_id == first.person_id)
+    )
+
+    await upsert_person(
+        c,
+        UpsertPersonInput(
+            match_by=[IdentifierInput(namespace="email", value="REMOVED")],
+            display_name="Still No Organization",
+            conflict_strategy="prefer_incoming",
+        ),
+    )
+
+    await db_session.refresh(person)
+    after_orgs = await db_session.scalar(
+        select(func.count())
+        .select_from(Organization)
+        .where(Organization.canonical_owner_tenant_id == TENANT_ID)
+    )
+    after_roles = await db_session.scalar(
+        select(func.count())
+        .select_from(PersonOrgRole)
+        .where(PersonOrgRole.person_id == first.person_id)
+    )
+    assert person.current_org_id is None
+    assert person.current_org_role_id is None
+    assert before_orgs == after_orgs == 0
+    assert before_roles == after_roles == 0
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
+import re
 from typing import Any, Literal, cast
 
 import sqlalchemy as sa
@@ -44,6 +45,7 @@ from contact_ops.models import (
     MergeCandidate,
     Organization,
     Person,
+    PersonOrgRole,
     PersonTenantMembership,
     Phone,
     Url,
@@ -52,9 +54,12 @@ from contact_ops.models.enums import (
     ContactCategory,
     EmailType,
     MergeStatus,
+    OrgKind,
     PersonKind,
     PhoneType,
     PreferredContact,
+    RetentionClass,
+    RoleType,
     TemperatureState,
 )
 from contact_ops.services.contact_category import (
@@ -84,6 +89,52 @@ class PhoneInput(BaseModel):
     e164: str = Field(pattern=r"^\+[1-9]\d{1,14}$")
     type: Literal["mobile", "work", "home", "fax", "other"] = "mobile"
     is_primary: bool = False
+
+
+_TAG_RE = re.compile(r"^[a-zA-Z0-9_\-\.\: ]+$")
+
+
+def _normalize_tag(tag: str) -> str:
+    normalized = re.sub(r"\s+", "-", tag.strip().lower())
+    if not normalized or not _TAG_RE.match(tag):
+        raise ValueError(f"invalid tag: {tag}")
+    return normalized
+
+
+class OrganizationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=300)
+    role: str | None = Field(default=None, max_length=80)
+    title: str | None = Field(default=None, max_length=200)
+    domain: str | None = Field(default=None, max_length=253)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("organization.name must not be blank")
+        return value
+
+    @field_validator("role", "title", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = str(value).strip()
+        return value or None
+
+    @field_validator("domain")
+    @classmethod
+    def normalize_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower().removeprefix("https://").removeprefix("http://")
+        normalized = normalized.split("/", 1)[0].removeprefix("www.")
+        if "." not in normalized or " " in normalized:
+            raise ValueError("organization.domain must be a DNS host name")
+        return normalized
 
 
 class IdentifierInput(BaseModel):
@@ -120,6 +171,7 @@ class CreatePersonInput(BaseModel):
     headline: str | None = Field(default=None, max_length=200)
     bio: str | None = Field(default=None, max_length=4000)
     occupation_title: str | None = Field(default=None, max_length=120)
+    organization: OrganizationInput | None = None
     emails: list[EmailInput] = Field(default_factory=list, max_length=20)
     phones: list[PhoneInput] = Field(default_factory=list, max_length=20)
     im_handles: list[IMHandleInput] = Field(default_factory=list, max_length=20)
@@ -137,6 +189,11 @@ class CreatePersonInput(BaseModel):
         if sum(item.is_primary for item in value) > 1:
             raise ValueError("Only one primary contact point is allowed per collection")
         return value
+
+    @field_validator("initial_tags")
+    @classmethod
+    def normalize_initial_tags(cls, tags: list[str]) -> list[str]:
+        return list(dict.fromkeys(_normalize_tag(tag) for tag in tags))
 
     @field_validator("preferred_languages")
     @classmethod
@@ -519,6 +576,141 @@ def _same_category(person: Person, category: ContactCategory) -> bool:
     return not categories_conflict(person.category, category)
 
 
+def _organization_role(organization: OrganizationInput) -> tuple[RoleType, str | None]:
+    raw_role = organization.role.strip().lower().replace("-", "_").replace(" ", "_") if organization.role else ""
+    try:
+        role_type = RoleType(raw_role or RoleType.employee.value)
+    except ValueError:
+        # The existing link schema requires a RoleType. Preserve a non-enum
+        # caller role as the title rather than rejecting an otherwise useful
+        # organization association.
+        role_type = RoleType.employee
+    title = organization.title
+    if title is None and raw_role and role_type == RoleType.employee:
+        title = organization.role
+    return role_type, title
+
+
+async def _resolve_organization(ctx: MCPContext, data: OrganizationInput) -> Organization:
+    normalized_name = normalize_display_name(data.name)
+    organizations = (
+        await ctx.db.scalars(
+            select(Organization).where(
+                Organization.canonical_owner_tenant_id == ctx.tenant_id
+            )
+        )
+    ).all()
+    organization = next(
+        (
+            candidate
+            for candidate in organizations
+            if normalized_name
+            in {
+                normalize_display_name(candidate.display_name),
+                normalize_display_name(candidate.legal_name),
+            }
+        ),
+        None,
+    )
+    if organization is None and data.domain:
+        organization = await ctx.db.scalar(
+            select(Organization).where(
+                Organization.canonical_owner_tenant_id == ctx.tenant_id,
+                func.lower(Organization.domain) == data.domain,
+            )
+        )
+    if organization is not None:
+        return organization
+
+    organization = Organization(
+        id=uuid.uuid4(),
+        kind=OrgKind.company,
+        legal_name=data.name,
+        display_name=data.name,
+        domain=data.domain,
+        canonical_owner_tenant_id=ctx.tenant_id,
+        merge_status=MergeStatus.canonical,
+        retention_class=RetentionClass.operational_2y,
+        created_by_actor_id=uuid.UUID(ctx.user_id) if _is_uuid(ctx.user_id) else None,
+    )
+    ctx.db.add(organization)
+    return organization
+
+
+async def _demote_other_primary_roles(
+    ctx: MCPContext, person_id: uuid.UUID, keep_id: uuid.UUID | None = None
+) -> None:
+    rows = (
+        await ctx.db.execute(
+            select(PersonOrgRole).where(
+                PersonOrgRole.person_id == person_id,
+                PersonOrgRole.is_primary.is_(True),
+                PersonOrgRole.ended_at.is_(None),
+            )
+        )
+    ).scalars()
+    for row in rows:
+        if keep_id is None or row.id != keep_id:
+            row.is_primary = False
+
+
+async def _attach_organization(
+    ctx: MCPContext,
+    person: Person,
+    organization: OrganizationInput | None,
+    confidence: float,
+) -> bool:
+    if organization is None:
+        return False
+
+    resolved = await _resolve_organization(ctx, organization)
+    role_type, title = _organization_role(organization)
+    role = await ctx.db.scalar(
+        select(PersonOrgRole)
+        .where(
+            PersonOrgRole.person_id == person.id,
+            PersonOrgRole.organization_id == resolved.id,
+            PersonOrgRole.ended_at.is_(None),
+        )
+        .order_by(PersonOrgRole.is_primary.desc(), PersonOrgRole.created_at.asc())
+        .limit(1)
+    )
+    changed = False
+    if role is None:
+        await _demote_other_primary_roles(ctx, person.id)
+        role = PersonOrgRole(
+            id=uuid.uuid4(),
+            person_id=person.id,
+            organization_id=resolved.id,
+            role_type=role_type,
+            title=title,
+            is_primary=True,
+            confidence=Decimal(str(confidence)),
+        )
+        ctx.db.add(role)
+        # current_org_role_id has a database FK that is not represented on the
+        # ORM column. Insert the role before setting that projection on a new
+        # or existing person.
+        await ctx.db.flush()
+        changed = True
+    else:
+        if title and not role.title:
+            role.title = title
+            changed = True
+        if not role.is_primary:
+            await _demote_other_primary_roles(ctx, person.id, keep_id=role.id)
+            role.is_primary = True
+            changed = True
+
+    if person.current_org_id != resolved.id:
+        person.current_org_id = resolved.id
+        changed = True
+    if person.current_org_role_id != role.id:
+        person.current_org_role_id = role.id
+        changed = True
+    return changed
+
+
 async def _insert_person(
     ctx: MCPContext, data: CreatePersonInput, *, category: ContactCategory | None = None
 ) -> Person:
@@ -557,7 +749,7 @@ async def _insert_person(
             person_id=person.id,
             tenant_id=ctx.tenant_id,
             notes=data.tenant_membership_notes,
-            tags=data.initial_tags,
+            tags=list(data.initial_tags),
             added_by=uuid.UUID(ctx.user_id) if _is_uuid(ctx.user_id) else None,
         )
     )
@@ -596,6 +788,8 @@ async def _insert_person(
             )
         )
     await ctx.db.flush()
+    await _attach_organization(ctx, person, data.organization, data.confidence)
+    await ctx.db.flush()
     return person
 
 
@@ -604,6 +798,104 @@ def _is_uuid(value: str) -> bool:
         uuid.UUID(value)
     except (TypeError, ValueError):
         return False
+    return True
+
+
+async def _ensure_emails(
+    ctx: MCPContext, person: Person, emails: list[EmailInput], confidence: float
+) -> bool:
+    if not emails:
+        return False
+    existing = (
+        await ctx.db.execute(select(Email).where(Email.person_id == person.id))
+    ).scalars().all()
+    seen = {str(row.address).strip().lower() for row in existing}
+    has_primary = any(row.is_primary for row in existing)
+    preferred_key = next(
+        (str(item.address).strip().lower() for item in emails if item.is_primary),
+        None,
+    )
+    added = 0
+    for item in emails:
+        address = str(item.address).strip().lower()
+        if address in seen:
+            continue
+        make_primary = not has_primary and (
+            address == preferred_key if preferred_key is not None else added == 0
+        )
+        ctx.db.add(
+            Email(
+                person_id=person.id,
+                address=address,
+                type=_email_type(item.type),
+                is_primary=make_primary,
+                confidence=Decimal(str(confidence)),
+            )
+        )
+        seen.add(address)
+        added += 1
+        if make_primary:
+            has_primary = True
+    return added > 0
+
+
+async def _ensure_phones(
+    ctx: MCPContext, person: Person, phones: list[PhoneInput], confidence: float
+) -> bool:
+    if not phones:
+        return False
+    existing = (
+        await ctx.db.execute(select(Phone).where(Phone.person_id == person.id))
+    ).scalars().all()
+    seen = {row.e164.strip() for row in existing}
+    has_primary = any(row.is_primary for row in existing)
+    preferred_key = next(
+        (item.e164.strip() for item in phones if item.is_primary),
+        None,
+    )
+    added = 0
+    for item in phones:
+        e164 = item.e164.strip()
+        if e164 in seen:
+            continue
+        make_primary = not has_primary and (
+            e164 == preferred_key if preferred_key is not None else added == 0
+        )
+        ctx.db.add(
+            Phone(
+                person_id=person.id,
+                e164=e164,
+                type=_phone_type(item.type),
+                is_primary=make_primary,
+                confidence=Decimal(str(confidence)),
+            )
+        )
+        seen.add(e164)
+        added += 1
+        if make_primary:
+            has_primary = True
+    return added > 0
+
+
+async def _ensure_initial_tags(
+    ctx: MCPContext, person: Person, tags: list[str]
+) -> bool:
+    if not tags:
+        return False
+    membership = await ctx.db.get(PersonTenantMembership, (person.id, ctx.tenant_id))
+    if membership is None:
+        membership = PersonTenantMembership(
+            person_id=person.id,
+            tenant_id=ctx.tenant_id,
+            tags=[],
+        )
+        ctx.db.add(membership)
+    present = set(membership.tags or [])
+    incoming = {_normalize_tag(tag) for tag in tags}
+    added = incoming - present
+    if not added:
+        return False
+    membership.tags = sorted(present | incoming)
     return True
 
 
@@ -785,6 +1077,14 @@ async def upsert_person(ctx: MCPContext, args: BaseModel) -> UpsertPersonOutput:
                 changed_fields.append(field)
         if await _ensure_im_handles(ctx, person, data.im_handles, data.confidence):
             changed_fields.append("im_handles")
+        if await _ensure_emails(ctx, person, data.emails, data.confidence):
+            changed_fields.append("emails")
+        if await _ensure_phones(ctx, person, data.phones, data.confidence):
+            changed_fields.append("phones")
+        if await _ensure_initial_tags(ctx, person, data.initial_tags):
+            changed_fields.append("initial_tags")
+        if await _attach_organization(ctx, person, data.organization, data.confidence):
+            changed_fields.append("organization")
         if changed_fields:
             person.etag = str(uuid.uuid4())
         action = "updated" if changed_fields else "noop"
@@ -1700,7 +2000,7 @@ def register_people_tools() -> None:
     base = {"destructiveHint": False, "openWorldHint": False}
     register(
         name="create_person",
-        description="Create a brand-new person in the caller tenant. Use only when the person is known to be new; STAFF with person:write required.",
+        description="Create a brand-new person in the caller tenant, optionally attaching an organization and role. Use only when the person is known to be new; STAFF with person:write required.",
         input_model=CreatePersonInput,
         output_model=CreatePersonOutput,
         handler=create_person,
@@ -1711,7 +2011,7 @@ def register_people_tools() -> None:
     )
     register(
         name="upsert_person",
-        description="Create or patch a person by natural identifier. Use for ingestion and uncertain existence checks; STAFF with person:write required.",
+        description="Create or patch a person by natural identifier, merging contact points and tags and optionally attaching an organization and role. Use for ingestion and uncertain existence checks; STAFF with person:write required.",
         input_model=UpsertPersonInput,
         output_model=UpsertPersonOutput,
         handler=upsert_person,
