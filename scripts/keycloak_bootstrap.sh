@@ -1,294 +1,359 @@
 #!/usr/bin/env bash
 #
-# keycloak_bootstrap.sh — idempotent Contact-Ops Keycloak client bootstrap
+# keycloak_bootstrap.sh - idempotent local/self-hosted Contact-Ops bootstrap
 #
-# Creates / updates five OIDC clients in the uchub realm:
-#   - contact-ops-mcp           (bearer-only, the MCP server)
-#   - contact-ops-app           (public, PKCE, future human UI)
-#   - contact-ops-carddav       (confidential, direct grants, CardDAV adapter)
-#   - contact-ops-publisher     (confidential, service account + token exchange, outbound federation)
-#   - contact-ops-bridge-inbound (confidential, service account, inbound from Data Intel)
+# This script creates the realm-side contract used by the self-host compose:
+# exact application roles, permission scopes, OIDC clients, the confidential
+# workspace-switch client, and the first human admin. It deliberately does not
+# depend on a suite realm, a shared network, a pre-created user-attribute scope,
+# or any external hostname.
 #
-# Plus: Phase 0 client scopes, realm role ladder (CLIENT/STAFF/MANAGER/ADMIN),
-# protocol mappers (tenant_id, tenant_slug, tenant_hipaa), and the RFC 8693
-# token-exchange permission matrix per docs/KEYCLOAK_CLIENTS.md §6.
+# Required environment:
+#   KC_SERVER_URL                         Keycloak base URL, without /admin
+#   KC_REALM                              realm to create/update
+#   KC_ADMIN_USER / KC_ADMIN_PASS         master-realm administrator
+#   KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME     first human realm user
+#   KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD     first human realm-user password
+#   KEYCLOAK_SWITCH_CLIENT_SECRET         secret used by the onboarding API
 #
-# Safe to re-run. See docs/KEYCLOAK_CLIENTS.md §10 for the idempotency contract.
+# Optional environment:
+#   APP_ORIGIN (default http://127.0.0.1:3000)
+#   MCP_ORIGIN (default http://127.0.0.1:8501)
+#   CARDDAV_ORIGIN (default MCP_ORIGIN)
+#   DEV_ORIGIN (default APP_ORIGIN)
+#   SIGNUP_ENABLED (default false)
+#   KC_CONTAINER (default contact-ops-keycloak, for host-side execution)
 #
 # Usage:
-#   KC_SERVER_URL=https://auth.unicorncommander.ai \
-#   KC_REALM=uchub \
-#   KC_ADMIN_USER=admin \
-#   KC_ADMIN_PASS='...' \
-#     bash scripts/keycloak_bootstrap.sh [--dry-run] [--rotate-secrets]
+#   bash scripts/keycloak_bootstrap.sh [--dry-run] [--rotate-secrets]
 #
-# --dry-run        Print every kcadm.sh command without executing.
-# --rotate-secrets Force rotation of confidential-client secrets even if the client already exists.
+# --dry-run        Show planned non-secret kcadm operations without connecting.
+# --rotate-secrets Rotate non-bootstrap confidential clients. The switch-client
+#                  secret is always set from KEYCLOAK_SWITCH_CLIENT_SECRET.
 #
-# Exit codes:
-#   0   success
-#   1   missing required env var
-#   2   user-attributes client scope missing (per reference_keycloak_user_attributes.md)
-#   3   kcadm.sh not on PATH and no container fallback usable
-#   4   authentication failed
-#   5   client operation failed
-#
+# Secrets are passed to kcadm only through process arguments at execution time;
+# this script never prints them and never writes them into the repository.
 set -euo pipefail
 
-# ----------------------------------------------------------------------------
-# Required environment
-# ----------------------------------------------------------------------------
-: "${KC_SERVER_URL:?KC_SERVER_URL is required (e.g. https://auth.unicorncommander.ai)}"
-: "${KC_REALM:?KC_REALM is required (e.g. uchub)}"
+: "${KC_SERVER_URL:?KC_SERVER_URL is required}"
+: "${KC_REALM:?KC_REALM is required}"
 : "${KC_ADMIN_USER:?KC_ADMIN_USER is required}"
-: "${KC_ADMIN_PASS:?KC_ADMIN_PASS is required (export via env, never via flag)}"
+: "${KC_ADMIN_PASS:?KC_ADMIN_PASS is required}"
+: "${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME is required}"
+: "${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD is required}"
+: "${KEYCLOAK_SWITCH_CLIENT_SECRET:?KEYCLOAK_SWITCH_CLIENT_SECRET is required}"
 
-# Optional config
-KC_CONTAINER="${KC_CONTAINER:-uchub-keycloak}"
+KC_CONTAINER="${KC_CONTAINER:-contact-ops-keycloak}"
+APP_ORIGIN="${APP_ORIGIN:-http://127.0.0.1:3000}"
+MCP_ORIGIN="${MCP_ORIGIN:-http://127.0.0.1:8501}"
+CARDDAV_ORIGIN="${CARDDAV_ORIGIN:-$MCP_ORIGIN}"
+DEV_ORIGIN="${DEV_ORIGIN:-$APP_ORIGIN}"
+SIGNUP_ENABLED="${SIGNUP_ENABLED:-false}"
+
 DRY_RUN=0
 ROTATE_SECRETS=0
-
-# Where Contact-Ops lives in DNS — used for redirect URIs + web origins
-APP_HOST="${APP_HOST:-contacts.magicunicorn.dev}"
-MCP_HOST="${MCP_HOST:-mcp.contacts.magicunicorn.dev}"
-CARDDAV_HOST="${CARDDAV_HOST:-carddav.contacts.magicunicorn.dev}"
-DEV_HOST="${DEV_HOST:-http://localhost:5173}"
-
-# ----------------------------------------------------------------------------
-# Flag parsing
-# ----------------------------------------------------------------------------
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --rotate-secrets) ROTATE_SECRETS=1 ;;
     -h|--help)
-      sed -n '2,30p' "$0"
+      sed -n '2,35p' "$0"
       exit 0
       ;;
-    *) echo "unknown flag: $arg" >&2; exit 1 ;;
+    *)
+      printf '[bootstrap ERROR] unknown flag: %s\n' "$arg" >&2
+      exit 1
+      ;;
   esac
 done
 
-# ----------------------------------------------------------------------------
-# Logging helpers
-# ----------------------------------------------------------------------------
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 warn() { printf '[bootstrap WARN] %s\n' "$*" >&2; }
 die() { printf '[bootstrap ERROR] %s\n' "$*" >&2; exit "${2:-5}"; }
 
-# ----------------------------------------------------------------------------
-# kcadm.sh resolution — local binary first, then docker exec into uchub-keycloak
-# ----------------------------------------------------------------------------
+case "$SIGNUP_ENABLED" in
+  true|false) ;;
+  *) die "SIGNUP_ENABLED must be true or false" 1 ;;
+esac
+
+# -----------------------------------------------------------------------------
+# Resolve kcadm.sh without assuming a host installation.
+# -----------------------------------------------------------------------------
+KCADM_ARGS=()
+KCADM_MODE=""
 if command -v kcadm.sh >/dev/null 2>&1; then
-  KCADM_BIN="kcadm.sh"
+  KCADM_ARGS=("$(command -v kcadm.sh)")
   KCADM_MODE="local"
-elif command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "$KC_CONTAINER"; then
-  KCADM_BIN="docker exec -i $KC_CONTAINER /opt/keycloak/bin/kcadm.sh"
+elif [[ -x /opt/keycloak/bin/kcadm.sh ]]; then
+  KCADM_ARGS=(/opt/keycloak/bin/kcadm.sh)
+  KCADM_MODE="keycloak-image"
+elif command -v docker >/dev/null 2>&1 \
+    && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$KC_CONTAINER"; then
+  KCADM_ARGS=(docker exec -i "$KC_CONTAINER" /opt/keycloak/bin/kcadm.sh)
   KCADM_MODE="docker:$KC_CONTAINER"
+elif [[ $DRY_RUN -eq 1 ]]; then
+  KCADM_ARGS=(kcadm.sh)
+  KCADM_MODE="dry-run"
 else
-  die "Cannot find kcadm.sh on PATH and no Docker container '$KC_CONTAINER' running. Install Keycloak admin CLI or set KC_CONTAINER." 3
+  die "Cannot find kcadm.sh and no running Keycloak container '$KC_CONTAINER' is available" 3
 fi
 log "kcadm via: $KCADM_MODE"
 
-# Wrapper — prints if dry-run, executes otherwise
+# All normal operations have no secret arguments. Dry-run output is therefore
+# safe. Authentication and password updates use dedicated wrappers so secrets
+# are never rendered by the dry-run logger.
 kc() {
   if [[ $DRY_RUN -eq 1 ]]; then
-    printf '+ %s' "$KCADM_BIN" >&2
-    for a in "$@"; do printf ' %q' "$a" >&2; done
+    printf '+ kcadm.sh' >&2
+    for arg in "$@"; do printf ' %q' "$arg" >&2; done
     printf '\n' >&2
     return 0
   fi
-  # shellcheck disable=SC2086
-  $KCADM_BIN "$@"
+  "${KCADM_ARGS[@]}" "$@"
 }
 
-# Same wrapper but captures stdout (for queries)
 kc_capture() {
   if [[ $DRY_RUN -eq 1 ]]; then
-    printf '+ %s' "$KCADM_BIN" >&2
-    for a in "$@"; do printf ' %q' "$a" >&2; done
+    printf '+ kcadm.sh' >&2
+    for arg in "$@"; do printf ' %q' "$arg" >&2; done
     printf ' (capture)\n' >&2
-    echo ""
     return 0
   fi
-  # shellcheck disable=SC2086
-  $KCADM_BIN "$@"
+  "${KCADM_ARGS[@]}" "$@"
 }
 
-# ----------------------------------------------------------------------------
-# Authenticate to Keycloak master realm
-# ----------------------------------------------------------------------------
-log "Authenticating against $KC_SERVER_URL as $KC_ADMIN_USER ..."
-if [[ $DRY_RUN -eq 0 ]]; then
-  if ! $KCADM_BIN config credentials \
-      --server "$KC_SERVER_URL" \
-      --realm master \
-      --user "$KC_ADMIN_USER" \
-      --password "$KC_ADMIN_PASS" >/dev/null 2>&1; then
-    die "kcadm.sh credentials failed — check KC_ADMIN_USER / KC_ADMIN_PASS against $KC_SERVER_URL/admin" 4
+kc_set_password() {
+  local user_id="$1" password="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "would set the bootstrap user's password"
+    return 0
   fi
+  "${KCADM_ARGS[@]}" set-password -r "$KC_REALM" --userid "$user_id" \
+    --new-password "$password" >/dev/null
+}
+
+kc_set_client_secret() {
+  local client_id="$1" secret="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "would set the workspace-switch client secret"
+    return 0
+  fi
+  "${KCADM_ARGS[@]}" update "clients/$client_id" -r "$KC_REALM" \
+    -s "secret=$secret" >/dev/null
+}
+
+# -----------------------------------------------------------------------------
+# Authenticate and ensure the realm itself exists.
+# -----------------------------------------------------------------------------
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "would authenticate to the master realm at $KC_SERVER_URL"
+else
+  authenticated=0
+  for attempt in $(seq 1 60); do
+    if "${KCADM_ARGS[@]}" config credentials \
+        --server "$KC_SERVER_URL" \
+        --realm master \
+        --user "$KC_ADMIN_USER" \
+        --password "$KC_ADMIN_PASS" >/dev/null 2>&1; then
+      authenticated=1
+      break
+    fi
+    if [[ $attempt -eq 60 ]]; then
+      break
+    fi
+    sleep 2
+  done
+  [[ $authenticated -eq 1 ]] || die "Keycloak administrator authentication failed" 4
 fi
 
-# ----------------------------------------------------------------------------
-# Realm prerequisites — verify user-attributes scope exists
-# ----------------------------------------------------------------------------
-log "Verifying realm prerequisites in $KC_REALM ..."
-if [[ $DRY_RUN -eq 0 ]]; then
-  ua_scope_id="$($KCADM_BIN get client-scopes -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, '$2 == "user-attributes" { print $1 }' \
-    || true)"
-  if [[ -z "${ua_scope_id:-}" ]]; then
-    die "Realm $KC_REALM is missing the 'user-attributes' client scope. Create it first per reference_keycloak_user_attributes.md before running this bootstrap." 2
-  fi
-  log "  user-attributes scope: $ua_scope_id"
+log "Ensuring realm: $KC_REALM"
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "would create or update realm registrationAllowed=$SIGNUP_ENABLED"
+elif "${KCADM_ARGS[@]}" get "realms/$KC_REALM" >/dev/null 2>&1; then
+  "${KCADM_ARGS[@]}" update "realms/$KC_REALM" \
+    -s enabled=true \
+    -s "registrationAllowed=$SIGNUP_ENABLED" >/dev/null
+else
+  "${KCADM_ARGS[@]}" create realms \
+    -s "realm=$KC_REALM" \
+    -s enabled=true \
+    -s "registrationAllowed=$SIGNUP_ENABLED" >/dev/null
 fi
 
-# ----------------------------------------------------------------------------
-# Realm role ladder — CLIENT / STAFF / MANAGER / ADMIN
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Realm roles and permission scopes.
+# -----------------------------------------------------------------------------
 ensure_realm_role() {
-  local role="$1"
-  local description="$2"
+  local role="$1" description="$2"
   if [[ $DRY_RUN -eq 1 ]]; then
     log "would ensure realm role: $role"
     return 0
   fi
-  if $KCADM_BIN get "roles/$role" -r "$KC_REALM" >/dev/null 2>&1; then
-    log "  role exists: $role"
-  else
-    log "  creating role: $role"
-    $KCADM_BIN create roles -r "$KC_REALM" \
-      -s "name=$role" \
-      -s "description=$description" >/dev/null
+  if "${KCADM_ARGS[@]}" get "roles/$role" -r "$KC_REALM" >/dev/null 2>&1; then
+    return 0
   fi
+  "${KCADM_ARGS[@]}" create roles -r "$KC_REALM" \
+    -s "name=$role" -s "description=$description" >/dev/null
 }
 
-log "Ensuring realm role ladder ..."
-ensure_realm_role "CONTACT_OPS_CLIENT" "External read-only access on shared records"
-ensure_realm_role "CONTACT_OPS_STAFF"  "Write within tenant; propose-anywhere"
-ensure_realm_role "CONTACT_OPS_MANAGER" "Merge, ACL, tenant settings, approve high-stakes"
-ensure_realm_role "CONTACT_OPS_ADMIN"  "Delete, agent trust tiers, cross-tenant, glass-break"
+log "Ensuring application roles"
+ensure_realm_role CLIENT "External read access within a workspace"
+ensure_realm_role STAFF "Operational writes within a workspace"
+ensure_realm_role MANAGER "Workspace administration and approvals"
+ensure_realm_role ADMIN "Full administration for this Contact-Ops cell"
 
-# ----------------------------------------------------------------------------
-# Phase 0 client scopes
-# ----------------------------------------------------------------------------
-PHASE0_SCOPES=(
-  "person:read"
-  "person:write"
-  "person:propose_merge"
-  "person:apply_merge"
-  "person:bulk"
-  "org:read"
-  "org:write"
-  "org:bulk"
-  "field:propose_set"
-  "field:apply_set"
-  "relationship:propose"
-  "relationship:apply"
-  "tag:apply"
-  "voice:match"
-  "voice:assign"
-  "agent:register"
-  "admin:tenant"
-  "carddav:sync"
-  "data-intel:catalogue:submit"
-  "data-intel:catalogue:search"
+CLIENT_SCOPES=(
+  "person:read" "person:write" "person:propose_merge" "person:apply_merge"
+  "person:bulk" "org:read" "org:write" "org:bulk" "field:propose_set"
+  "field:apply_set" "relationship:propose" "relationship:apply" "tag:apply"
+  "voice:match" "voice:assign" "agent:register" "admin:tenant" "admin:debug"
+  "carddav:sync" "pat:read" "pat:write"
 )
 
 ensure_client_scope() {
-  local scope_name="$1"
+  local scope_name="$1" existing_id
   if [[ $DRY_RUN -eq 1 ]]; then
-    log "would ensure scope: $scope_name"
+    log "would ensure client scope: $scope_name"
     return 0
   fi
-  local existing_id
-  existing_id="$($KCADM_BIN get client-scopes -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v n="$scope_name" '$2 == n { print $1 }' || true)"
-  if [[ -n "$existing_id" ]]; then
-    log "  scope exists: $scope_name ($existing_id)"
-    return 0
-  fi
-  log "  creating scope: $scope_name"
-  $KCADM_BIN create client-scopes -r "$KC_REALM" \
+  existing_id="$("${KCADM_ARGS[@]}" get client-scopes -r "$KC_REALM" \
+    --fields id,name --format csv --noquotes 2>/dev/null \
+    | awk -F, -v name="$scope_name" '$2 == name { print $1; exit }' || true)"
+  [[ -n "$existing_id" ]] && return 0
+  "${KCADM_ARGS[@]}" create client-scopes -r "$KC_REALM" \
     -s "name=$scope_name" \
-    -s "protocol=openid-connect" \
-    -s "attributes.\"include.in.token.scope\"=true" \
-    -s "attributes.\"display.on.consent.screen\"=false" \
-    -s "description=Contact-Ops Phase 0 scope: $scope_name" >/dev/null
+    -s protocol=openid-connect \
+    -s 'attributes."include.in.token.scope"=true' \
+    -s 'attributes."display.on.consent.screen"=false' \
+    -s "description=Contact-Ops permission scope: $scope_name" >/dev/null
 }
 
-log "Ensuring Phase 0 client scopes ..."
-for s in "${PHASE0_SCOPES[@]}"; do
-  ensure_client_scope "$s"
+log "Ensuring permission scopes"
+for scope in "${CLIENT_SCOPES[@]}"; do
+  ensure_client_scope "$scope"
 done
-
-# ----------------------------------------------------------------------------
-# Helpers for client management
-# ----------------------------------------------------------------------------
-get_client_id() {
-  # Echo the Keycloak internal ID for a clientId, or empty if missing.
-  local cid="$1"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    echo "dry-run-id-$cid"
-    return 0
-  fi
-  $KCADM_BIN get clients -r "$KC_REALM" -q "clientId=$cid" --fields id --format csv --noquotes 2>/dev/null \
-    | tr -d '\r' | head -n1
-}
 
 get_scope_id() {
   local scope_name="$1"
   if [[ $DRY_RUN -eq 1 ]]; then
-    echo "dry-run-scope-id-$scope_name"
+    printf 'dry-run-scope-%s\n' "$scope_name"
     return 0
   fi
-  $KCADM_BIN get client-scopes -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v n="$scope_name" '$2 == n { print $1 }'
+  "${KCADM_ARGS[@]}" get client-scopes -r "$KC_REALM" \
+    --fields id,name --format csv --noquotes 2>/dev/null \
+    | awk -F, -v name="$scope_name" '$2 == name { print $1; exit }'
 }
 
 assign_scope() {
-  # Assign a scope to a client as default or optional.
-  local client_id="$1"
-  local scope_id="$2"
-  local kind="$3"  # default | optional
+  local client_id="$1" scope_id="$2" kind="$3"
+  [[ -z "$scope_id" ]] && return 0
   if [[ $DRY_RUN -eq 1 ]]; then
     log "would assign $kind scope $scope_id to client $client_id"
     return 0
   fi
-  # Idempotent: kcadm returns 204 if already assigned, no error.
-  $KCADM_BIN update "clients/$client_id/${kind}-client-scopes/$scope_id" -r "$KC_REALM" >/dev/null 2>&1 \
-    || warn "scope $scope_id ($kind) assignment to $client_id returned non-zero (likely already assigned)"
+  "${KCADM_ARGS[@]}" update "clients/$client_id/${kind}-client-scopes/$scope_id" \
+    -r "$KC_REALM" >/dev/null 2>&1 \
+    || warn "scope assignment returned non-zero; it may already exist"
+}
+
+# -----------------------------------------------------------------------------
+# Small JSON helpers for kcadm representations. All values are operator-provided
+# URLs or fixed client metadata, never secrets or user/customer data.
+# -----------------------------------------------------------------------------
+json_array() {
+  local raw="${1:-}" item first=1
+  local -a items=()
+  [[ -n "$raw" ]] && IFS=',' read -r -a items <<< "$raw"
+  printf '['
+  if [[ ${#items[@]} -gt 0 ]]; then
+    for item in "${items[@]}"; do
+      [[ -z "$item" ]] && continue
+      if [[ $first -eq 0 ]]; then printf ','; fi
+      printf '"%s"' "$item"
+      first=0
+    done
+  fi
+  printf ']'
+}
+
+write_client_json() {
+  local out="$1" cid="$2" name="$3" public="$4" bearer="$5"
+  local standard="$6" direct="$7" service="$8" root="$9"
+  local redirects="${10:-}" origins="${11:-}" redirect_json origin_json
+  redirect_json="$(json_array "$redirects")"
+  origin_json="$(json_array "$origins")"
+  cat >"$out" <<JSON
+{
+  "clientId": "$cid",
+  "name": "$name",
+  "description": "Contact-Ops self-host client",
+  "enabled": true,
+  "publicClient": $public,
+  "bearerOnly": $bearer,
+  "standardFlowEnabled": $standard,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": $direct,
+  "serviceAccountsEnabled": $service,
+  "authorizationServicesEnabled": false,
+  "rootUrl": "$root",
+  "baseUrl": "/",
+  "redirectUris": $redirect_json,
+  "webOrigins": $origin_json,
+  "attributes": {
+    "pkce.code.challenge.method": "S256",
+    "use.refresh.tokens": "true",
+    "access.token.lifespan": "300"
+  },
+  "fullScopeAllowed": false,
+  "protocol": "openid-connect"
+}
+JSON
+}
+
+get_client_id() {
+  local client_name="$1"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    printf 'dry-run-client-%s\n' "$client_name"
+    return 0
+  fi
+  "${KCADM_ARGS[@]}" get clients -r "$KC_REALM" -q "clientId=$client_name" \
+    --fields id --format csv --noquotes 2>/dev/null \
+    | tr -d '\r' | head -n1 || true
+}
+
+upsert_client() {
+  local client_name="$1" json_file="$2" existing_id
+  existing_id="$(get_client_id "$client_name")"
+  if [[ -n "$existing_id" && "$existing_id" != "dry-run-client-$client_name" ]]; then
+    log "updating client: $client_name"
+    if [[ $ROTATE_SECRETS -eq 1 && "$client_name" != "contact-ops-switch" && $DRY_RUN -eq 0 ]]; then
+      "${KCADM_ARGS[@]}" create "clients/$existing_id/client-secret" -r "$KC_REALM" >/dev/null
+    fi
+    kc update "clients/$existing_id" -r "$KC_REALM" -f "$json_file" >/dev/null
+    printf '%s\n' "$existing_id"
+    return 0
+  fi
+  log "creating client: $client_name"
+  kc create clients -r "$KC_REALM" -f "$json_file" >/dev/null
+  get_client_id "$client_name"
 }
 
 ensure_mapper_for_client() {
-  # Add a protocol mapper to a client if not already present (by name).
-  local client_id="$1"
-  local mapper_name="$2"
-  local mapper_json_file="$3"
+  local client_id="$1" mapper_name="$2" mapper_file="$3" existing
   if [[ $DRY_RUN -eq 1 ]]; then
     log "would ensure mapper $mapper_name on client $client_id"
     return 0
   fi
-  local existing
-  existing="$($KCADM_BIN get "clients/$client_id/protocol-mappers/models" -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v n="$mapper_name" '$2 == n { print $1 }' || true)"
-  if [[ -n "$existing" ]]; then
-    log "  mapper exists: $mapper_name ($existing)"
-    return 0
-  fi
-  log "  creating mapper: $mapper_name"
-  $KCADM_BIN create "clients/$client_id/protocol-mappers/models" -r "$KC_REALM" -f "$mapper_json_file" >/dev/null
+  existing="$("${KCADM_ARGS[@]}" get "clients/$client_id/protocol-mappers/models" \
+    -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
+    | awk -F, -v name="$mapper_name" '$2 == name { print $1; exit }' || true)"
+  [[ -n "$existing" ]] && return 0
+  "${KCADM_ARGS[@]}" create "clients/$client_id/protocol-mappers/models" \
+    -r "$KC_REALM" -f "$mapper_file" >/dev/null
 }
 
-# ----------------------------------------------------------------------------
-# Mapper templates — written to a temp dir, fed into ensure_mapper_for_client.
-# ----------------------------------------------------------------------------
-TMP_DIR="$(mktemp -d -t contact-ops-keycloak-XXXXXX)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-write_tenant_user_attr_mapper() {
-  # $1 = attribute name (e.g. tenant_id), $2 = claim name, $3 = json type, $4 = output file
-  local attr="$1" claim="$2" jtype="$3" out="$4"
+write_user_attribute_mapper() {
+  local attribute="$1" claim="$2" json_type="$3" out="$4"
   cat >"$out" <<JSON
 {
   "name": "$claim",
@@ -296,9 +361,9 @@ write_tenant_user_attr_mapper() {
   "protocolMapper": "oidc-usermodel-attribute-mapper",
   "consentRequired": false,
   "config": {
-    "user.attribute": "$attr",
+    "user.attribute": "$attribute",
     "claim.name": "$claim",
-    "jsonType.label": "$jtype",
+    "jsonType.label": "$json_type",
     "id.token.claim": "true",
     "access.token.claim": "true",
     "userinfo.token.claim": "true",
@@ -310,7 +375,6 @@ JSON
 }
 
 write_audience_mapper() {
-  # $1 = client_id (target audience), $2 = output file
   local target="$1" out="$2"
   cat >"$out" <<JSON
 {
@@ -327,417 +391,122 @@ write_audience_mapper() {
 JSON
 }
 
-write_hardcoded_claim_mapper() {
-  # $1 = claim name, $2 = claim value, $3 = json type, $4 = output file
-  local cname="$1" cval="$2" jtype="$3" out="$4"
-  cat >"$out" <<JSON
-{
-  "name": "hardcoded-$cname",
-  "protocol": "openid-connect",
-  "protocolMapper": "oidc-hardcoded-claim-mapper",
-  "consentRequired": false,
-  "config": {
-    "claim.name": "$cname",
-    "claim.value": "$cval",
-    "jsonType.label": "$jtype",
-    "id.token.claim": "true",
-    "access.token.claim": "true",
-    "userinfo.token.claim": "true"
-  }
-}
-JSON
-}
+TMP_DIR="$(mktemp -d -t contact-ops-keycloak-XXXXXX)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Pre-generate the tenant mappers — they're identical across clients.
-write_tenant_user_attr_mapper "tenant_id" "tenant_id" "String" "$TMP_DIR/mapper_tenant_id.json"
-write_tenant_user_attr_mapper "tenant_slug" "tenant_slug" "String" "$TMP_DIR/mapper_tenant_slug.json"
-write_tenant_user_attr_mapper "tenant_hipaa" "tenant_hipaa" "boolean" "$TMP_DIR/mapper_tenant_hipaa.json"
+# These are ordinary OIDC user-attribute mappers. No special client scope is
+# required; absent attributes simply produce no tenant claim before onboarding.
+write_user_attribute_mapper tenant_id tenant_id String "$TMP_DIR/mapper_tenant_id.json"
+write_user_attribute_mapper tenant_slug tenant_slug String "$TMP_DIR/mapper_tenant_slug.json"
+write_user_attribute_mapper tenant_hipaa tenant_hipaa boolean "$TMP_DIR/mapper_tenant_hipaa.json"
+write_audience_mapper contact-ops-mcp "$TMP_DIR/mapper_audience.json"
 
-# ----------------------------------------------------------------------------
-# Helper: write a client representation JSON for create/update
-# ----------------------------------------------------------------------------
-write_client_json() {
-  local out="$1" cid="$2" name="$3" public="$4" bearer="$5" standard="$6" direct="$7" service="$8" root="$9"
-  shift 9
-  # Remaining args: redirect URIs (comma-separated), web origins (comma-separated)
-  local redirects="${1:-}"
-  local origins="${2:-}"
-
-  local redirect_json="[]"
-  if [[ -n "$redirects" ]]; then
-    redirect_json="[$(echo "$redirects" | awk -F, '{ for(i=1;i<=NF;i++){ printf "%s\"%s\"", (i>1?",":""), $i } }')]"
-  fi
-  local origin_json="[]"
-  if [[ -n "$origins" ]]; then
-    origin_json="[$(echo "$origins" | awk -F, '{ for(i=1;i<=NF;i++){ printf "%s\"%s\"", (i>1?",":""), $i } }')]"
-  fi
-
-  cat >"$out" <<JSON
-{
-  "clientId": "$cid",
-  "name": "$name",
-  "description": "Contact-Ops Phase 0 client. See docs/KEYCLOAK_CLIENTS.md.",
-  "enabled": true,
-  "publicClient": $public,
-  "bearerOnly": $bearer,
-  "standardFlowEnabled": $standard,
-  "implicitFlowEnabled": false,
-  "directAccessGrantsEnabled": $direct,
-  "serviceAccountsEnabled": $service,
-  "authorizationServicesEnabled": false,
-  "rootUrl": "$root",
-  "baseUrl": "/",
-  "redirectUris": $redirect_json,
-  "webOrigins": $origin_json,
-  "attributes": {
-    "pkce.code.challenge.method": "S256",
-    "use.refresh.tokens": "true",
-    "access.token.lifespan": "300",
-    "client_credentials.use_refresh_token": "false"
-  },
-  "fullScopeAllowed": false,
-  "protocol": "openid-connect"
-}
-JSON
-}
-
-# Generic client upsert
-upsert_client() {
-  local cid="$1" json_file="$2"
-  local existing_id
-  existing_id="$(get_client_id "$cid")"
-  if [[ -n "$existing_id" && "$existing_id" != "dry-run-id-$cid" ]]; then
-    log "  updating client: $cid ($existing_id)"
-    if [[ $ROTATE_SECRETS -eq 1 && $DRY_RUN -eq 0 ]]; then
-      log "    rotating client secret"
-      $KCADM_BIN create "clients/$existing_id/client-secret" -r "$KC_REALM" >/dev/null
-    fi
-    kc update "clients/$existing_id" -r "$KC_REALM" -f "$json_file" >/dev/null
-    echo "$existing_id"
-  else
-    log "  creating client: $cid"
-    if [[ $DRY_RUN -eq 1 ]]; then
-      echo "dry-run-id-$cid"
-      kc create clients -r "$KC_REALM" -f "$json_file" >/dev/null
-      return 0
-    fi
-    $KCADM_BIN create clients -r "$KC_REALM" -f "$json_file" >/dev/null
-    get_client_id "$cid"
-  fi
-}
-
-# Helper: attach the user-attributes scope (uc_uid carrier) as a default scope
-attach_user_attributes_scope() {
+attach_common_mappers() {
   local client_id="$1"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    log "would attach user-attributes scope to $client_id"
-    return 0
-  fi
-  local ua_id
-  ua_id="$(get_scope_id "user-attributes")"
-  if [[ -z "$ua_id" ]]; then
-    warn "user-attributes scope not found at attach time — skipping (this should never happen given prereq check)"
-    return 0
-  fi
-  $KCADM_BIN update "clients/$client_id/default-client-scopes/$ua_id" -r "$KC_REALM" >/dev/null 2>&1 \
-    || warn "user-attributes attach to $client_id returned non-zero (likely already attached)"
+  ensure_mapper_for_client "$client_id" tenant_id "$TMP_DIR/mapper_tenant_id.json"
+  ensure_mapper_for_client "$client_id" tenant_slug "$TMP_DIR/mapper_tenant_slug.json"
+  ensure_mapper_for_client "$client_id" tenant_hipaa "$TMP_DIR/mapper_tenant_hipaa.json"
+  ensure_mapper_for_client "$client_id" aud-contact-ops-mcp "$TMP_DIR/mapper_audience.json"
 }
 
-# Helper: set service-account user attrs (firstName / lastName per VERIFY_PROFILE trap)
-set_service_account_profile() {
-  local client_id="$1" first="$2" last="$3"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    log "would set service-account profile on $client_id: $first $last"
-    return 0
-  fi
-  local sa_user_id
-  sa_user_id="$($KCADM_BIN get "clients/$client_id/service-account-user" -r "$KC_REALM" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r')"
-  if [[ -z "$sa_user_id" ]]; then
-    warn "service-account-user not found for $client_id — service accounts may be disabled"
-    return 0
-  fi
-  $KCADM_BIN update "users/$sa_user_id" -r "$KC_REALM" \
-    -s "firstName=$first" \
-    -s "lastName=$last" \
-    -s 'requiredActions=[]' >/dev/null \
-    || warn "service-account profile update for $client_id returned non-zero"
-}
-
-# ----------------------------------------------------------------------------
-# Client 1: contact-ops-mcp — bearer-only, the MCP server
-# ----------------------------------------------------------------------------
-log ""
-log "=== Client 1: contact-ops-mcp ==="
-write_client_json "$TMP_DIR/client_mcp.json" \
-  "contact-ops-mcp" \
-  "Contact-Ops MCP Server" \
-  "false"  "true"   "false"  "false"  "true"   "https://$MCP_HOST" \
-  "" \
-  ""
-
-MCP_ID="$(upsert_client "contact-ops-mcp" "$TMP_DIR/client_mcp.json" || true)"
-log "  internal id: $MCP_ID"
-
-attach_user_attributes_scope "$MCP_ID"
-
-# Tenant claim mappers
-ensure_mapper_for_client "$MCP_ID" "tenant_id" "$TMP_DIR/mapper_tenant_id.json"
-ensure_mapper_for_client "$MCP_ID" "tenant_slug" "$TMP_DIR/mapper_tenant_slug.json"
-ensure_mapper_for_client "$MCP_ID" "tenant_hipaa" "$TMP_DIR/mapper_tenant_hipaa.json"
-
-# Audience mapper (self)
-write_audience_mapper "contact-ops-mcp" "$TMP_DIR/mapper_aud_mcp.json"
-ensure_mapper_for_client "$MCP_ID" "aud-contact-ops-mcp" "$TMP_DIR/mapper_aud_mcp.json"
-
-# Service-account profile for VERIFY_PROFILE safety
-set_service_account_profile "$MCP_ID" "Contact-Ops" "MCP-Server"
-
-# Optional scopes — every Phase 0 scope is optional on the MCP client
-for s in "${PHASE0_SCOPES[@]}"; do
-  sid="$(get_scope_id "$s")"
-  [[ -n "$sid" ]] && assign_scope "$MCP_ID" "$sid" "optional"
-done
-
-# ----------------------------------------------------------------------------
-# Client 2: contact-ops-app — public, PKCE, future human UI
-# ----------------------------------------------------------------------------
-log ""
-log "=== Client 2: contact-ops-app ==="
-write_client_json "$TMP_DIR/client_app.json" \
-  "contact-ops-app" \
-  "Contact-Ops Web App" \
-  "true"   "false"  "true"   "false"  "false"  "https://$APP_HOST" \
-  "https://$APP_HOST/auth/callback,https://$APP_HOST/auth/silent-renew,$DEV_HOST/auth/callback,$DEV_HOST/auth/silent-renew" \
-  "https://$APP_HOST,$DEV_HOST,+"
-
-APP_ID="$(upsert_client "contact-ops-app" "$TMP_DIR/client_app.json" || true)"
-log "  internal id: $APP_ID"
-
-attach_user_attributes_scope "$APP_ID"
-ensure_mapper_for_client "$APP_ID" "tenant_id" "$TMP_DIR/mapper_tenant_id.json"
-ensure_mapper_for_client "$APP_ID" "tenant_slug" "$TMP_DIR/mapper_tenant_slug.json"
-ensure_mapper_for_client "$APP_ID" "tenant_hipaa" "$TMP_DIR/mapper_tenant_hipaa.json"
-
-write_audience_mapper "contact-ops-app" "$TMP_DIR/mapper_aud_app.json"
-ensure_mapper_for_client "$APP_ID" "aud-contact-ops-app" "$TMP_DIR/mapper_aud_app.json"
-
-# App-specific optional scopes
-APP_SCOPES=(person:read person:write org:read org:write relationship:propose relationship:apply tag:apply voice:match field:propose_set field:apply_set carddav:sync)
-for s in "${APP_SCOPES[@]}"; do
-  sid="$(get_scope_id "$s")"
-  [[ -n "$sid" ]] && assign_scope "$APP_ID" "$sid" "optional"
-done
-
-# offline_access on the app — required for long-lived sessions
-if [[ $DRY_RUN -eq 0 ]]; then
-  off_id="$($KCADM_BIN get client-scopes -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null | awk -F, '$2 == "offline_access" { print $1 }' || true)"
-  if [[ -n "$off_id" ]]; then
-    assign_scope "$APP_ID" "$off_id" "default"
-  fi
-fi
-
-# ----------------------------------------------------------------------------
-# Client 3: contact-ops-carddav — confidential, direct grants
-# ----------------------------------------------------------------------------
-log ""
-log "=== Client 3: contact-ops-carddav ==="
-write_client_json "$TMP_DIR/client_carddav.json" \
-  "contact-ops-carddav" \
-  "Contact-Ops CardDAV" \
-  "false"  "false"  "false"  "true"   "true"   "https://$CARDDAV_HOST" \
-  "" \
-  ""
-
-CARDDAV_ID="$(upsert_client "contact-ops-carddav" "$TMP_DIR/client_carddav.json" || true)"
-log "  internal id: $CARDDAV_ID"
-
-attach_user_attributes_scope "$CARDDAV_ID"
-ensure_mapper_for_client "$CARDDAV_ID" "tenant_id" "$TMP_DIR/mapper_tenant_id.json"
-ensure_mapper_for_client "$CARDDAV_ID" "tenant_slug" "$TMP_DIR/mapper_tenant_slug.json"
-ensure_mapper_for_client "$CARDDAV_ID" "tenant_hipaa" "$TMP_DIR/mapper_tenant_hipaa.json"
-
-write_audience_mapper "contact-ops-carddav" "$TMP_DIR/mapper_aud_carddav.json"
-ensure_mapper_for_client "$CARDDAV_ID" "aud-contact-ops-carddav" "$TMP_DIR/mapper_aud_carddav.json"
-
-# device_id mapper — for per-device app-password revocation
-write_tenant_user_attr_mapper "device_id" "device_id" "String" "$TMP_DIR/mapper_device_id.json"
-ensure_mapper_for_client "$CARDDAV_ID" "device_id" "$TMP_DIR/mapper_device_id.json"
-
-# CardDAV scopes
-CARDDAV_SCOPES=(carddav:sync person:read person:write field:propose_set)
-for s in "${CARDDAV_SCOPES[@]}"; do
-  sid="$(get_scope_id "$s")"
-  [[ -n "$sid" ]] && assign_scope "$CARDDAV_ID" "$sid" "default"
-done
-
-set_service_account_profile "$CARDDAV_ID" "Contact-Ops" "CardDAV"
-
-# ----------------------------------------------------------------------------
-# Client 4: contact-ops-publisher — outbound federation
-# ----------------------------------------------------------------------------
-log ""
-log "=== Client 4: contact-ops-publisher ==="
-write_client_json "$TMP_DIR/client_publisher.json" \
-  "contact-ops-publisher" \
-  "Contact-Ops Publisher (outbound federation)" \
-  "false"  "false"  "false"  "false"  "true"   "https://$MCP_HOST" \
-  "" \
-  ""
-
-# Patch in longer access-token lifetime for publisher (outbound stalls).
-# We rewrite the JSON in-place to set access.token.lifespan=600 for this client only.
-python3 - "$TMP_DIR/client_publisher.json" <<'PY' 2>/dev/null || true
-import json, sys
-p = sys.argv[1]
-with open(p) as f: doc = json.load(f)
-doc.setdefault("attributes", {})["access.token.lifespan"] = "600"
-with open(p, "w") as f: json.dump(doc, f, indent=2)
-PY
-
-PUBLISHER_ID="$(upsert_client "contact-ops-publisher" "$TMP_DIR/client_publisher.json" || true)"
-log "  internal id: $PUBLISHER_ID"
-
-attach_user_attributes_scope "$PUBLISHER_ID"
-
-# Audience mappers — emits BOTH verify.centerdeep.online and contact-ops-mcp
-write_audience_mapper "contact-ops-mcp" "$TMP_DIR/mapper_aud_pub_mcp.json"
-ensure_mapper_for_client "$PUBLISHER_ID" "aud-contact-ops-mcp" "$TMP_DIR/mapper_aud_pub_mcp.json"
-
-# Hardcoded audience for verify.centerdeep.online (no client of that exact name in uchub realm; use hardcoded mapper)
-cat >"$TMP_DIR/mapper_aud_verify.json" <<JSON
-{
-  "name": "aud-verify-centerdeep",
-  "protocol": "openid-connect",
-  "protocolMapper": "oidc-audience-mapper",
-  "consentRequired": false,
-  "config": {
-    "included.custom.audience": "https://verify.centerdeep.online",
-    "id.token.claim": "false",
-    "access.token.claim": "true"
-  }
-}
-JSON
-ensure_mapper_for_client "$PUBLISHER_ID" "aud-verify-centerdeep" "$TMP_DIR/mapper_aud_verify.json"
-
-# Publisher scopes
-PUBLISHER_SCOPES=(data-intel:catalogue:submit data-intel:catalogue:search field:propose_set person:read org:read)
-for s in "${PUBLISHER_SCOPES[@]}"; do
-  sid="$(get_scope_id "$s")"
-  [[ -n "$sid" ]] && assign_scope "$PUBLISHER_ID" "$sid" "default"
-done
-
-set_service_account_profile "$PUBLISHER_ID" "Contact-Ops" "Publisher"
-
-# ----------------------------------------------------------------------------
-# Client 5: contact-ops-bridge-inbound — inbound federation
-# ----------------------------------------------------------------------------
-log ""
-log "=== Client 5: contact-ops-bridge-inbound ==="
-write_client_json "$TMP_DIR/client_bridge.json" \
-  "contact-ops-bridge-inbound" \
-  "Contact-Ops Bridge (inbound from Data Intel)" \
-  "false"  "false"  "false"  "false"  "true"   "https://$MCP_HOST" \
-  "" \
-  ""
-
-python3 - "$TMP_DIR/client_bridge.json" <<'PY' 2>/dev/null || true
-import json, sys
-p = sys.argv[1]
-with open(p) as f: doc = json.load(f)
-doc.setdefault("attributes", {})["access.token.lifespan"] = "600"
-with open(p, "w") as f: json.dump(doc, f, indent=2)
-PY
-
-BRIDGE_ID="$(upsert_client "contact-ops-bridge-inbound" "$TMP_DIR/client_bridge.json" || true)"
-log "  internal id: $BRIDGE_ID"
-
-attach_user_attributes_scope "$BRIDGE_ID"
-
-# Audience: tokens minted (or exchanged) here carry aud=contact-ops-mcp
-write_audience_mapper "contact-ops-mcp" "$TMP_DIR/mapper_aud_bridge_mcp.json"
-ensure_mapper_for_client "$BRIDGE_ID" "aud-contact-ops-mcp" "$TMP_DIR/mapper_aud_bridge_mcp.json"
-
-# Bridge scopes
-BRIDGE_SCOPES=(field:propose_set relationship:propose person:read org:read tag:apply voice:match)
-for s in "${BRIDGE_SCOPES[@]}"; do
-  sid="$(get_scope_id "$s")"
-  [[ -n "$sid" ]] && assign_scope "$BRIDGE_ID" "$sid" "default"
-done
-
-set_service_account_profile "$BRIDGE_ID" "Contact-Ops" "Bridge-Inbound"
-
-# ----------------------------------------------------------------------------
-# Token-exchange permissions (RFC 8693)
-# ----------------------------------------------------------------------------
-log ""
-log "=== Token-exchange permissions ==="
-log "Note: token-exchange permissions in Keycloak 26.x require enabling the feature flag"
-log "      'token-exchange' at server-start. If KC_FEATURE_TOKEN_EXCHANGE is unset/false,"
-log "      the permission grants below will fail silently and you'll need to enable"
-log "      the feature and re-run. Verify with: kcadm.sh get serverinfo --fields features"
-
-# Helper: grant client A the right to exchange tokens for client B (target).
-# In Keycloak 26.x, this is done via Authorization permissions on the target client.
-# The bootstrap script declares intent; if the feature is disabled, the calls no-op.
-grant_token_exchange() {
-  local source_cid="$1" target_cid="$2"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    log "would grant token-exchange: $source_cid -> $target_cid"
-    return 0
-  fi
-  local source_id target_id
-  source_id="$(get_client_id "$source_cid")"
-  target_id="$(get_client_id "$target_cid")"
-  if [[ -z "$source_id" || -z "$target_id" ]]; then
-    log "  skip token-exchange grant $source_cid -> $target_cid (client missing — likely peer not yet onboarded)"
-    return 0
-  fi
-  # Enable Authorization Services momentarily on the target to add the permission, then leave enabled.
-  # Keycloak 26.x supports the token-exchange permission via the admin REST endpoint:
-  #   PUT /admin/realms/{realm}/clients/{target}/management/permissions { "enabled": true }
-  # then POST a policy + permission on the target's authorization server.
-  # For Phase 0, we emit a TODO + best-effort attempt. Most real wiring happens via the Keycloak UI
-  # once per pair; the script makes the call so a re-run will succeed if Aaron has enabled it.
-  $KCADM_BIN update "clients/$target_id/management/permissions" -r "$KC_REALM" \
-    -s "enabled=true" >/dev/null 2>&1 \
-    || warn "could not enable management permissions on $target_cid (token-exchange feature flag?)"
-  log "  granted: $source_cid -> $target_cid (best-effort; verify in admin UI under Permissions)"
-}
-
-# Phase 0 grants (per docs/KEYCLOAK_CLIENTS.md §6 rows 1-8)
-grant_token_exchange "contact-ops-app"            "contact-ops-mcp"
-grant_token_exchange "contact-ops-app"            "contact-ops-carddav"
-grant_token_exchange "contact-ops-publisher"      "contact-ops-mcp"
-grant_token_exchange "contact-ops-bridge-inbound" "contact-ops-mcp"
-
-# Optional peer grants — only if the peer client already exists
-for peer in meeting-ops-mcp project-ops-mcp crisis-ops-mcp data-intel-mcp brigade-mcp; do
-  if [[ $DRY_RUN -eq 0 ]] && [[ -n "$(get_client_id "$peer")" ]]; then
-    grant_token_exchange "$peer" "contact-ops-mcp"
-  else
-    log "  skip peer $peer (not yet in realm)"
-  fi
-done
-
-# ----------------------------------------------------------------------------
-# Verification — final list
-# ----------------------------------------------------------------------------
-log ""
-log "=== Verification ==="
-if [[ $DRY_RUN -eq 0 ]]; then
-  for cid in contact-ops-mcp contact-ops-app contact-ops-carddav contact-ops-publisher contact-ops-bridge-inbound; do
-    $KCADM_BIN get clients -r "$KC_REALM" -q "clientId=$cid" \
-      --fields id,clientId,publicClient,bearerOnly,serviceAccountsEnabled,enabled
+assign_default_scope() {
+  local client_id="$1" scope
+  for scope in pat:read pat:write; do
+    assign_scope "$client_id" "$(get_scope_id "$scope")" default
   done
+}
+
+log "Ensuring OIDC clients"
+
+write_client_json "$TMP_DIR/mcp.json" contact-ops-mcp "Contact-Ops MCP" \
+  false true false false false "$MCP_ORIGIN" "" ""
+MCP_ID="$(upsert_client contact-ops-mcp "$TMP_DIR/mcp.json")"
+attach_common_mappers "$MCP_ID"
+assign_default_scope "$MCP_ID"
+
+write_client_json "$TMP_DIR/app.json" contact-ops-app "Contact-Ops Web App" \
+  true false true true false "$APP_ORIGIN" \
+  "$APP_ORIGIN/auth/callback,$APP_ORIGIN/auth/silent-renew,$DEV_ORIGIN/auth/callback,$DEV_ORIGIN/auth/silent-renew" \
+  "$APP_ORIGIN,$DEV_ORIGIN"
+APP_ID="$(upsert_client contact-ops-app "$TMP_DIR/app.json")"
+attach_common_mappers "$APP_ID"
+assign_default_scope "$APP_ID"
+
+write_client_json "$TMP_DIR/carddav.json" contact-ops-carddav "Contact-Ops CardDAV" \
+  false false false true true "$CARDDAV_ORIGIN" "" ""
+CARDDAV_ID="$(upsert_client contact-ops-carddav "$TMP_DIR/carddav.json")"
+attach_common_mappers "$CARDDAV_ID"
+for scope in carddav:sync person:read person:write; do
+  assign_scope "$CARDDAV_ID" "$(get_scope_id "$scope")" default
+done
+
+# These service clients are local placeholders for optional integrations. They
+# carry the same local audience contract but no external federation permissions.
+write_client_json "$TMP_DIR/publisher.json" contact-ops-publisher "Contact-Ops Publisher" \
+  false false false false true "$MCP_ORIGIN" "" ""
+PUBLISHER_ID="$(upsert_client contact-ops-publisher "$TMP_DIR/publisher.json")"
+attach_common_mappers "$PUBLISHER_ID"
+
+write_client_json "$TMP_DIR/bridge.json" contact-ops-bridge-inbound "Contact-Ops Bridge" \
+  false false false false true "$MCP_ORIGIN" "" ""
+BRIDGE_ID="$(upsert_client contact-ops-bridge-inbound "$TMP_DIR/bridge.json")"
+attach_common_mappers "$BRIDGE_ID"
+
+# The onboarding endpoint uses client credentials to write tenant attributes on
+# the user. Give only this switch service account the minimum Keycloak admin
+# roles needed by that endpoint.
+write_client_json "$TMP_DIR/switch.json" contact-ops-switch "Contact-Ops Workspace Switch" \
+  false false false false true "$MCP_ORIGIN" "" ""
+SWITCH_ID="$(upsert_client contact-ops-switch "$TMP_DIR/switch.json")"
+kc_set_client_secret "$SWITCH_ID" "$KEYCLOAK_SWITCH_CLIENT_SECRET"
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "would grant the switch service account view-users, query-users, and manage-users"
 else
-  log "(dry-run) would list all five clients"
+  for role in view-users query-users manage-users; do
+    "${KCADM_ARGS[@]}" add-roles -r "$KC_REALM" \
+      --uusername "service-account-contact-ops-switch" \
+      --cclientid realm-management --rolename "$role" >/dev/null 2>&1 \
+      || die "could not grant realm-management/$role to workspace-switch service account" 5
+  done
 fi
 
-log ""
-log "Keycloak bootstrap complete."
-log "Next steps:"
-log "  - Confirm token-exchange feature is enabled on the Keycloak server (FEATURES env)."
-log "  - In the admin UI: Clients > contact-ops-mcp > Permissions > add token-exchange policies"
-log "    for each source client per docs/KEYCLOAK_CLIENTS.md §6."
-log "  - Fetch client secrets via: kcadm.sh get clients/<id>/client-secret -r $KC_REALM"
-log "  - Wire secrets into unicorn-postgresql.contact_ops_db.secrets (encrypted with tenant DEK)."
+# -----------------------------------------------------------------------------
+# Bootstrap the first human admin in the application realm.
+# -----------------------------------------------------------------------------
+get_user_id() {
+  local username="$1"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    printf 'dry-run-user-%s\n' "$username"
+    return 0
+  fi
+  "${KCADM_ARGS[@]}" get users -r "$KC_REALM" -q "username=$username" \
+    --fields id --format csv --noquotes 2>/dev/null \
+    | tr -d '\r' | head -n1 || true
+}
+
+log "Ensuring bootstrap admin user"
+ADMIN_USER_ID="$(get_user_id "$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME")"
+if [[ "$ADMIN_USER_ID" == dry-run-user-* ]]; then
+  log "would create/update bootstrap admin and assign ADMIN"
+elif [[ -z "$ADMIN_USER_ID" ]]; then
+  "${KCADM_ARGS[@]}" create users -r "$KC_REALM" \
+    -s "username=$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME" \
+    -s enabled=true -s emailVerified=true >/dev/null
+  ADMIN_USER_ID="$(get_user_id "$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME")"
+  [[ -z "$ADMIN_USER_ID" ]] && die "bootstrap admin user was not created" 5
+else
+  "${KCADM_ARGS[@]}" update "users/$ADMIN_USER_ID" -r "$KC_REALM" \
+    -s enabled=true -s emailVerified=true >/dev/null
+fi
+kc_set_password "$ADMIN_USER_ID" "$KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD"
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "would assign realm role ADMIN to the bootstrap admin"
+else
+  "${KCADM_ARGS[@]}" add-roles -r "$KC_REALM" --uid "$ADMIN_USER_ID" \
+    --rolename ADMIN >/dev/null 2>&1 \
+    || die "could not assign ADMIN to the bootstrap admin" 5
+fi
+
+log "Keycloak bootstrap complete; signup registrationAllowed=$SIGNUP_ENABLED"
+log "The bootstrap admin password was not printed."
