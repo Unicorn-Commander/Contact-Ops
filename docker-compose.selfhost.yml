@@ -82,9 +82,9 @@ services:
       - ./deploy/selfcontained/garage.toml:/etc/garage.toml:ro
     networks: [contact-ops-internal]
 
-  # The browser uses contact-ops.localhost:8080 as the issuer. The backend
-  # maps that hostname to the Docker host so its server-side switch call sees
-  # the same issuer URL that the browser and JWT verifier see.
+  # The browser resolves contact-ops.localhost to loopback, while the backend
+  # reaches this service through the same hostname on the private network.
+  # Keeping one issuer URL preserves browser OIDC and JWT validation parity.
   contact-ops-keycloak:
     image: quay.io/keycloak/keycloak:26.0.7
     container_name: contact-ops-keycloak
@@ -107,7 +107,10 @@ services:
       KC_HEALTH_ENABLED: "true"
     ports:
       - "127.0.0.1:8080:8080"
-    networks: [contact-ops-internal]
+    networks:
+      contact-ops-internal:
+        aliases:
+          - contact-ops.localhost
     depends_on:
       contact-ops-postgres:
         condition: service_healthy
@@ -221,8 +224,6 @@ services:
       STANDALONE_MODE: "false"
     ports:
       - "127.0.0.1:8501:8501"
-    extra_hosts:
-      - "contact-ops.localhost:host-gateway"
     depends_on:
       contact-ops-postgres:
         condition: service_healthy

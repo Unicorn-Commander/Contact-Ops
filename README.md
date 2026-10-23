@@ -65,7 +65,7 @@ path.chmod(0o600)
 PY
 
 docker compose -f docker-compose.selfhost.yml up -d --build
-curl -fsS http://127.0.0.1:8501/health
+curl -fsS http://127.0.0.1:8501/health/ready
 
 # Load the generated values into this shell without printing them.
 set -a
@@ -106,7 +106,7 @@ esac
 export CONTACT_OPS_PAT="$agent_pat"
 ```
 
-Expected checks are a JSON response containing `"status":"healthy"`, an
+Expected checks are a JSON response containing `"status":"ready"`, an
 `admin workspace: ...` line, and `agent PAT issued: co_pat_...`. Keep
 `CONTACT_OPS_PAT` in the agent's local secret handling; it is shown only once by
 the API and should not be copied into tickets, shell history, or source files.
@@ -118,10 +118,11 @@ generated `KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD` from `.env`. The default
 before the first `docker compose ... up` if this cell should allow the local
 Keycloak registration screen. No external account service is required.
 
-The API health URL is `http://127.0.0.1:8501/health`. The OIDC issuer is
+The API readiness URL is `http://127.0.0.1:8501/health/ready`. The OIDC issuer is
 `http://contact-ops.localhost:8080/realms/contact-ops`; the `.localhost`
 hostname resolves to loopback on standard Linux installations. The compose
-file maps this issuer back through the Docker host for server-side onboarding.
+network gives Keycloak the same hostname so server-side onboarding reaches the
+service without changing the issuer URL.
 
 ## Development checks
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -28,6 +29,29 @@ def test_selfhost_compose_publishes_loopback_ports_and_owns_its_network() -> Non
     assert 'STANDALONE_MODE: "false"' in compose
     assert 'http://127.0.0.1:8501/health' in compose
     assert "condition: service_completed_successfully" in compose
+
+
+def test_selfhost_keycloak_alias_matches_issuer_and_has_no_host_gateway() -> None:
+    compose = _read("docker-compose.selfhost.yml")
+    template = _read("deploy/selfcontained/.env.selfcontained.template")
+    keycloak_block = compose.split("  contact-ops-keycloak:\n", 1)[1].split(
+        "  # Creates the realm contract", 1
+    )[0]
+    issuer_match = re.search(
+        r"^KEYCLOAK_ISSUER=(\S+)$", template, flags=re.MULTILINE
+    )
+
+    assert issuer_match is not None
+    issuer_host = urlsplit(issuer_match.group(1)).hostname
+    assert issuer_host == "contact-ops.localhost"
+    assert "extra_hosts:" not in compose
+    assert "host-gateway" not in compose
+    assert (
+        "    networks:\n"
+        "      contact-ops-internal:\n"
+        "        aliases:\n"
+        "          - contact-ops.localhost\n"
+    ) in keycloak_block
 
 
 def test_selfhost_compose_variables_are_declared_by_the_template() -> None:
@@ -102,7 +126,8 @@ def test_selfhost_documents_oidc_onboarding_and_signup_behavior() -> None:
     readme = _read("README.md")
 
     assert "docker compose -f docker-compose.selfhost.yml up -d --build" in readme
-    assert "curl -fsS http://127.0.0.1:8501/health" in readme
+    assert "curl -fsS http://127.0.0.1:8501/health/ready" in readme
+    assert "curl -fsS http://127.0.0.1:8501/health\n" not in readme
     assert "curl -fsS -X POST http://127.0.0.1:8501/api/auth/onboard" in readme
     assert "SIGNUP_ENABLED=false" in readme
     assert "registration screen" in readme
