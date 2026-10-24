@@ -155,3 +155,11 @@ def test_prod_selfhost_template_cannot_enable_standalone_bypass() -> None:
             KEYCLOAK_ISSUER="",
             CONNECTOR_ENCRYPTION_KEY="test-key",
         )
+
+
+def test_keycloak_bootstrap_uses_only_tools_in_the_keycloak_image() -> None:
+    script = _read("scripts/keycloak_bootstrap.sh")
+
+    # quay.io/keycloak/keycloak ships bash but no awk (clean-room 2026-10-24).
+    assert not re.search(r"\bawk\b", script)
+    assert '-s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL"' in script

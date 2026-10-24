@@ -13,6 +13,8 @@
 #   KC_REALM                              realm to create/update
 #   KC_ADMIN_USER / KC_ADMIN_PASS         master-realm administrator
 #   KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME     first human realm user
+#   KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL        its email (default REMOVED); Keycloak
+#                                         refuses a password login for a user with no profile
 #   KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD     first human realm-user password
 #   KEYCLOAK_SWITCH_CLIENT_SECRET         secret used by the onboarding API
 #
@@ -40,6 +42,7 @@ set -euo pipefail
 : "${KC_ADMIN_USER:?KC_ADMIN_USER is required}"
 : "${KC_ADMIN_PASS:?KC_ADMIN_PASS is required}"
 : "${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME is required}"
+: "${KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL:=REMOVED}"
 : "${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD is required}"
 : "${KEYCLOAK_SWITCH_CLIENT_SECRET:?KEYCLOAK_SWITCH_CLIENT_SECRET is required}"
 
@@ -70,6 +73,22 @@ done
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 warn() { printf '[bootstrap WARN] %s\n' "$*" >&2; }
 die() { printf '[bootstrap ERROR] %s\n' "$*" >&2; exit "${2:-5}"; }
+
+# Print the id of the first "id,name" CSV row whose name matches $1.
+# Pure bash: the Keycloak image this runs in ships no awk.
+csv_id_for_name() {
+  local wanted="$1" line id name
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    id="${line%%,*}"
+    name="${line#*,}"
+    if [[ "$name" == "$wanted" ]]; then
+      printf '%s\n' "$id"
+      return 0
+    fi
+  done
+  return 0
+}
 
 case "$SIGNUP_ENABLED" in
   true|false) ;;
@@ -218,7 +237,7 @@ ensure_client_scope() {
   fi
   existing_id="$("${KCADM_ARGS[@]}" get client-scopes -r "$KC_REALM" \
     --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v name="$scope_name" '$2 == name { print $1; exit }' || true)"
+    | csv_id_for_name "$scope_name" || true)"
   [[ -n "$existing_id" ]] && return 0
   "${KCADM_ARGS[@]}" create client-scopes -r "$KC_REALM" \
     -s "name=$scope_name" \
@@ -241,7 +260,7 @@ get_scope_id() {
   fi
   "${KCADM_ARGS[@]}" get client-scopes -r "$KC_REALM" \
     --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v name="$scope_name" '$2 == name { print $1; exit }'
+    | csv_id_for_name "$scope_name"
 }
 
 assign_scope() {
@@ -346,7 +365,7 @@ ensure_mapper_for_client() {
   fi
   existing="$("${KCADM_ARGS[@]}" get "clients/$client_id/protocol-mappers/models" \
     -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v name="$mapper_name" '$2 == name { print $1; exit }' || true)"
+    | csv_id_for_name "$mapper_name" || true)"
   [[ -n "$existing" ]] && return 0
   "${KCADM_ARGS[@]}" create "clients/$client_id/protocol-mappers/models" \
     -r "$KC_REALM" -f "$mapper_file" >/dev/null
@@ -492,11 +511,14 @@ if [[ "$ADMIN_USER_ID" == dry-run-user-* ]]; then
 elif [[ -z "$ADMIN_USER_ID" ]]; then
   "${KCADM_ARGS[@]}" create users -r "$KC_REALM" \
     -s "username=$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME" \
+    -s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL" \
+    -s firstName=Local -s lastName=Admin \
     -s enabled=true -s emailVerified=true >/dev/null
   ADMIN_USER_ID="$(get_user_id "$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME")"
   [[ -z "$ADMIN_USER_ID" ]] && die "bootstrap admin user was not created" 5
 else
   "${KCADM_ARGS[@]}" update "users/$ADMIN_USER_ID" -r "$KC_REALM" \
+    -s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL" \
     -s enabled=true -s emailVerified=true >/dev/null
 fi
 kc_set_password "$ADMIN_USER_ID" "$KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD"
