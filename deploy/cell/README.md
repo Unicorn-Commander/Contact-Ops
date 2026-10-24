@@ -132,15 +132,41 @@ policies are written `... TO contact_ops_app` and table privileges are GRANTed t
 `contact_ops_app`, so the runtime role only inherits those privileges and has the
 RLS policies apply to it when it is a member of `contact_ops_app`.
 
+### 2b. Seed the RLS probe tenants before the API boots
+
+The runtime role's boot self-test needs exactly two strict tenants, each with a
+person. `prestart` checks that **before** `alembic upgrade head` once
+`public.tenants` exists, and exits without migrating when the check fails.
+`bootstrap_cell.sh` runs the seed first and, when `RLS_SELFTEST_TENANT_IDS` is
+empty, writes the printed line into `.env`.
+
+Manual equivalent, after the admin role can reach Postgres and the schema is
+present (`alembic upgrade head` first on a brand-new database):
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm --no-deps -T \
+  contact-ops-backend python -m contact_ops.ops.seed_rls_probes
+```
+
+Stdout is the comma-separated ids and one `RLS_SELFTEST_TENANT_IDS=` line.
+Paste that line into `.env` if the script did not write it. Running the command
+twice changes nothing. Do this on an upgrade of a cell whose env still has an
+empty probe list, or the new process will refuse to migrate.
+
 ### 3. Bring up the stack — prestart AUTO-MIGRATES
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 The backend image's `CMD` is `python -m contact_ops.ops.prestart`, which:
-1. runs `alembic upgrade head` (using `MIGRATION_DATABASE_URL`, the admin role),
-2. asserts `schema_guard.EXPECTED_ALEMBIC_REVISION` (**currently `0043`**) — if
+1. checks `RLS_SELFTEST_TENANT_IDS` against the database when the runtime role
+   is non-privileged and `public.tenants` already exists (see step 2b) — a miss
+   exits **before** any migration,
+2. runs `alembic upgrade head` (using `MIGRATION_DATABASE_URL`, the admin role),
+3. asserts `schema_guard.EXPECTED_ALEMBIC_REVISION` (**currently `0043`**) — if
    the head and the guard disagree the boot **fails loudly**,
-3. then `os.execv`'s into uvicorn on `:8501`.
+4. then `os.execv`'s into uvicorn on `:8501`. A fresh database with no
+   `tenants` table still migrates; the boot self-test then refuses until the
+   probe line is set.
 
 So there is **no separate migration command** in normal operation — migrations
 are an automatic, guarded part of boot. (A standalone

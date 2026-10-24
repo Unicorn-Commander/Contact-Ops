@@ -73,6 +73,35 @@ failure stops the container (it will NOT boot healthy against a wrong schema).
   `main.py` lifespan) — so "DB down" is a clear failed boot, not a healthy box
   that 500s every request.
 
+### RLS probe tenants before an upgrade
+
+`prestart` checks the runtime role before `alembic upgrade head`. When that role
+is not a superuser and does not have `BYPASSRLS`, and `public.tenants` already
+exists, `RLS_SELFTEST_TENANT_IDS` must name exactly two distinct tenants that
+are `isolation_mode=strict` and each have at least one person. Otherwise
+prestart exits and does not migrate. That keeps an upgrade from leaving a
+migrated database behind a crash-looping API. The boot self-test in
+`contact_ops/main.py` is unchanged and still refuses to serve when the probes
+are missing.
+
+On a database that already has the schema, from a shell that has
+`MIGRATION_DATABASE_URL` (the admin role) and the backend on `PYTHONPATH`:
+
+```bash
+python -m contact_ops.ops.seed_rls_probes
+```
+
+Inside the image the same command is `python -m contact_ops.ops.seed_rls_probes`
+(working directory `/app`). It creates or finds slugs `rls-probe-a` and
+`rls-probe-b` and prints only the comma-separated ids and the
+`RLS_SELFTEST_TENANT_IDS=...` line. Put that line in the environment, then
+start the API. Running it twice does not change the rows. A brand-new database
+has no `tenants` table yet, so prestart still migrates, logs that the probes
+are missing, and the boot self-test refuses until the line is set. The
+self-host and self-contained compose files run this command in
+`contact-ops-db-bootstrap` before the API container starts.
+`deploy/cell/bootstrap_cell.sh` does the same and fills an empty line in `.env`.
+
 ### Database credential rotation
 
 Use [DATABASE-CREDENTIAL-ROTATION.md](DATABASE-CREDENTIAL-ROTATION.md) for the

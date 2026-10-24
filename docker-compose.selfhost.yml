@@ -141,9 +141,11 @@ services:
     entrypoint: ["/bin/bash", "/opt/contact-ops/keycloak_bootstrap.sh"]
     networks: [contact-ops-internal]
 
-  # Migrations run once with the BYPASSRLS database role. The two synthetic
-  # strict tenants/persons are the deterministic fixtures required by the
-  # runtime role's fail-closed RLS self-test; they contain no customer data.
+  # Migrations run once with the BYPASSRLS database role. seed_rls_probes
+  # creates or finds the two strict probe tenants the runtime role's boot
+  # self-test requires (rls-probe-a / rls-probe-b, or the legacy
+  # selfhost-probe-* rows). They contain no customer data. The printed ids are
+  # the well-known values already set in the self-contained env template.
   contact-ops-db-bootstrap:
     <<: *backend-image
     container_name: contact-ops-db-bootstrap
@@ -161,59 +163,7 @@ services:
       - |
         set -eu
         alembic upgrade head
-        python - <<'PY'
-        import asyncio
-        import os
-
-        import asyncpg
-
-        TENANTS = (
-            ("11111111-1111-4111-8111-111111111111", "selfhost-probe-a", "Self-host isolation probe A"),
-            ("22222222-2222-4222-8222-222222222222", "selfhost-probe-b", "Self-host isolation probe B"),
-        )
-
-        async def main() -> None:
-            conn = await asyncpg.connect(os.environ["MIGRATION_DATABASE_URL"])
-            try:
-                owner_id = os.environ["SEED_OWNER_USER_ID"]
-                for tenant_id, slug, display_name in TENANTS:
-                    await conn.execute(
-                        """
-                        INSERT INTO tenants (
-                            id, slug, kind, display_name, owner_user_id,
-                            isolation_mode, isolation_mode_locked,
-                            qdrant_namespace, garage_bucket_prefix, graph_name
-                        ) VALUES (
-                            $1::uuid, $2, 'personal', $3, $4::uuid,
-                            'strict', true, $5, $6, $7
-                        )
-                        ON CONFLICT (id) DO UPDATE SET
-                            isolation_mode = EXCLUDED.isolation_mode,
-                            isolation_mode_locked = EXCLUDED.isolation_mode_locked
-                        """,
-                        tenant_id,
-                        slug,
-                        display_name,
-                        owner_id,
-                        f"contact_ops__{slug}",
-                        f"contact-ops-{slug}",
-                        f"contact_ops__{slug.replace('-', '_')}",
-                    )
-                    await conn.execute(
-                        """
-                        INSERT INTO persons (display_name, canonical_owner_tenant_id, vcard_uid)
-                        VALUES ($1, $2::uuid, $3)
-                        ON CONFLICT (vcard_uid) DO NOTHING
-                        """,
-                        display_name,
-                        tenant_id,
-                        slug,
-                    )
-            finally:
-                await conn.close()
-
-        asyncio.run(main())
-        PY
+        python -m contact_ops.ops.seed_rls_probes
 
   contact-ops-backend:
     <<: *backend-image

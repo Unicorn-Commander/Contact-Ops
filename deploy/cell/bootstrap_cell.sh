@@ -8,9 +8,11 @@
 # (DB + runtime login role + stack up + health) and then PRINTS the remaining
 # manual steps that need human-supplied secrets.
 #
-# Order (must not change): create DB + login roles  ->  docker compose up
-# (prestart AUTO-RUNS alembic to head + asserts schema_guard)  ->  manual
-# keycloak / garage / flag-flip steps.
+# Order (must not change): create DB + login roles  ->  seed the two RLS probe
+# tenants (alembic first only when public.tenants is absent) and write
+# RLS_SELFTEST_TENANT_IDS when that line is empty  ->  docker compose up
+# (prestart checks the probes, AUTO-RUNS alembic to head + asserts schema_guard)
+#  ->  manual keycloak / garage / flag-flip steps.
 #
 # Idempotent + non-destructive: re-running is safe; it refuses to touch a DB
 # that already has Contact-Ops tables.
@@ -136,6 +138,81 @@ SQL
   fi
 fi
 
+# --- 1b. RLS probe tenants before the API can migrate-and-crash --------------
+# prestart refuses to run alembic on a database that already has tenants when
+# the runtime role is non-privileged and RLS_SELFTEST_TENANT_IDS is not two
+# strict tenants with a person each. Seed first (migrate only on a fresh
+# database), then let prestart migrate an existing cell.
+log "=== 1b. RLS probe tenants (before the API boots) ==="
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "  (dry-run) would run alembic upgrade head only when public.tenants is absent"
+  log "  (dry-run) would run: python -m contact_ops.ops.seed_rls_probes"
+  log "  (dry-run) would set RLS_SELFTEST_TENANT_IDS in .env when that line is empty"
+else
+  if [[ "$EXISTING" != "t" && "$EXISTING" != "f" ]]; then
+    die "could not tell whether Contact-Ops tables exist; refusing to seed"
+  fi
+  if [[ "$EXISTING" == "f" ]]; then
+    log "  fresh database: alembic upgrade head, then seed probes"
+    docker compose -f "$COMPOSE_FILE" run --rm --no-deps -T contact-ops-backend \
+      alembic upgrade head
+  else
+    log "  existing database: seed probes before prestart migrates"
+  fi
+  seed_out="$(docker compose -f "$COMPOSE_FILE" run --rm --no-deps -T \
+    contact-ops-backend python -m contact_ops.ops.seed_rls_probes)"
+  uuid_re='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  ids_line="$(printf '%s\n' "$seed_out" | grep -E "^${uuid_re},${uuid_re}$" | head -n1 || true)"
+  env_line="$(printf '%s\n' "$seed_out" | grep -E "^RLS_SELFTEST_TENANT_IDS=${uuid_re},${uuid_re}$" | head -n1 || true)"
+  if [[ -z "$ids_line" || -z "$env_line" ]]; then
+    die "could not parse seed_rls_probes output"
+  fi
+  printf '%s\n' "$ids_line"
+  printf '%s\n' "$env_line"
+  apply_status="$(
+    python3 - "$env_line" <<'PY'
+import pathlib
+import sys
+
+line = sys.argv[1].strip()
+if not line.startswith("RLS_SELFTEST_TENANT_IDS="):
+    raise SystemExit("seed output was not an RLS_SELFTEST_TENANT_IDS assignment")
+path = pathlib.Path(".env")
+text = path.read_text(encoding="utf-8")
+lines = text.splitlines()
+
+def nonempty(raw: str) -> bool:
+    current = raw.split("=", 1)[1].strip().strip("[]")
+    current = current.replace('"', "").replace("'", "")
+    return any(part.strip() for part in current.split(",") if part.strip())
+
+if any(nonempty(raw) for raw in lines if raw.startswith("RLS_SELFTEST_TENANT_IDS=")):
+    print("keep")
+    raise SystemExit(0)
+kept = []
+wrote = False
+for raw in lines:
+    if raw.startswith("RLS_SELFTEST_TENANT_IDS="):
+        if not wrote:
+            kept.append(line)
+            wrote = True
+        continue
+    kept.append(raw)
+if not wrote:
+    kept.append(line)
+path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+print("wrote")
+PY
+  )"
+  if [[ "$apply_status" == "wrote" ]]; then
+    log "  RLS_SELFTEST_TENANT_IDS was empty; wrote the seed line into .env"
+  elif [[ "$apply_status" == "keep" ]]; then
+    log "  RLS_SELFTEST_TENANT_IDS already set; left .env unchanged"
+  else
+    die "could not update RLS_SELFTEST_TENANT_IDS in .env"
+  fi
+fi
+
 # --- 2. Bring up the stack (prestart auto-migrates) --------------------------
 log "=== 2. docker compose up (prestart auto-runs alembic to head + schema_guard) ==="
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -197,6 +274,13 @@ cat <<'NEXT'
 
  4d. Going live = flip the dormant flags in .env per deploy/cell/README.md (d).
      All shadow-first; observe *_would_* logs before enforcing.
+
+ 4e. RLS probe tenants are seeded in step 1b. To re-run by hand:
+       docker compose -f docker-compose.prod.yml run --rm --no-deps -T \
+         contact-ops-backend python -m contact_ops.ops.seed_rls_probes
+     Paste the printed RLS_SELFTEST_TENANT_IDS line into .env if it is empty.
+     prestart will not migrate an existing database until that line names two
+     strict tenants that each have a person.
 
  Verify: curl -fsS https://mcp.contacts.<domain>/health
          curl -fsS https://mcp.contacts.<domain>/api/auth/signup-config

@@ -14,6 +14,23 @@ def _read(relative_path: str) -> str:
     return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def test_install_compose_seeds_rls_probes_before_the_api_starts() -> None:
+    seed_command = "python -m contact_ops.ops.seed_rls_probes"
+    selfhost = _read("docker-compose.selfhost.yml")
+    selfcontained = _read("docker-compose.selfcontained.yml")
+
+    for compose in (selfhost, selfcontained):
+        assert seed_command in compose
+        assert "alembic upgrade head" in compose
+        assert "condition: service_completed_successfully" in compose
+    assert "selfhost-probe-a" not in selfhost
+    backend = selfcontained.split("  contact-ops-backend:\n", 1)[1].split(
+        "  contact-ops-frontend:\n", 1
+    )[0]
+    assert "contact-ops-db-bootstrap:" in backend
+    assert "service_completed_successfully" in backend
+
+
 def test_selfhost_compose_publishes_loopback_ports_and_owns_its_network() -> None:
     compose = _read("docker-compose.selfhost.yml")
 

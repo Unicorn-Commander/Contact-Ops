@@ -78,6 +78,8 @@ esac
     assert "synthetic-admin-value" not in combined_output
     assert "would create/update runtime LOGIN role 'contact_ops_runtime'" in combined_output
     assert "would grant 'contact_ops_runtime' membership in contact_ops_app" in combined_output
+    assert "python -m contact_ops.ops.seed_rls_probes" in combined_output
+    assert "RLS_SELFTEST_TENANT_IDS" in combined_output
     assert "would run: docker compose" in combined_output
 
 
@@ -139,6 +141,12 @@ case "${1:-}" in
     fi
     ;;
   compose)
+    # alembic and `up` stay silent. The seed command's stdout is the only
+    # contract bootstrap parses, and it must not include the database URL.
+    if [[ "$*" == *"seed_rls_probes"* ]]; then
+      printf '%s\n' '11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222'
+      printf '%s\n' 'RLS_SELFTEST_TENANT_IDS=11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222'
+    fi
     exit 0
     ;;
   *)
@@ -169,6 +177,12 @@ esac
     assert completed.returncode == 0, combined_output
     assert marker not in combined_output
     assert "synthetic-admin-value" not in combined_output
+    updated_env = (synthetic_root / ".env").read_text(encoding="utf-8")
+    assert marker in updated_env
+    assert (
+        "RLS_SELFTEST_TENANT_IDS=11111111-1111-4111-8111-111111111111,"
+        "22222222-2222-4222-8222-222222222222"
+    ) in updated_env
     emitted_sql = captured_sql.read_text(encoding="utf-8")
     assert marker in emitted_sql  # Proves the real password-bearing SQL path ran.
     assert emitted_sql.count("DO $$") == 4

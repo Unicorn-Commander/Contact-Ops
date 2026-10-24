@@ -120,6 +120,8 @@ Keep the access token in the client’s secret store. Use placeholders in shared
 
 The supported stranger install is [`docker-compose.selfhost.yml`](docker-compose.selfhost.yml). It bundles Postgres with pgvector, Redis, FalkorDB, Qdrant, Garage, Keycloak, the API/MCP server, and the web UI. The generated `.env` stays local and the compose file binds the browser-facing services to loopback.
 
+Before the API starts, `contact-ops-db-bootstrap` runs `alembic upgrade head` and `python -m contact_ops.ops.seed_rls_probes`. That creates the two strict probe tenants named by `RLS_SELFTEST_TENANT_IDS` in the env template. Leave that line as the template ships it.
+
 Requirements: Docker Engine with the Compose plugin, `curl`, `openssl`, and Python 3. The first build downloads container images and application dependencies.
 
 Run this from the repository root:
@@ -262,7 +264,8 @@ Most of these variables are fields on `Settings` in [`backend/contact_ops/core/c
 |---|---|
 | `DATABASE_URL` | Async PostgreSQL DSN for canonical application data. |
 | `AUDIT_DATABASE_URL` | PostgreSQL DSN used for audit writes; can share the database in development. |
-| `MIGRATION_DATABASE_URL` | Synchronous PostgreSQL DSN used by Alembic migrations. |
+| `MIGRATION_DATABASE_URL` | Synchronous PostgreSQL DSN used by Alembic migrations and by `python -m contact_ops.ops.seed_rls_probes`. The admin role must be superuser or `BYPASSRLS`. |
+| `RLS_SELFTEST_TENANT_IDS` | Exactly two strict tenant UUIDs, each with at least one person. The self-host template ships the ids the seed command creates. A non-privileged runtime role will not migrate an existing database until this is set. |
 | `REDIS_URL` | Redis for cache and rate limits. The default database index is 5. The Celery broker is that URL rewritten to database 9, unless `CONTACT_OPS_AGENTS_BROKER_URL` is set. |
 | `STANDALONE_MODE` | Development-only authentication bypass switch; keep it disabled for authenticated deployments. |
 | `KEYCLOAK_ISSUER` | OIDC issuer used to validate browser and service JWTs. |

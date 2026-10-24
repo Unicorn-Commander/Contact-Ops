@@ -21,10 +21,12 @@
 # REDIS_URL in .env automatically by contact_ops.agents.runtime; no broker URL is
 # set here. The self-contained REDIS_URL must point at redis://contact-ops-redis:6379.
 #
-# MIGRATION ORDER: worker/beat wait for contact-ops-backend to be healthy, and the
-# backend's prestart (contact_ops.ops.prestart) runs `alembic upgrade head` +
-# asserts schema_guard before uvicorn reports healthy. So the schema is migrated
-# once, in order, before any task touches the DB.
+# MIGRATION ORDER: contact-ops-db-bootstrap (in the base file) runs
+# `alembic upgrade head` and `python -m contact_ops.ops.seed_rls_probes` before
+# the API starts. worker/beat wait for contact-ops-backend to be healthy, and
+# the backend's prestart (contact_ops.ops.prestart) re-checks the probe tenants,
+# runs `alembic upgrade head` again (a no-op once bootstrap has finished) and
+# asserts schema_guard before uvicorn reports healthy.
 #
 # FLEET STAYS DORMANT BY DEFAULT: the agents are gated by env flags that default
 # False in config.py (DEDUP_AGENT_ENABLED, CALIBRATION_ENABLED, RETENTION_SWEEP_

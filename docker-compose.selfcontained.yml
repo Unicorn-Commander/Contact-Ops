@@ -15,7 +15,9 @@
 # deploy/selfcontained/.env.selfcontained.template -> .env and fill it). Bring-up:
 #   cp deploy/selfcontained/.env.selfcontained.template .env   # then fill it in
 #   docker compose -f docker-compose.selfcontained.yml up -d
-#   # prestart runs `alembic upgrade head` + asserts schema_guard (0043), then uvicorn.
+#   # contact-ops-db-bootstrap runs `alembic upgrade head` and
+#   # `python -m contact_ops.ops.seed_rls_probes` before the API starts.
+#   # prestart re-checks those probes, asserts schema_guard, then uvicorn.
 #
 # Reuses the SAME image / container / service / volume names as
 # docker-compose.public.yml so a prebuilt contact-ops image is picked up as-is.
@@ -96,6 +98,32 @@ services:
       - ./deploy/selfcontained/garage.toml:/etc/garage.toml:ro
     networks: [contact-ops-internal]
 
+  # Migrations and the two strict RLS probe tenants run once, before the API.
+  # The seed command prints the ids; the env template already sets those
+  # well-known values. A re-run finds the rows and changes nothing.
+  contact-ops-db-bootstrap:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: contact-ops-selfcontained-db-bootstrap
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}
+      SEED_OWNER_USER_ID: ${SEED_OWNER_USER_ID}
+    depends_on:
+      contact-ops-postgres:
+        condition: service_healthy
+    networks: [contact-ops-internal]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        alembic upgrade head
+        python -m contact_ops.ops.seed_rls_probes
+
   # ===== application (same as docker-compose.prod.yml) ======================
   contact-ops-backend:
     build:
@@ -114,6 +142,8 @@ services:
         condition: service_healthy
       contact-ops-redis:
         condition: service_healthy
+      contact-ops-db-bootstrap:
+        condition: service_completed_successfully
     networks:
       - contact-ops-internal
       - web
