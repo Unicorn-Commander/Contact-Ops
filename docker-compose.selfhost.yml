@@ -148,6 +148,9 @@ services:
     <<: *backend-image
     container_name: contact-ops-db-bootstrap
     restart: "no"
+    # Without this the job lands on the project's default network and its
+    # connection to contact-ops-postgres times out (clean-room 2026-10-24).
+    networks: [contact-ops-internal]
     env_file: [.env]
     environment:
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}

@@ -31,6 +31,15 @@ def test_selfhost_compose_publishes_loopback_ports_and_owns_its_network() -> Non
     assert "condition: service_completed_successfully" in compose
 
 
+
+def test_every_selfhost_service_joins_the_private_network() -> None:
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load(_read("docker-compose.selfhost.yml"))["services"]
+
+    for name, service in services.items():
+        networks = service.get("networks") or {}
+        assert "contact-ops-internal" in networks, name
+
 def test_selfhost_keycloak_alias_matches_issuer_and_has_no_host_gateway() -> None:
     compose = _read("docker-compose.selfhost.yml")
     template = _read("deploy/selfcontained/.env.selfcontained.template")
