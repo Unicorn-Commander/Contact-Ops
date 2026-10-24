@@ -373,6 +373,6 @@ Please report vulnerabilities privately using the process in [`SECURITY.md`](SEC
 
 ## License
 
-Contact-Ops is licensed under the [Apache License 2.0](LICENSE).
+Contact-Ops is licensed under the [Apache License 2.0](LICENSE). Our names and logos are covered by [TRADEMARKS.md](TRADEMARKS.md).
 
 Built by [Magic Unicorn](https://magicunicorn.tech) · part of [Unicorn Commander](https://unicorncommander.ai)
