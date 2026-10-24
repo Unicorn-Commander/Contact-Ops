@@ -442,6 +442,25 @@ attach_common_mappers() {
   ensure_mapper_for_client "$client_id" aud-contact-ops-mcp "$TMP_DIR/mapper_audience.json"
 }
 
+# Clients are created with fullScopeAllowed=false, so a realm role reaches a
+# token only through an explicit scope mapping. Without this the bootstrap
+# ADMIN's token carried no application role and every MCP write answered
+# "requires STAFF" (clean-room 2026-10-24).
+allow_app_roles_in_token() {
+  local client_id="$1" role roles_json="" role_json
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "would map the application realm roles into client $client_id tokens"
+    return 0
+  fi
+  for role in CLIENT STAFF MANAGER ADMIN; do
+    role_json="$("${KCADM_ARGS[@]}" get "roles/$role" -r "$KC_REALM")"
+    roles_json="${roles_json:+$roles_json,}$role_json"
+  done
+  printf '[%s]\n' "$roles_json" \
+    | "${KCADM_ARGS[@]}" create "clients/$client_id/scope-mappings/realm" \
+      -r "$KC_REALM" -f - >/dev/null
+}
+
 assign_default_scope() {
   local client_id="$1" scope
   for scope in pat:read pat:write; do
@@ -455,6 +474,7 @@ write_client_json "$TMP_DIR/mcp.json" contact-ops-mcp "Contact-Ops MCP" \
   false true false false false "$MCP_ORIGIN" "" ""
 MCP_ID="$(upsert_client contact-ops-mcp "$TMP_DIR/mcp.json")"
 attach_common_mappers "$MCP_ID"
+allow_app_roles_in_token "$MCP_ID"
 assign_default_scope "$MCP_ID"
 
 write_client_json "$TMP_DIR/app.json" contact-ops-app "Contact-Ops Web App" \
@@ -463,6 +483,7 @@ write_client_json "$TMP_DIR/app.json" contact-ops-app "Contact-Ops Web App" \
   "$APP_ORIGIN,$DEV_ORIGIN"
 APP_ID="$(upsert_client contact-ops-app "$TMP_DIR/app.json")"
 attach_common_mappers "$APP_ID"
+allow_app_roles_in_token "$APP_ID"
 assign_default_scope "$APP_ID"
 
 write_client_json "$TMP_DIR/carddav.json" contact-ops-carddav "Contact-Ops CardDAV" \
