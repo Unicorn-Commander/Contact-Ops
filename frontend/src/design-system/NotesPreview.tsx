@@ -63,7 +63,7 @@ const POPULATED_NOTES: PreviewNote[] = [
     id: "n1",
     author_type: "agent",
     author_id: "ai-contacts-analyst",
-    text: "Confirmed primary email for Rocky Doe from the latest proposal — REMOVED (last verified by SES bounce check).\n\nNo conflicting addresses on file.",
+    text: "Confirmed primary email for Robin Doe from the latest proposal — REMOVED (last verified by SES bounce check).\n\nNo conflicting addresses on file.",
     source: { proposal_id: "4f2a9192-3e4a-4f5b-8c6d-7e8f9a0b1c2d" },
     created_at: subMinutes(NOW, 8).toISOString()
   },

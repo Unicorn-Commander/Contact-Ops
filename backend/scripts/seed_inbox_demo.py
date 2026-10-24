@@ -118,7 +118,7 @@ def _ensure_demo_persons(conn, tenant_id: uuid.UUID, *, owner_user_id: str) -> l
     """Create a small fixed set of demo persons if they don't already exist."""
     names = [
         ("John Rector", "john-rector-demo"),
-        ("Kevin Holloway", "kevin-holloway-demo"),
+        ("Ray Holloway", "kevin-holloway-demo"),
         ("Leo Grant", "leo-grant-demo"),
         ("Nate Ellison", "nate-ellison-demo"),
         ("Allie Menegakis", "allie-menegakis-demo"),

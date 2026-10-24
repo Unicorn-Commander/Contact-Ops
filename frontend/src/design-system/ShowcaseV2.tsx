@@ -334,7 +334,7 @@ const demoProposals: DemoProposal[] = [
     agent: "relationship-agent",
     agentLabel: "Relationship Agent v1.1",
     verb: "Link relationship",
-    detail: "Maya Hart — works-with — Shafen Khan",
+    detail: "Maya Hart — works-with — Sam Okoye",
     confidence: 0.44,
     when: "21m ago",
     flag: "hipaa"

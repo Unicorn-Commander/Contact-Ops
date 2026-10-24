@@ -125,7 +125,7 @@ function PalettePanel({ mode }: { mode: "search" | "empty" }) {
         {mode === "search" ? (
           <>
             <GroupHeading>People</GroupHeading>
-            <ResultRow row={{ kind: "person", label: "Shafen Khan", sublabel: "Cofounder · Brightwater Labs" }} selected />
+            <ResultRow row={{ kind: "person", label: "Sam Okoye", sublabel: "Cofounder · Brightwater Labs" }} selected />
             <ResultRow row={{ kind: "person", label: "Maya Hart", sublabel: "Partner · Bayview Health" }} />
             <GroupHeading>Organizations</GroupHeading>
             <ResultRow row={{ kind: "org", label: "Brightwater Labs", sublabel: "Healthcare IT" }} />
@@ -138,7 +138,7 @@ function PalettePanel({ mode }: { mode: "search" | "empty" }) {
             <ResultRow row={{ kind: "person", label: "Aaron Stransky", meta: "person" }} selected />
             <ResultRow row={{ kind: "org", label: "Magic Unicorn LLC", meta: "org" }} />
             <GroupHeading>Recent</GroupHeading>
-            <ResultRow row={{ kind: "person", label: "Rocky Doe", meta: "person" }} />
+            <ResultRow row={{ kind: "person", label: "Robin Doe", meta: "person" }} />
             <ResultRow row={{ kind: "org", label: "Bayview Health", meta: "org" }} />
             <ResultRow row={{ kind: "tag", label: "vendor", sublabel: "18 tagged", meta: "tag" }} />
             <GroupHeading>Quick actions</GroupHeading>
