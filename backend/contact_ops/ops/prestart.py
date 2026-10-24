@@ -13,6 +13,17 @@ from alembic.config import Config
 from alembic import command
 from contact_ops.core.config import get_settings
 from contact_ops.core.database import engine
+from contact_ops.ops.rls_probe_preflight import (
+    PreflightDecision,
+    PreflightUnavailable,
+    SEED_COMMAND,
+    asyncpg_dsn,
+    decide_rls_probe_preflight,
+    load_preflight_facts,
+    probe_gap_note,
+    should_refuse_before_migrate,
+    should_warn_after_migrate,
+)
 from contact_ops.ops.schema_guard import assert_schema_current
 
 logger = structlog.get_logger(__name__)
@@ -29,17 +40,48 @@ logger = structlog.get_logger(__name__)
 _MIGRATION_ADVISORY_LOCK_KEY = 0x436F4F70  # 1131368304 — ASCII "CoOp"
 
 
-def _asyncpg_dsn(url: str) -> str:
-    """Strip any SQLAlchemy driver suffix so ``asyncpg.connect`` accepts the DSN."""
-    for driver in (
-        "postgresql+asyncpg://",
-        "postgresql+psycopg://",
-        "postgresql+psycopg2://",
-        "postgres://",
-    ):
-        if url.startswith(driver):
-            return "postgresql://" + url.split("://", 1)[1]
-    return url
+def _log_probe_gap(reason: str, *, after_migrate: bool) -> None:
+    logger.error(
+        "rls_probe_preflight_missing_after_migrate"
+        if after_migrate
+        else "rls_probe_preflight_refused",
+        reason=reason,
+        seed_command=SEED_COMMAND,
+        note=probe_gap_note(),
+    )
+
+
+def _preflight_decision(*, fatal: bool) -> PreflightDecision | None:
+    """Read the runtime role and the probe tenants. Does not migrate.
+
+    ``fatal`` exits when the database cannot be classified. The post-migration
+    recheck passes ``fatal=False`` so a fresh database still reaches uvicorn,
+    where the existing boot self-test refuses.
+    """
+    settings = get_settings()
+    migration_url = settings.MIGRATION_DATABASE_URL or settings.DATABASE_URL
+    # Alembic env.py reads this name. Set it before either the preflight admin
+    # connection or the upgrade so both see the configured migration URL.
+    os.environ["MIGRATION_DATABASE_URL"] = migration_url
+    try:
+        facts = asyncio.run(
+            load_preflight_facts(
+                runtime_dsn=settings.DATABASE_URL,
+                admin_dsn=migration_url,
+                configured_ids=tuple(settings.RLS_SELFTEST_TENANT_IDS),
+            )
+        )
+    except PreflightUnavailable as exc:
+        logger.error(
+            "rls_probe_preflight_unreachable",
+            error_type=exc.error_type,
+            seed_command=SEED_COMMAND,
+            note=probe_gap_note(),
+        )
+        if fatal:
+            raise SystemExit(1) from None
+        return None
+    return decide_rls_probe_preflight(facts)
 
 
 def _run_migrations() -> None:
@@ -60,7 +102,7 @@ def _run_migrations() -> None:
 
     import asyncpg
 
-    dsn = _asyncpg_dsn(migration_url)
+    dsn = asyncpg_dsn(migration_url)
     lock_loop = asyncio.new_event_loop()
     lock_conn = None
     try:
@@ -96,9 +138,27 @@ async def _assert_schema() -> None:
     )
 
 
-def main() -> None:
-    _run_migrations()
+def _finish_schema() -> None:
     asyncio.run(_assert_schema())
+
+
+def main() -> None:
+    # An existing database whose runtime role would fail the boot RLS self-test
+    # must not be migrated first. A fresh database has no tenants table yet, so
+    # it still migrates; the boot self-test then refuses until the probes exist.
+    before = _preflight_decision(fatal=True)
+    if before is None or should_refuse_before_migrate(before):
+        if before is not None:
+            _log_probe_gap(before.reason, after_migrate=False)
+        raise SystemExit(1)
+    _run_migrations()
+    if before.action == "defer":
+        after = _preflight_decision(fatal=False)
+        if after is None:
+            _log_probe_gap("preflight_unreachable", after_migrate=True)
+        elif should_warn_after_migrate(before, after):
+            _log_probe_gap(after.reason, after_migrate=True)
+    _finish_schema()
     os.execv(  # noqa: S606 - prestart intentionally replaces itself with uvicorn.
         sys.executable,
         [
