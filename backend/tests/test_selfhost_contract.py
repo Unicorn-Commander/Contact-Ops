@@ -48,6 +48,15 @@ def test_selfhost_compose_publishes_loopback_ports_and_owns_its_network() -> Non
     assert "condition: service_completed_successfully" in compose
 
 
+
+def test_every_selfhost_service_joins_the_private_network() -> None:
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load(_read("docker-compose.selfhost.yml"))["services"]
+
+    for name, service in services.items():
+        networks = service.get("networks") or {}
+        assert "contact-ops-internal" in networks, name
+
 def test_selfhost_keycloak_alias_matches_issuer_and_has_no_host_gateway() -> None:
     compose = _read("docker-compose.selfhost.yml")
     template = _read("deploy/selfcontained/.env.selfcontained.template")
@@ -163,3 +172,18 @@ def test_prod_selfhost_template_cannot_enable_standalone_bypass() -> None:
             KEYCLOAK_ISSUER="",
             CONNECTOR_ENCRYPTION_KEY="test-key",
         )
+
+
+def test_keycloak_bootstrap_uses_only_tools_in_the_keycloak_image() -> None:
+    script = _read("scripts/keycloak_bootstrap.sh")
+
+    # quay.io/keycloak/keycloak ships bash but no awk (clean-room 2026-10-24).
+    code = "\n".join(
+        line for line in script.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert not re.search(r"\bawk\b", code)
+    assert "-s fullScopeAllowed=true" in code
+    assert 'allow_app_roles_in_token "$APP_ID"' in code
+    assert 'allow_app_roles_in_token "$MCP_ID"' in code
+    assert '\\"unmanagedAttributePolicy\\":\\"ADMIN_EDIT\\"' in code
+    assert '-s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL"' in script

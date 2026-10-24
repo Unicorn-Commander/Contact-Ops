@@ -131,6 +131,7 @@ services:
       KC_ADMIN_USER: ${KC_ADMIN_USER}
       KC_ADMIN_PASS: ${KC_ADMIN_PASS}
       KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME}
+      KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL: ${KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL:REMOVED}
       KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD}
       KEYCLOAK_SWITCH_CLIENT_SECRET: ${KEYCLOAK_SWITCH_CLIENT_SECRET}
       APP_ORIGIN: ${APP_ORIGIN}
@@ -150,6 +151,9 @@ services:
     <<: *backend-image
     container_name: contact-ops-db-bootstrap
     restart: "no"
+    # Without this the job lands on the project's default network and its
+    # connection to contact-ops-postgres times out (clean-room 2026-10-24).
+    networks: [contact-ops-internal]
     env_file: [.env]
     environment:
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}

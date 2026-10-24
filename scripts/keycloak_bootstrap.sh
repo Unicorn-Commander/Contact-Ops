@@ -13,6 +13,8 @@
 #   KC_REALM                              realm to create/update
 #   KC_ADMIN_USER / KC_ADMIN_PASS         master-realm administrator
 #   KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME     first human realm user
+#   KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL        its email (default REMOVED); Keycloak
+#                                         refuses a password login for a user with no profile
 #   KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD     first human realm-user password
 #   KEYCLOAK_SWITCH_CLIENT_SECRET         secret used by the onboarding API
 #
@@ -40,6 +42,7 @@ set -euo pipefail
 : "${KC_ADMIN_USER:?KC_ADMIN_USER is required}"
 : "${KC_ADMIN_PASS:?KC_ADMIN_PASS is required}"
 : "${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME is required}"
+: "${KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL:=REMOVED}"
 : "${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD is required}"
 : "${KEYCLOAK_SWITCH_CLIENT_SECRET:?KEYCLOAK_SWITCH_CLIENT_SECRET is required}"
 
@@ -70,6 +73,22 @@ done
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 warn() { printf '[bootstrap WARN] %s\n' "$*" >&2; }
 die() { printf '[bootstrap ERROR] %s\n' "$*" >&2; exit "${2:-5}"; }
+
+# Print the id of the first "id,name" CSV row whose name matches $1.
+# Pure bash: the Keycloak image this runs in ships no awk.
+csv_id_for_name() {
+  local wanted="$1" line id name
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    id="${line%%,*}"
+    name="${line#*,}"
+    if [[ "$name" == "$wanted" ]]; then
+      printf '%s\n' "$id"
+      return 0
+    fi
+  done
+  return 0
+}
 
 case "$SIGNUP_ENABLED" in
   true|false) ;;
@@ -218,7 +237,7 @@ ensure_client_scope() {
   fi
   existing_id="$("${KCADM_ARGS[@]}" get client-scopes -r "$KC_REALM" \
     --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v name="$scope_name" '$2 == name { print $1; exit }' || true)"
+    | csv_id_for_name "$scope_name" || true)"
   [[ -n "$existing_id" ]] && return 0
   "${KCADM_ARGS[@]}" create client-scopes -r "$KC_REALM" \
     -s "name=$scope_name" \
@@ -227,6 +246,20 @@ ensure_client_scope() {
     -s 'attributes."display.on.consent.screen"=false' \
     -s "description=Contact-Ops permission scope: $scope_name" >/dev/null
 }
+
+# Keycloak 24+ drops user attributes the declarative user profile does not
+# declare, so onboarding's tenant_id/tenant_slug/tenant_hipaa writes vanished
+# and tokens never carried a tenant. ADMIN_EDIT keeps them writable by the
+# admin API only; a user cannot set their own tenant.
+log "Allowing admin-managed user attributes"
+if [[ $DRY_RUN -eq 0 ]]; then
+  profile_json="$("${KCADM_ARGS[@]}" get users/profile -r "$KC_REALM")"
+  if [[ "$profile_json" != *'"unmanagedAttributePolicy"'* ]]; then
+    profile_json="{\"unmanagedAttributePolicy\":\"ADMIN_EDIT\",${profile_json#*\{}"
+    printf '%s\n' "$profile_json" \
+      | "${KCADM_ARGS[@]}" update users/profile -r "$KC_REALM" -f - >/dev/null
+  fi
+fi
 
 log "Ensuring permission scopes"
 for scope in "${CLIENT_SCOPES[@]}"; do
@@ -241,7 +274,7 @@ get_scope_id() {
   fi
   "${KCADM_ARGS[@]}" get client-scopes -r "$KC_REALM" \
     --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v name="$scope_name" '$2 == name { print $1; exit }'
+    | csv_id_for_name "$scope_name"
 }
 
 assign_scope() {
@@ -346,7 +379,7 @@ ensure_mapper_for_client() {
   fi
   existing="$("${KCADM_ARGS[@]}" get "clients/$client_id/protocol-mappers/models" \
     -r "$KC_REALM" --fields id,name --format csv --noquotes 2>/dev/null \
-    | awk -F, -v name="$mapper_name" '$2 == name { print $1; exit }' || true)"
+    | csv_id_for_name "$mapper_name" || true)"
   [[ -n "$existing" ]] && return 0
   "${KCADM_ARGS[@]}" create "clients/$client_id/protocol-mappers/models" \
     -r "$KC_REALM" -f "$mapper_file" >/dev/null
@@ -409,6 +442,25 @@ attach_common_mappers() {
   ensure_mapper_for_client "$client_id" aud-contact-ops-mcp "$TMP_DIR/mapper_audience.json"
 }
 
+# Clients are created with fullScopeAllowed=false, so a realm role reaches a
+# token only through an explicit scope mapping. Without this the bootstrap
+# ADMIN's token carried no application role and every MCP write answered
+# "requires STAFF" (clean-room 2026-10-24).
+allow_app_roles_in_token() {
+  local client_id="$1" role roles_json="" role_json
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "would map the application realm roles into client $client_id tokens"
+    return 0
+  fi
+  for role in CLIENT STAFF MANAGER ADMIN; do
+    role_json="$("${KCADM_ARGS[@]}" get "roles/$role" -r "$KC_REALM")"
+    roles_json="${roles_json:+$roles_json,}$role_json"
+  done
+  printf '[%s]\n' "$roles_json" \
+    | "${KCADM_ARGS[@]}" create "clients/$client_id/scope-mappings/realm" \
+      -r "$KC_REALM" -f - >/dev/null
+}
+
 assign_default_scope() {
   local client_id="$1" scope
   for scope in pat:read pat:write; do
@@ -422,6 +474,7 @@ write_client_json "$TMP_DIR/mcp.json" contact-ops-mcp "Contact-Ops MCP" \
   false true false false false "$MCP_ORIGIN" "" ""
 MCP_ID="$(upsert_client contact-ops-mcp "$TMP_DIR/mcp.json")"
 attach_common_mappers "$MCP_ID"
+allow_app_roles_in_token "$MCP_ID"
 assign_default_scope "$MCP_ID"
 
 write_client_json "$TMP_DIR/app.json" contact-ops-app "Contact-Ops Web App" \
@@ -430,6 +483,7 @@ write_client_json "$TMP_DIR/app.json" contact-ops-app "Contact-Ops Web App" \
   "$APP_ORIGIN,$DEV_ORIGIN"
 APP_ID="$(upsert_client contact-ops-app "$TMP_DIR/app.json")"
 attach_common_mappers "$APP_ID"
+allow_app_roles_in_token "$APP_ID"
 assign_default_scope "$APP_ID"
 
 write_client_json "$TMP_DIR/carddav.json" contact-ops-carddav "Contact-Ops CardDAV" \
@@ -459,6 +513,15 @@ write_client_json "$TMP_DIR/switch.json" contact-ops-switch "Contact-Ops Workspa
   false false false false true "$MCP_ORIGIN" "" ""
 SWITCH_ID="$(upsert_client contact-ops-switch "$TMP_DIR/switch.json")"
 kc_set_client_secret "$SWITCH_ID" "$KEYCLOAK_SWITCH_CLIENT_SECRET"
+# With fullScopeAllowed=false the realm-management roles granted below never
+# reach the service-account token, and every admin call answers 403. This
+# account holds only those roles, so full scope adds nothing else.
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "would allow the switch client the full scope of its service account"
+else
+  "${KCADM_ARGS[@]}" update "clients/$SWITCH_ID" -r "$KC_REALM" \
+    -s fullScopeAllowed=true >/dev/null
+fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
   log "would grant the switch service account view-users, query-users, and manage-users"
@@ -492,11 +555,14 @@ if [[ "$ADMIN_USER_ID" == dry-run-user-* ]]; then
 elif [[ -z "$ADMIN_USER_ID" ]]; then
   "${KCADM_ARGS[@]}" create users -r "$KC_REALM" \
     -s "username=$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME" \
+    -s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL" \
+    -s firstName=Local -s lastName=Admin \
     -s enabled=true -s emailVerified=true >/dev/null
   ADMIN_USER_ID="$(get_user_id "$KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME")"
   [[ -z "$ADMIN_USER_ID" ]] && die "bootstrap admin user was not created" 5
 else
   "${KCADM_ARGS[@]}" update "users/$ADMIN_USER_ID" -r "$KC_REALM" \
+    -s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL" \
     -s enabled=true -s emailVerified=true >/dev/null
 fi
 kc_set_password "$ADMIN_USER_ID" "$KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD"
