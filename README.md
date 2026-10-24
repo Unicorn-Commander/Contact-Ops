@@ -49,7 +49,7 @@ Contact-Ops is the shared contact and identity graph for teams and the agents th
 ### Canonical profiles
 
 <p align="center">
-  <img src="docs/screenshots/person.webp" width="1100" alt="Contact-Ops person profile merged from multiple sources">
+  <img src="docs/screenshots/organizations.webp" width="1100" alt="Organizations, canonical like people">
 </p>
 
 A person record stores identity fields, contact points, organization and employment, identifiers, notes, tags, and relationships. The person page shows the name, pronouns, occupation, headline, relationship category, emails, phones, identifiers, instant-message handles, URLs, names, and photos when the person has them. It does not load addresses, the employment timeline, or the relationship list. The tags tab edits the bio text and does not list tags or notes. MCP tools are the full read and write surface. REST routes under `/api/people` cover a subset of those contact-detail handlers.
@@ -332,13 +332,13 @@ For a deeper implementation map, see [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`
 
 | App | What it does |
 |---|---|
-| [Accounting-Ops](https://github.com/Unicorn-Commander/accounting-ops-oss) | Append-only, hash-chained double-entry books |
+| [Accounting-Ops](https://github.com/Unicorn-Commander/Accounting-Ops) | Append-only, hash-chained double-entry books |
 | **Contact-Ops** (this repository) | The shared contact and identity graph |
-| [Customer-Ops](https://github.com/Unicorn-Commander/customer-ops-community) | Customer relationship and pipeline layer |
-| [Email-Ops](https://github.com/Unicorn-Commander/email-ops-community) | Apache James JMAP mail surface and a human approval inbox |
-| [Project-Ops](https://github.com/Unicorn-Commander/project-ops-community) | Projects and tasks: agreed work becomes owned tasks with status and context |
-| [Meeting-Ops](https://github.com/Unicorn-Commander/Meeting-Ops-OSS) | Record meetings, transcribe in the browser, and search them |
-| [Unicorn Stable](https://github.com/Unicorn-Commander/unicorn-stable-oss) | Humans and agents in the same room |
+| [Customer-Ops](https://github.com/Unicorn-Commander/Customer-Ops) | Customer relationship and pipeline layer |
+| [Email-Ops](https://github.com/Unicorn-Commander/Email-Ops) | Apache James JMAP mail surface and a human approval inbox |
+| [Project-Ops](https://github.com/Unicorn-Commander/Project-Ops) | Projects and tasks: agreed work becomes owned tasks with status and context |
+| [Meeting-Ops](https://github.com/Unicorn-Commander/Meeting-Ops) | Record meetings, transcribe in the browser, and search them |
+| [Unicorn Stable](https://github.com/Unicorn-Commander/Unicorn-Stable) | Humans and agents in the same room |
 
 Contact-Ops connects to the suite through scoped tenant identity, MCP discovery and calls, and optional Brigade registry registration and JWT federation. Imports and connector pulls create proposals that wait for review unless an import sets `auto_approve`. The confidence approver can auto-apply other proposals when they meet its gates.
 
