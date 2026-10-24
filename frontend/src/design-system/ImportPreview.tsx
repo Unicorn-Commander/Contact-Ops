@@ -119,7 +119,7 @@ const MOCK_WITH_ERRORS: MockResult = {
   ],
   preview: [
     {
-      display_name: "Rocky Doe",
+      display_name: "Robin Doe",
       emails: ["REMOVED"],
       phones: ["REMOVED"],
       organization: "Doe Holdings"
@@ -131,13 +131,13 @@ const MOCK_WITH_ERRORS: MockResult = {
       organization: "Bayview Health"
     },
     {
-      display_name: "Shafen Khan",
+      display_name: "Sam Okoye",
       emails: ["REMOVED"],
       phones: ["REMOVED"],
       organization: "Brightwater Labs"
     },
     {
-      display_name: "Kevin Holloway",
+      display_name: "Ray Holloway",
       emails: ["REMOVED"],
       phones: [],
       organization: "Holloway Speaking"

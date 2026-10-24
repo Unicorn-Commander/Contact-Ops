@@ -4,7 +4,7 @@ All examples run against one tenant graph, for example `contact_ops__aaron_perso
 Never run cross-tenant graph queries by default; enumerate every target graph only
 from an ADMIN-gated operator path.
 
-## Who do I know at REMOVED?
+## Who do I know at Summit Medical?
 
 ```cypher
 MATCH (p:Person)-[r:WORKS_AT]->(o:Organization {id: $summit medical_org_id})

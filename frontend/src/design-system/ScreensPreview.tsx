@@ -81,7 +81,7 @@ const demoPeople: PersonSummary[] = [
   },
   {
     person_id: "p2",
-    display_name: "Shafen Khan",
+    display_name: "Sam Okoye",
     headline: "Ops cofounder, GFL",
     primary_email: "REMOVED",
     current_org: "Brightwater Labs",
@@ -104,7 +104,7 @@ const demoPeople: PersonSummary[] = [
   {
     person_id: "p4",
     display_name: "Nate Ellison",
-    headline: "IT Manager, REMOVED",
+    headline: "IT Manager, Summit Medical",
     primary_email: null,
     current_org: "Summit Medical Center",
     current_org_id: "o4",
@@ -114,7 +114,7 @@ const demoPeople: PersonSummary[] = [
   },
   {
     person_id: "p5",
-    display_name: "Kevin Holloway",
+    display_name: "Ray Holloway",
     headline: "K-12 EdTech keynote",
     primary_email: "REMOVED",
     current_org: "Holloway Media",
@@ -126,7 +126,7 @@ const demoPeople: PersonSummary[] = [
   {
     person_id: "p6",
     display_name: "Leo Grant",
-    headline: "Physician-scientist, REMOVED",
+    headline: "Physician-scientist, Summit Medical",
     primary_email: "REMOVED",
     current_org: "Summit Medical Center",
     current_org_id: "o4",
@@ -139,10 +139,10 @@ const demoPeople: PersonSummary[] = [
 const demoOrgs: OrganizationSummary[] = [
   { org_id: "o1", display_name: "Magic Unicorn LLC", legal_name: "Magic Unicorn LLC", kind: "business", domain: "magicunicorn.tech", industry: "AI Infrastructure" },
   { org_id: "o2", display_name: "Brightwater Labs", legal_name: "Brightwater Labs Inc.", kind: "business", domain: "brightwaterlabs.example", industry: "Healthcare IT" },
-  { org_id: "o3", display_name: "Bayview Health", legal_name: "Bayview Health PA", kind: "business", domain: "bayviewhealth.example", industry: "Healthcare" },
-  { org_id: "o4", display_name: "Summit Medical Center", legal_name: "Summit Medical Center Medical Center", kind: "agency", domain: "university.example", industry: "Academic Medicine" },
+  { org_id: "o3", display_name: "Bayview Health", legal_name: "Bayview Health PA", kind: "business", domain: "bayviewhealth.com", industry: "Healthcare" },
+  { org_id: "o4", display_name: "Summit Medical Center", legal_name: "Summit Medical Center Medical Center", kind: "agency", domain: "university-example.edu", industry: "Academic Medicine" },
   { org_id: "o5", display_name: "Holloway Media", legal_name: "Holloway Media LLC", kind: "individual", domain: null, industry: "Education" },
-  { org_id: "o6", display_name: "Harbor Law", legal_name: "Harbor Law Group", kind: "business", domain: "clekislaw.com", industry: "Legal" }
+  { org_id: "o6", display_name: "Harbor Law", legal_name: "Harbor Law Group", kind: "business", domain: "harborlaw.com", industry: "Legal" }
 ];
 
 const demoTags = [
@@ -836,7 +836,7 @@ export function ReviewQueuePreview({ theme }: { theme: ThemeMode }) {
           {[
             { name: "Aaron Stransky", agent: "dedupe-agent", conf: 0.96, kind: "merge duplicate", conflict: false, focused: true },
             { name: "Bayview Health", agent: "enrichment-agent", conf: 0.88, kind: "update domain", conflict: false, focused: false },
-            { name: "Shafen Khan", agent: "carddav-reconcile", conf: 0.74, kind: "add phone", conflict: true, focused: false },
+            { name: "Sam Okoye", agent: "carddav-reconcile", conf: 0.74, kind: "add phone", conflict: true, focused: false },
             { name: "Magic Unicorn LLC", agent: "enrichment-agent", conf: 0.81, kind: "set industry", conflict: false, focused: false }
           ].map((c) => (
             <div
@@ -940,8 +940,8 @@ export function GraphPreview({ theme }: { theme: ThemeMode }) {
         </svg>
         <GraphNode left="50%" top="50%" label="Aaron Stransky" root />
         <GraphNode left="68%" top="32%" label="Magic Unicorn" />
-        <GraphNode left="72%" top="64%" label="Shafen Khan" />
-        <GraphNode left="34%" top="60%" label="REMOVED" />
+        <GraphNode left="72%" top="64%" label="Sam Okoye" />
+        <GraphNode left="34%" top="60%" label="Summit Medical" />
         <GraphNode left="40%" top="30%" label="Nate Ellison" />
       </div>
 

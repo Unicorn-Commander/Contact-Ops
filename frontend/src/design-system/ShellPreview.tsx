@@ -163,14 +163,14 @@ const demoHighlights: GlanceHighlight[] = [
 const demoProposals = [
   { name: "Aaron Stransky", kind: "person" as const, action: "merge duplicate", agent: "dedupe-agent", conf: 0.96 },
   { name: "Bayview Health", kind: "org" as const, action: "update domain", agent: "enrichment-agent", conf: 0.88 },
-  { name: "Shafen Khan", kind: "person" as const, action: "add phone", agent: "carddav-reconcile", conf: 0.74 },
+  { name: "Sam Okoye", kind: "person" as const, action: "add phone", agent: "carddav-reconcile", conf: 0.74 },
   { name: "Magic Unicorn LLC", kind: "org" as const, action: "set industry", agent: "enrichment-agent", conf: 0.41 }
 ];
 
 const demoActivity = [
   { actor: "Aaron", verb: "Approved", what: "merge · Jane Doe", when: "2m ago" },
   { actor: "enrichment-agent", verb: "Auto-applied", what: "domain · acme.com", when: "14m ago", agent: true },
-  { actor: "Aaron", verb: "Edited", what: "headline · Rocky Doe", when: "1h ago" },
+  { actor: "Aaron", verb: "Edited", what: "headline · Robin Doe", when: "1h ago" },
   { actor: "tag-agent", verb: "Proposed", what: "tag · vendor", when: "3h ago", agent: true }
 ];
 
