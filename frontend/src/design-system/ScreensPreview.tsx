@@ -104,7 +104,7 @@ const demoPeople: PersonSummary[] = [
   {
     person_id: "p4",
     display_name: "Nate Ellison",
-    headline: "IT Manager, REMOVED",
+    headline: "IT Manager, Summit Medical",
     primary_email: null,
     current_org: "Summit Medical Center",
     current_org_id: "o4",
@@ -126,7 +126,7 @@ const demoPeople: PersonSummary[] = [
   {
     person_id: "p6",
     display_name: "Leo Grant",
-    headline: "Physician-scientist, REMOVED",
+    headline: "Physician-scientist, Summit Medical",
     primary_email: "REMOVED",
     current_org: "Summit Medical Center",
     current_org_id: "o4",
@@ -941,7 +941,7 @@ export function GraphPreview({ theme }: { theme: ThemeMode }) {
         <GraphNode left="50%" top="50%" label="Aaron Stransky" root />
         <GraphNode left="68%" top="32%" label="Magic Unicorn" />
         <GraphNode left="72%" top="64%" label="Sam Okoye" />
-        <GraphNode left="34%" top="60%" label="REMOVED" />
+        <GraphNode left="34%" top="60%" label="Summit Medical" />
         <GraphNode left="40%" top="30%" label="Nate Ellison" />
       </div>
 
