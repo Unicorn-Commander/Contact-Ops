@@ -161,5 +161,9 @@ def test_keycloak_bootstrap_uses_only_tools_in_the_keycloak_image() -> None:
     script = _read("scripts/keycloak_bootstrap.sh")
 
     # quay.io/keycloak/keycloak ships bash but no awk (clean-room 2026-10-24).
-    assert not re.search(r"\bawk\b", script)
+    code = "\n".join(
+        line for line in script.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert not re.search(r"\bawk\b", code)
+    assert "-s fullScopeAllowed=true" in code
     assert '-s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL"' in script

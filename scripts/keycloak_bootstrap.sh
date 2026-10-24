@@ -478,6 +478,15 @@ write_client_json "$TMP_DIR/switch.json" contact-ops-switch "Contact-Ops Workspa
   false false false false true "$MCP_ORIGIN" "" ""
 SWITCH_ID="$(upsert_client contact-ops-switch "$TMP_DIR/switch.json")"
 kc_set_client_secret "$SWITCH_ID" "$KEYCLOAK_SWITCH_CLIENT_SECRET"
+# With fullScopeAllowed=false the realm-management roles granted below never
+# reach the service-account token, and every admin call answers 403. This
+# account holds only those roles, so full scope adds nothing else.
+if [[ $DRY_RUN -eq 1 ]]; then
+  log "would allow the switch client the full scope of its service account"
+else
+  "${KCADM_ARGS[@]}" update "clients/$SWITCH_ID" -r "$KC_REALM" \
+    -s fullScopeAllowed=true >/dev/null
+fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
   log "would grant the switch service account view-users, query-users, and manage-users"
