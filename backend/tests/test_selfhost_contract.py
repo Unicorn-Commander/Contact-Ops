@@ -166,4 +166,5 @@ def test_keycloak_bootstrap_uses_only_tools_in_the_keycloak_image() -> None:
     )
     assert not re.search(r"\bawk\b", code)
     assert "-s fullScopeAllowed=true" in code
+    assert '\\"unmanagedAttributePolicy\\":\\"ADMIN_EDIT\\"' in code
     assert '-s "email=$KEYCLOAK_BOOTSTRAP_ADMIN_EMAIL"' in script

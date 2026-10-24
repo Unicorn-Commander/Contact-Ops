@@ -247,6 +247,20 @@ ensure_client_scope() {
     -s "description=Contact-Ops permission scope: $scope_name" >/dev/null
 }
 
+# Keycloak 24+ drops user attributes the declarative user profile does not
+# declare, so onboarding's tenant_id/tenant_slug/tenant_hipaa writes vanished
+# and tokens never carried a tenant. ADMIN_EDIT keeps them writable by the
+# admin API only; a user cannot set their own tenant.
+log "Allowing admin-managed user attributes"
+if [[ $DRY_RUN -eq 0 ]]; then
+  profile_json="$("${KCADM_ARGS[@]}" get users/profile -r "$KC_REALM")"
+  if [[ "$profile_json" != *'"unmanagedAttributePolicy"'* ]]; then
+    profile_json="{\"unmanagedAttributePolicy\":\"ADMIN_EDIT\",${profile_json#*\{}"
+    printf '%s\n' "$profile_json" \
+      | "${KCADM_ARGS[@]}" update users/profile -r "$KC_REALM" -f - >/dev/null
+  fi
+fi
+
 log "Ensuring permission scopes"
 for scope in "${CLIENT_SCOPES[@]}"; do
   ensure_client_scope "$scope"
