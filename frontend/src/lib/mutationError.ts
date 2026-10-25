@@ -3,6 +3,12 @@ import { MCPError } from "@/lib/mcp";
 const SCOPE_ERROR_CODES = new Set(["INSUFFICIENT_SCOPE", "FORBIDDEN_SCOPE"]);
 const ROLE_ERROR_CODES = new Set(["INSUFFICIENT_ROLE", "FORBIDDEN_ROLE"]);
 
+export function isAuthorizationMutationError(error: unknown): error is MCPError {
+  if (!(error instanceof MCPError)) return false;
+  const code = String(error.code).toUpperCase();
+  return SCOPE_ERROR_CODES.has(code) || ROLE_ERROR_CODES.has(code);
+}
+
 function requiredScope(message: string): string | undefined {
   const match = message.match(
     /(?:missing required scope(?:\(s\))?|requires? scope(?:\(s\))?)\s*:\s*([^,\s]+)/i

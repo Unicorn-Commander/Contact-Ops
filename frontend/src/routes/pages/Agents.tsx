@@ -15,7 +15,7 @@
  * A non-admin caller's governance read fails with a role error, and we render an
  * admin-only notice instead of the controls (same approach as Settings -> Members).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -63,6 +63,7 @@ import {
   useSetAgentsPausedMutation
 } from "@/hooks/useAgents";
 import type { AgentSummary } from "@/lib/types";
+import { mutationErrorMessage } from "@/lib/mutationError";
 import { cn, compactDate } from "@/lib/utils";
 
 // Trust tier (0..4) -> tokenized accent. T0/T1 never auto-apply (calm/neutral),
@@ -153,21 +154,34 @@ function ReasonDialog({
   defaultReason: string;
   destructive?: boolean;
   pending?: boolean;
-  onConfirm: (reason: string) => void;
+  onConfirm: (reason: string) => Promise<unknown> | void;
 }) {
   const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) setError(null);
+  }, [open]);
 
   // Reset the field whenever the dialog re-opens so a prior reason never leaks
   // into the next action.
   const handleOpenChange = (next: boolean) => {
-    if (!next) setReason("");
+    if (!next) {
+      setReason("");
+      setError(null);
+    }
     onOpenChange(next);
   };
 
-  const submit = () => {
+  const submit = async () => {
     const trimmed = reason.trim();
-    onConfirm(trimmed.length > 0 ? trimmed : defaultReason);
-    setReason("");
+    setError(null);
+    try {
+      await onConfirm(trimmed.length > 0 ? trimmed : defaultReason);
+      setReason("");
+    } catch (cause) {
+      setError(mutationErrorMessage(cause));
+    }
   };
 
   return (
@@ -188,9 +202,10 @@ function ReasonDialog({
             placeholder={defaultReason}
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !pending) submit();
+              if (e.key === "Enter" && !pending) void submit();
             }}
           />
+          {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => handleOpenChange(false)} disabled={pending}>
@@ -198,7 +213,7 @@ function ReasonDialog({
           </Button>
           <Button
             variant={destructive ? "destructive" : "default"}
-            onClick={submit}
+            onClick={() => void submit()}
             disabled={pending}
           >
             {pending ? "Working…" : confirmLabel}
@@ -328,9 +343,10 @@ export function KillSwitchBanner() {
         defaultReason="Paused by an administrator"
         destructive
         pending={setPaused.isPending}
-        onConfirm={(reason) =>
-          void setPaused.mutateAsync({ paused: true, reason }).then(() => setPauseOpen(false)).catch(() => {})
-        }
+        onConfirm={async (reason) => {
+          await setPaused.mutateAsync({ paused: true, reason });
+          setPauseOpen(false);
+        }}
       />
       <ReasonDialog
         open={resumeOpen}
@@ -340,9 +356,10 @@ export function KillSwitchBanner() {
         confirmLabel="Resume agents"
         defaultReason="Resumed by an administrator"
         pending={setPaused.isPending}
-        onConfirm={(reason) =>
-          void setPaused.mutateAsync({ paused: false, reason }).then(() => setResumeOpen(false)).catch(() => {})
-        }
+        onConfirm={async (reason) => {
+          await setPaused.mutateAsync({ paused: false, reason });
+          setResumeOpen(false);
+        }}
       />
     </>
   );
@@ -518,11 +535,10 @@ function AgentRoster() {
           defaultReason: "Manual promotion by an administrator",
           destructive: false,
           pending: promote.isPending,
-          onConfirm: (reason: string) =>
-            void promote
-              .mutateAsync({ agent_slug: a.slug, reason })
-              .then(() => setPending(null))
-              .catch(() => {})
+          onConfirm: async (reason: string) => {
+            await promote.mutateAsync({ agent_slug: a.slug, reason });
+            setPending(null);
+          }
         };
       case "demote":
         return {
@@ -532,11 +548,10 @@ function AgentRoster() {
           defaultReason: "Manual demotion by an administrator",
           destructive: false,
           pending: demote.isPending,
-          onConfirm: (reason: string) =>
-            void demote
-              .mutateAsync({ agent_slug: a.slug, reason })
-              .then(() => setPending(null))
-              .catch(() => {})
+          onConfirm: async (reason: string) => {
+            await demote.mutateAsync({ agent_slug: a.slug, reason });
+            setPending(null);
+          }
         };
       case "pause":
         return {
@@ -546,11 +561,10 @@ function AgentRoster() {
           defaultReason: "Paused by an administrator",
           destructive: true,
           pending: pause.isPending,
-          onConfirm: (reason: string) =>
-            void pause
-              .mutateAsync({ agent_slug: a.slug, reason })
-              .then(() => setPending(null))
-              .catch(() => {})
+          onConfirm: async (reason: string) => {
+            await pause.mutateAsync({ agent_slug: a.slug, reason });
+            setPending(null);
+          }
         };
       case "resume":
         return {
@@ -560,11 +574,10 @@ function AgentRoster() {
           defaultReason: "Resumed by an administrator",
           destructive: false,
           pending: resume.isPending,
-          onConfirm: (reason: string) =>
-            void resume
-              .mutateAsync({ agent_slug: a.slug, reason })
-              .then(() => setPending(null))
-              .catch(() => {})
+          onConfirm: async (reason: string) => {
+            await resume.mutateAsync({ agent_slug: a.slug, reason });
+            setPending(null);
+          }
         };
     }
   })();

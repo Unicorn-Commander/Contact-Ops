@@ -72,6 +72,7 @@ import {
   usePullConnectorNow
 } from "@/hooks/useConnectors";
 import { UnauthorizedError } from "@/lib/mcp";
+import { isAuthorizationMutationError, mutationErrorMessage } from "@/lib/mutationError";
 import type { Connector, ConnectorProvider, ConnectorRun } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -160,11 +161,12 @@ interface DisconnectDialogProps {
   open: boolean;
   providerName: string;
   isSubmitting?: boolean;
+  errorMessage?: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
-function DisconnectDialog({ open, providerName, isSubmitting, onCancel, onConfirm }: DisconnectDialogProps) {
+function DisconnectDialog({ open, providerName, isSubmitting, errorMessage, onCancel, onConfirm }: DisconnectDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
       <DialogContent className="max-w-md">
@@ -184,6 +186,11 @@ function DisconnectDialog({ open, providerName, isSubmitting, onCancel, onConfir
             </div>
           </div>
         </DialogHeader>
+        {errorMessage ? (
+          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-foreground">
+            {errorMessage}
+          </p>
+        ) : null}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
             Cancel
@@ -335,6 +342,7 @@ export function ConnectorsRoute() {
   const [icloudOpen, setIcloudOpen] = useState(false);
   const [icloudError, setIcloudError] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<Connector | null>(null);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
   // Track which connector_id has an in-flight Pull mutation so we can disable
   // the button + show the inline pulse without waiting for the runs poll.
@@ -419,7 +427,9 @@ export function ConnectorsRoute() {
         // Decode known codes (e.g. INVALID_CREDENTIALS) into actionable copy;
         // unknown errors fall through to error.message verbatim so we never
         // hide a genuine bug behind a generic line.
-        const decoded = decodeConnectorError(errLike, { provider: "icloud" });
+        const decoded = isAuthorizationMutationError(error)
+          ? mutationErrorMessage(error)
+          : decodeConnectorError(errLike, { provider: "icloud" });
         setIcloudError(
           decoded ??
             (errLike.message
@@ -460,10 +470,12 @@ export function ConnectorsRoute() {
 
   const handleConfirmDisconnect = useCallback(async () => {
     if (!disconnectTarget) return;
+    setDisconnectError(null);
     try {
       await disconnectConnector.mutateAsync({ connector_id: disconnectTarget.id });
-    } finally {
       setDisconnectTarget(null);
+    } catch (error) {
+      setDisconnectError(mutationErrorMessage(error, "Could not disconnect this connector."));
     }
   }, [disconnectConnector, disconnectTarget]);
 
@@ -519,7 +531,10 @@ export function ConnectorsRoute() {
                 onConnectIcloud={handleConnectIcloud}
                 onConnectOauth={handleStartOauth}
                 onPull={handlePull}
-                onDisconnect={(c) => setDisconnectTarget(c)}
+                onDisconnect={(c) => {
+                  setDisconnectError(null);
+                  setDisconnectTarget(c);
+                }}
               />
             );
           })}
@@ -548,7 +563,11 @@ export function ConnectorsRoute() {
         open={Boolean(disconnectTarget)}
         providerName={disconnectTarget ? providerDisplayName(disconnectTarget.provider) : ""}
         isSubmitting={disconnectConnector.isPending}
-        onCancel={() => setDisconnectTarget(null)}
+        errorMessage={disconnectError}
+        onCancel={() => {
+          setDisconnectError(null);
+          setDisconnectTarget(null);
+        }}
         onConfirm={handleConfirmDisconnect}
       />
 

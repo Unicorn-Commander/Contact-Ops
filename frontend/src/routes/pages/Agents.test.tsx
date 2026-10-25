@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { makeTestQueryClient, withQueryClient } from "@/test/utils";
-import { tools } from "@/lib/mcp";
+import { MCPError, tools } from "@/lib/mcp";
 import type { AgentGovernance } from "@/lib/types";
 
 // --- Mocks: auth token + spyable login redirect, and a no-op toaster.
@@ -108,5 +108,27 @@ describe("/agents Command Center kill-switch toggle", () => {
         "test-token"
       )
     );
+  });
+
+  it("keeps the reason dialog open and shows a role error when pause is denied", async () => {
+    const { KillSwitchBanner } = await import("@/routes/pages/Agents");
+
+    vi.spyOn(tools, "getAgentGovernance").mockResolvedValue(governance());
+    vi.spyOn(tools, "setAgentsPaused").mockRejectedValue(new MCPError("INSUFFICIENT_ROLE", "requires ADMIN"));
+
+    const client = makeTestQueryClient();
+    render(<KillSwitchBanner />, { wrapper: withQueryClient(client) });
+
+    await userEvent.click(await screen.findByRole("button", { name: /pause all agents/i }));
+    const dialog = await screen.findByRole("dialog");
+    const reason = within(dialog).getByLabelText(/Reason/);
+    await userEvent.type(reason, "Keep the fleet stopped");
+    await userEvent.click(within(dialog).getByRole("button", { name: /pause all agents/i }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Your sign-in is missing the workspace role required for this action (requires ADMIN)."
+    );
+    expect(reason).toHaveValue("Keep the fleet stopped");
+    expect(within(dialog).getByRole("button", { name: /pause all agents/i })).not.toBeDisabled();
   });
 });
