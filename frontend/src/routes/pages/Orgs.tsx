@@ -16,6 +16,7 @@ import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats
 import { ViewToggle, type DirectoryLayout } from "@/components/domain/ViewToggle";
 import { useMcpMutation, useOrganization, useOrganizations, usePeople } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
+import { mutationErrorMessage } from "@/lib/mutationError";
 import type { OrganizationSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AuditList } from "@/routes";
@@ -35,25 +36,31 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.Re
   );
 }
 
-function OrgForm({ onSaved }: { onSaved: () => void }) {
+export function OrgForm({ onSaved }: { onSaved: () => void }) {
   const {
     register,
     handleSubmit,
     formState: { errors }
   } = useForm<z.infer<typeof orgSchema>>({ resolver: zodResolver(orgSchema), defaultValues: { legal_name: "" } });
   const create = useMcpMutation(tools.createOrganization);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   return (
     <form
       className="space-y-4"
       onSubmit={handleSubmit(async (values) => {
-        await create.mutateAsync({
-          legal_name: values.legal_name,
-          display_name: values.display_name || undefined,
-          domain: values.domain || undefined,
-          industry: values.industry || undefined
-        });
-        onSaved();
+        setSubmitError(null);
+        try {
+          await create.mutateAsync({
+            legal_name: values.legal_name,
+            display_name: values.display_name || undefined,
+            domain: values.domain || undefined,
+            industry: values.industry || undefined
+          });
+          onSaved();
+        } catch (error) {
+          setSubmitError(mutationErrorMessage(error, "Could not create this organization."));
+        }
       })}
     >
       <div className="space-y-1.5">
@@ -75,6 +82,7 @@ function OrgForm({ onSaved }: { onSaved: () => void }) {
           <Input id="industry" placeholder="Computing" {...register("industry")} />
         </div>
       </div>
+      {submitError ? <p role="alert" className="text-sm text-destructive">{submitError}</p> : null}
       <div className="flex justify-end pt-1">
         <Button type="submit" disabled={create.isPending}>
           <Save className="h-4 w-4" strokeWidth={1.6} />

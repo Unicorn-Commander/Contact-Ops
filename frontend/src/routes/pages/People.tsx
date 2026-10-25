@@ -22,6 +22,7 @@ import { useAllPeople, useMcpMutation, usePerson, usePhotos, useTags } from "@/h
 import { QueryErrorState } from "@/components/dashboard";
 import { isRenderableQueryError } from "@/lib/queryState";
 import { tools } from "@/lib/mcp";
+import { mutationErrorMessage } from "@/lib/mutationError";
 import { cn, initials } from "@/lib/utils";
 import { AuditList } from "@/routes";
 
@@ -42,27 +43,33 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.Re
   );
 }
 
-function PersonForm({ onSaved }: { onSaved: () => void }) {
+export function PersonForm({ onSaved }: { onSaved: () => void }) {
   const {
     register,
     handleSubmit,
     formState: { errors }
   } = useForm<z.infer<typeof personSchema>>({ resolver: zodResolver(personSchema), defaultValues: { display_name: "" } });
   const create = useMcpMutation(tools.createPerson);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   return (
     <form
       className="space-y-4"
       onSubmit={handleSubmit(async (values) => {
-        await create.mutateAsync({
-          display_name: values.display_name,
-          given_name: values.given_name || undefined,
-          family_name: values.family_name || undefined,
-          pronouns: values.pronouns || undefined,
-          headline: values.headline || undefined,
-          emails: values.primary_email ? [{ address: values.primary_email, type: "work", is_primary: true }] : []
-        });
-        onSaved();
+        setSubmitError(null);
+        try {
+          await create.mutateAsync({
+            display_name: values.display_name,
+            given_name: values.given_name || undefined,
+            family_name: values.family_name || undefined,
+            pronouns: values.pronouns || undefined,
+            headline: values.headline || undefined,
+            emails: values.primary_email ? [{ address: values.primary_email, type: "work", is_primary: true }] : []
+          });
+          onSaved();
+        } catch (error) {
+          setSubmitError(mutationErrorMessage(error, "Could not create this person."));
+        }
       })}
     >
       <div className="space-y-1.5">
@@ -95,6 +102,7 @@ function PersonForm({ onSaved }: { onSaved: () => void }) {
           <Input id="headline" placeholder="Mathematician" {...register("headline")} />
         </div>
       </div>
+      {submitError ? <p role="alert" className="text-sm text-destructive">{submitError}</p> : null}
       <div className="flex justify-end pt-1">
         <Button type="submit" disabled={create.isPending}>
           <Save className="h-4 w-4" strokeWidth={1.6} />

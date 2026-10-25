@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatStrip, StatTile, StatTileSkeleton } from "@/components/domain/Stats";
 import { useMcpMutation, useTenants } from "@/hooks/useMcp";
 import { tools } from "@/lib/mcp";
+import { mutationErrorMessage } from "@/lib/mutationError";
 import { cn } from "@/lib/utils";
 
 // Tenant kind → tokenized accent. The label uses `text-foreground` (always AA);
@@ -47,6 +48,7 @@ function AddTenantDialog({
 }) {
   const create = useMcpMutation(tools.createTenant);
   const [name, setName] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,11 +67,19 @@ function AddTenantDialog({
         </DialogHeader>
         <form
           className="space-y-4"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            void create
-              .mutateAsync({ display_name: name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), kind: "personal" })
-              .then(() => onOpenChange(false));
+            setSubmitError(null);
+            try {
+              await create.mutateAsync({
+                display_name: name,
+                slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+                kind: "personal"
+              });
+              onOpenChange(false);
+            } catch (error) {
+              setSubmitError(mutationErrorMessage(error, "Could not create this tenant."));
+            }
           }}
         >
           <div className="space-y-1.5">
@@ -78,6 +88,7 @@ function AddTenantDialog({
             </label>
             <Input id="tenant_name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Magic Unicorn" />
           </div>
+          {submitError ? <p role="alert" className="text-sm text-destructive">{submitError}</p> : null}
           <div className="flex justify-end pt-1">
             <Button type="submit" disabled={create.isPending || !name.trim()}>
               <Save className="h-4 w-4" strokeWidth={1.6} />
