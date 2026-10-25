@@ -27,7 +27,11 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from contact_ops.core.config import Settings
-from contact_ops.core.database import _user_is_active_member, async_session_maker
+from contact_ops.core.database import (
+    _user_is_active_member,
+    async_session_maker,
+    bind_session_context,
+)
 from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
@@ -40,6 +44,55 @@ logger = structlog.get_logger(__name__)
 # tenant_id. Kept as a module constant so the route and the allowance can never
 # drift; the endpoint in api/auth.py is mounted at this exact path.
 ONBOARD_PATH = "/api/auth/onboard"
+
+_HUMAN_ROLE_LADDER = {"CLIENT": 0, "STAFF": 1, "MANAGER": 2, "ADMIN": 3}
+_MEMBERSHIP_ROLE_TO_REALM_ROLE = {
+    "admin": "ADMIN",
+    "manager": "MANAGER",
+    "member": "STAFF",
+    "viewer": "CLIENT",
+}
+
+
+def _append_effective_human_role(
+    claims: dict[str, Any], membership_role: str
+) -> str | None:
+    """Append the higher human realm/membership role without lowering claims."""
+    membership_realm_role = _MEMBERSHIP_ROLE_TO_REALM_ROLE.get(
+        str(membership_role).lower()
+    )
+    if membership_realm_role is None:
+        return None
+
+    realm_access = claims.get("realm_access")
+    if not isinstance(realm_access, dict):
+        realm_access = {}
+    raw_roles = realm_access.get("roles", [])
+    if isinstance(raw_roles, str):
+        roles: list[Any] = [raw_roles]
+    elif isinstance(raw_roles, (list, tuple, set)):
+        roles = list(raw_roles)
+    else:
+        roles = []
+
+    known_realm_roles = {str(role).upper() for role in roles}
+    realm_role = next(
+        (
+            role
+            for role in ("ADMIN", "MANAGER", "STAFF", "CLIENT")
+            if role in known_realm_roles
+        ),
+        "CLIENT",
+    )
+    effective_role = max(
+        (realm_role, membership_realm_role),
+        key=_HUMAN_ROLE_LADDER.__getitem__,
+    )
+    if effective_role not in known_realm_roles:
+        roles.append(effective_role)
+    realm_access["roles"] = roles
+    claims["realm_access"] = realm_access
+    return effective_role
 
 
 class JWTValidationMiddleware(BaseHTTPMiddleware):
@@ -323,7 +376,58 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             )
             return None
 
+        # Human Keycloak roles are the higher of the realm role and the active
+        # membership role for this exact workspace. The membership gate still
+        # runs at the downstream tenant/tool set-points; this lookup only adds
+        # the role that those set-points already read from realm_access.roles.
+        if claims.get("tenant_id"):
+            membership_role = await self._lookup_human_membership_role(
+                str(claims["uc_uid"]), str(claims["tenant_id"])
+            )
+            if membership_role is not None:
+                _append_effective_human_role(claims, membership_role)
+
         return claims
+
+    async def _lookup_human_membership_role(
+        self, uc_uid: str, tenant_id: str
+    ) -> str | None:
+        """Return the caller's active role for this tenant, or ``None``.
+
+        The boolean membership predicate is the same SECURITY DEFINER gate used
+        by the request paths. The role read then runs through the normal app
+        session with both RLS GUCs bound, so an active row in another tenant can
+        never provide an uplift.
+        """
+        try:
+            async with async_session_maker() as db:
+                await bind_session_context(db, tenant_id, uc_uid, self.settings)
+                if not await _user_is_active_member(db, uc_uid, tenant_id):
+                    return None
+                result = await db.execute(
+                    text(
+                        """
+                        SELECT role
+                        FROM user_tenant_membership
+                        WHERE user_uc_uid = :u
+                          AND tenant_id = CAST(:t AS uuid)
+                          AND status = 'active'
+                        """
+                    ),
+                    {"u": uc_uid, "t": tenant_id},
+                )
+                return result.scalar_one_or_none()
+        except Exception as exc:
+            # Preserve the pre-existing human-token behavior when the optional
+            # role enrichment cannot be read. If membership enforcement is on,
+            # its existing downstream predicate remains the fail-closed gate.
+            logger.warning(
+                "human_membership_role_lookup_failed",
+                uc_uid=uc_uid,
+                tenant_id=tenant_id,
+                error=str(exc),
+            )
+            return None
 
     async def _validate_brigade(self, token: str) -> dict[str, Any] | None:
         brigade_claims = verify_brigade_jwt(token)
