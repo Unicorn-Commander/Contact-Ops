@@ -380,6 +380,8 @@ Per design doc §5 conventions, Contact-Ops uses a four-tier ladder. These are R
 
 The bootstrap script creates these realm roles if they don't exist (idempotent). Existing users keep their current role assignments; the script does NOT auto-grant any role to existing users.
 
+For human Keycloak tokens, Contact-Ops uses the higher of the token's realm role and the caller's active workspace membership role for the token's tenant: membership `admin` maps to `ADMIN`, `manager` to `MANAGER`, `member` to `STAFF`, and `viewer` to `CLIENT`. An active membership can therefore add the workspace-scoped role a self-onboarded owner needs, but it never lowers a stronger realm role; PAT and Brigade tokens keep their own validation paths.
+
 Client roles (per `resource_access.<client>.roles`) are NOT used in Phase 0; we keep authorization at the scope + role level and use action_event-side enforcement for fine-grained policy. This avoids the centerdeep-data-intel `keycloak_resource_access` parsing complexity.
 
 ---

@@ -21,6 +21,9 @@ import json as _json
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -419,3 +422,204 @@ async def test_kc_uc_uid_falls_back_to_sub_when_absent(rsa_keypair):
 
     assert result is not None
     assert result["uc_uid"] == "kc-subject-xyz"
+
+
+class _ScalarResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar(self):
+        return self.value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
+class _MembershipDb:
+    def __init__(self, active: bool, role: str | None):
+        self.active = active
+        self.role = role
+        self.calls: list[tuple[str, dict | None]] = []
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.calls.append((sql, params))
+        if "user_is_active_member" in sql:
+            return _ScalarResult(self.active)
+        if "SELECT role" in sql:
+            return _ScalarResult(self.role)
+        return _ScalarResult(None)
+
+
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.parametrize(
+    "realm_roles,membership_role,expected_role",
+    [
+        (["default-roles-uchub"], "admin", "ADMIN"),
+        ([], "manager", "MANAGER"),
+        ([], "member", "STAFF"),
+        ([], "viewer", "CLIENT"),
+        (["ADMIN"], "member", "ADMIN"),
+    ],
+)
+async def test_human_role_is_max_of_realm_and_active_membership(
+    rsa_keypair, monkeypatch, realm_roles, membership_role, expected_role
+):
+    from contact_ops.mcp.rbac import get_role
+    from contact_ops.middleware import jwt_validation
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
+
+    db = _MembershipDb(active=True, role=membership_role)
+
+    @asynccontextmanager
+    async def session_maker():
+        yield db
+
+    monkeypatch.setattr(jwt_validation, "async_session_maker", session_maker)
+    now = int(time.time())
+    token = _make_token(
+        {
+            "sub": "human-role-user",
+            "iss": VALID_ISSUER,
+            "aud": VALID_AUD,
+            "tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
+            "realm_access": {"roles": realm_roles},
+            "iat": now - 60,
+            "exp": now + 300,
+            "nbf": now - 60,
+        },
+        rsa_keypair["private_pem"],
+    )
+    middleware = JWTValidationMiddleware(app, get_settings())
+    middleware._jwks = _jwks_response(rsa_keypair["jwk"])
+    middleware._jwks_expires = time.time() + 3600
+
+    result = await middleware._validate(token)
+
+    assert result is not None
+    assert get_role(result) == expected_role
+    assert expected_role in result["realm_access"]["roles"]
+    predicate_calls = [
+        params for sql, params in db.calls if "user_is_active_member" in sql
+    ]
+    assert predicate_calls == [{
+        "u": "human-role-user",
+        "t": "00000000-0000-0000-0000-000000000001",
+    }]
+    role_calls = [params for sql, params in db.calls if "SELECT role" in sql]
+    assert role_calls == [{
+        "u": "human-role-user",
+        "t": "00000000-0000-0000-0000-000000000001",
+    }]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_human_role_does_not_uplift_without_matching_active_membership(
+    rsa_keypair, monkeypatch
+):
+    from contact_ops.mcp.rbac import get_role
+    from contact_ops.middleware import jwt_validation
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
+
+    # The SECURITY DEFINER predicate is false for this token's tenant even if
+    # the same user has an admin row in another workspace.
+    db = _MembershipDb(active=False, role="admin")
+
+    @asynccontextmanager
+    async def session_maker():
+        yield db
+
+    monkeypatch.setattr(jwt_validation, "async_session_maker", session_maker)
+    now = int(time.time())
+    token = _make_token(
+        {
+            "sub": "human-no-membership",
+            "iss": VALID_ISSUER,
+            "aud": VALID_AUD,
+            "tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
+            "realm_access": {"roles": ["default-roles-uchub"]},
+            "scope": "person:write",
+            "iat": now - 60,
+            "exp": now + 300,
+            "nbf": now - 60,
+        },
+        rsa_keypair["private_pem"],
+    )
+    middleware = JWTValidationMiddleware(app, get_settings())
+    middleware._jwks = _jwks_response(rsa_keypair["jwk"])
+    middleware._jwks_expires = time.time() + 3600
+
+    result = await middleware._validate(token)
+
+    assert result is not None
+    assert get_role(result) == "CLIENT"
+    assert result["realm_access"]["roles"] == ["default-roles-uchub"]
+    assert len(db.calls) == 3
+    predicate_calls = [
+        params for sql, params in db.calls if "user_is_active_member" in sql
+    ]
+    assert predicate_calls == [{
+        "u": "human-no-membership",
+        "t": "00000000-0000-0000-0000-000000000001",
+    }]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_human_owner_effective_role_passes_create_person_role_gate(
+    rsa_keypair, monkeypatch
+):
+    from contact_ops.mcp.tools import people
+    from contact_ops.middleware import jwt_validation
+    from contact_ops.middleware.jwt_validation import JWTValidationMiddleware
+
+    db = _MembershipDb(active=True, role="admin")
+
+    @asynccontextmanager
+    async def session_maker():
+        yield db
+
+    monkeypatch.setattr(jwt_validation, "async_session_maker", session_maker)
+    now = int(time.time())
+    token = _make_token(
+        {
+            "sub": "human-owner",
+            "iss": VALID_ISSUER,
+            "aud": VALID_AUD,
+            "tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
+            "realm_access": {"roles": ["default-roles-uchub"]},
+            "scope": "person:write",
+            "iat": now - 60,
+            "exp": now + 300,
+            "nbf": now - 60,
+        },
+        rsa_keypair["private_pem"],
+    )
+    middleware = JWTValidationMiddleware(app, get_settings())
+    middleware._jwks = _jwks_response(rsa_keypair["jwk"])
+    middleware._jwks_expires = time.time() + 3600
+    claims = await middleware._validate(token)
+    assert claims is not None
+
+    monkeypatch.setattr(
+        people,
+        "check_or_register",
+        AsyncMock(
+            return_value={
+                "person_id": str(uuid.uuid4()),
+                "etag": "etag-1",
+                "vcard_uid": "vcard-1",
+                "display_name": "Workspace owner",
+                "kind": "person",
+                "created_at": None,
+                "status": "applied",
+                "event_id": None,
+            }
+        ),
+    )
+
+    result = await people.create_person(
+        SimpleNamespace(claims=claims),
+        people.CreatePersonInput(display_name="Workspace owner"),
+    )
+
+    assert result.display_name == "Workspace owner"
