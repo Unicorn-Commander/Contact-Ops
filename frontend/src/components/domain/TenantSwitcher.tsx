@@ -1,9 +1,21 @@
 import { Building2, Check, ChevronDown, CircleUser, Loader2, Lock } from "lucide-react";
 import { useEffect, useMemo, useState, useRef } from "react";
+import { useAuth } from "react-oidc-context";
 import { toast } from "sonner";
 import { useActiveTenantId, useSwitchWorkspace, useTenants } from "@/hooks/useMcp";
 import type { Tenant } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+function claimWorkspaceName(profile: Record<string, unknown> | undefined): string | undefined {
+  const direct = [profile?.tenant_display_name, profile?.tenant_name, profile?.workspace_name].find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0
+  );
+  if (direct) return direct;
+
+  const slug = profile?.tenant_slug;
+  if (typeof slug !== "string" || !slug.trim()) return undefined;
+  return slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()).trim();
+}
 
 /**
  * TenantSwitcher — the active-workspace chip in the app shell.
@@ -14,8 +26,8 @@ import { cn } from "@/lib/utils";
  * `tenant_id` claim and `queryClient.clear()`s so no cross-workspace data paints.
  *
  * The active workspace is derived from the TOKEN (`useActiveTenantId`), never
- * from a `?tenant=` URL param. A user with a single membership renders as a
- * non-interactive chip (honest label for "the workspace you're in").
+ * from a `?tenant=` URL param. The control stays interactive even for one
+ * membership so a failed list call is visible and recoverable.
  *
  * Strict / HIPAA targets trigger a step-up redirect (per-workspace MFA) handled
  * inside `useSwitchWorkspace`; the chip shows a lock badge on those rows. NOTE:
@@ -24,7 +36,8 @@ import { cn } from "@/lib/utils";
  * locked workspace. Tracked as a follow-up.
  */
 export function TenantSwitcher() {
-  const { data, isLoading } = useTenants();
+  const { user } = useAuth();
+  const { data, error, isError, isLoading } = useTenants();
   const activeTenantId = useActiveTenantId();
   const switchWorkspace = useSwitchWorkspace();
 
@@ -33,10 +46,21 @@ export function TenantSwitcher() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const tenants = useMemo<Tenant[]>(() => data?.items ?? [], [data?.items]);
-  // Current workspace comes from the token claim; fall back to the first listed
-  // workspace only until the claim resolves.
+  const profile = user?.profile as Record<string, unknown> | undefined;
+  // The token carries the active workspace id and slug even when the membership
+  // list is denied. Prefer a server-provided display name, then use the slug as a
+  // truthful label instead of falling back to the inert word "Workspace".
   const currentTenant =
     tenants.find((t) => t.tenant_id === activeTenantId) ?? tenants[0];
+  const currentWorkspaceName =
+    currentTenant?.display_name ??
+    claimWorkspaceName(profile) ??
+    (activeTenantId !== "none" ? activeTenantId : "Current workspace");
+  const listError = isError
+    ? error instanceof Error && error.message
+      ? error.message
+      : "The workspace list is unavailable."
+    : null;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -91,8 +115,6 @@ export function TenantSwitcher() {
     );
   }
 
-  const multi = tenants.length > 1;
-
   const chipClass =
     "co-v2-glass-calm focus-ring flex h-9 items-center gap-2 rounded-full pl-1.5 pr-3 text-sm font-medium text-foreground";
   const sigil = (
@@ -100,19 +122,7 @@ export function TenantSwitcher() {
       <Building2 className="h-3.5 w-3.5" strokeWidth={1.8} />
     </span>
   );
-  const label = (
-    <span className="hidden max-w-[160px] truncate md:inline">{currentTenant?.display_name ?? "Workspace"}</span>
-  );
-
-  // Single workspace → non-interactive chip (honest label, no fake switch).
-  if (!multi) {
-    return (
-      <span className={cn(chipClass, "cursor-default")} aria-label={`Workspace: ${currentTenant?.display_name ?? "—"}`}>
-        {sigil}
-        {label}
-      </span>
-    );
-  }
+  const label = <span className="hidden max-w-[160px] truncate md:inline">{currentWorkspaceName}</span>;
 
   const switching = switchWorkspace.isPending;
 
@@ -147,58 +157,75 @@ export function TenantSwitcher() {
           <p className="px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Workspaces
           </p>
+          {listError ? (
+            <div
+              role="alert"
+              className="mx-1 mb-1 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-foreground"
+            >
+              <p className="font-medium">Couldn&apos;t load workspaces.</p>
+              <p className="mt-0.5 text-muted-foreground">{listError}</p>
+            </div>
+          ) : null}
           <div className="co-scrollbar max-h-80 overflow-y-auto">
-            {tenants.map((t) => {
-              const active = t.tenant_id === activeTenantId;
-              const locked = t.isolation_mode === "strict" || t.hipaa_mode === true;
-              const rowPending = pendingId === t.tenant_id;
-              return (
-                <button
-                  key={t.tenant_id}
-                  role="menuitemradio"
-                  aria-checked={active}
-                  disabled={switching}
-                  className={cn(
-                    "focus-ring flex w-full items-center gap-2.5 rounded-[var(--radius-md)] px-2.5 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                    active
-                      ? "bg-[oklch(var(--co-brand-500)/0.12)] text-foreground"
-                      : "text-muted-foreground hover:bg-[oklch(var(--co-brand-500)/0.08)] hover:text-foreground"
-                  )}
-                  onClick={() => handleSelect(t)}
-                >
-                  <span
+            {tenants.length > 0 ? (
+              tenants.map((t) => {
+                const active = t.tenant_id === activeTenantId;
+                const locked = t.isolation_mode === "strict" || t.hipaa_mode === true;
+                const rowPending = pendingId === t.tenant_id;
+                return (
+                  <button
+                    key={t.tenant_id}
+                    role="menuitemradio"
+                    aria-checked={active}
+                    disabled={switching}
                     className={cn(
-                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+                      "focus-ring flex w-full items-center gap-2.5 rounded-[var(--radius-md)] px-2.5 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                       active
-                        ? "bg-gradient-brand text-primary-foreground"
-                        : "bg-[oklch(var(--co-brand-500)/0.12)] text-[oklch(var(--co-brand-300))]"
+                        ? "bg-[oklch(var(--co-brand-500)/0.12)] text-foreground"
+                        : "text-muted-foreground hover:bg-[oklch(var(--co-brand-500)/0.08)] hover:text-foreground"
                     )}
+                    onClick={() => handleSelect(t)}
                   >
-                    <Building2 className="h-3.5 w-3.5" strokeWidth={1.8} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="block truncate font-medium">{t.display_name}</span>
-                      {locked ? (
-                        <Lock
-                          className="h-3 w-3 shrink-0 text-muted-foreground"
-                          strokeWidth={2}
-                          aria-label="Requires step-up verification"
-                        />
+                    <span
+                      className={cn(
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+                        active
+                          ? "bg-gradient-brand text-primary-foreground"
+                          : "bg-[oklch(var(--co-brand-500)/0.12)] text-[oklch(var(--co-brand-300))]"
+                      )}
+                    >
+                      <Building2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="block truncate font-medium">{t.display_name}</span>
+                        {locked ? (
+                          <Lock
+                            className="h-3 w-3 shrink-0 text-muted-foreground"
+                            strokeWidth={2}
+                            aria-label="Requires step-up verification"
+                          />
+                        ) : null}
+                      </span>
+                      {t.role ? (
+                        <span className="block truncate text-xs capitalize text-muted-foreground">{t.role}</span>
                       ) : null}
                     </span>
-                    {t.role ? (
-                      <span className="block truncate text-xs capitalize text-muted-foreground">{t.role}</span>
+                    {rowPending ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[oklch(var(--co-brand-300))]" strokeWidth={2} />
+                    ) : active ? (
+                      <Check className="h-4 w-4 shrink-0 text-[oklch(var(--co-brand-300))]" strokeWidth={2} />
                     ) : null}
-                  </span>
-                  {rowPending ? (
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[oklch(var(--co-brand-300))]" strokeWidth={2} />
-                  ) : active ? (
-                    <Check className="h-4 w-4 shrink-0 text-[oklch(var(--co-brand-300))]" strokeWidth={2} />
-                  ) : null}
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })
+            ) : (
+              <p className="px-2.5 py-2 text-sm text-muted-foreground">
+                {listError
+                  ? "Your current workspace is still active, but memberships could not be loaded."
+                  : "No active workspaces found."}
+              </p>
+            )}
           </div>
         </div>
       ) : null}

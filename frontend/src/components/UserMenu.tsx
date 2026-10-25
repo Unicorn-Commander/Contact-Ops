@@ -7,7 +7,8 @@ import {
 import { useAuth } from "react-oidc-context";
 import { Settings, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserAvatar } from "@/components/UserAvatar";
 
 export function UserMenu() {
   const { user, isAuthenticated, isLoading, signoutRedirect } = useAuth();
@@ -36,19 +37,13 @@ export function UserMenu() {
   const name = String(profile?.name ?? profile?.preferred_username ?? profile?.email ?? "User");
   const email = String(profile?.email ?? "");
   const ucUid = profile?.uc_uid ? String(profile.uc_uid) : undefined;
-  const picture = profile?.picture ? String(profile.picture) : "";
-  const initials = name.charAt(0).toUpperCase();
+  const picture = typeof profile?.picture === "string" && profile.picture.trim() ? profile.picture : undefined;
 
   return (
     <DropDownMenu>
       <DropDownTrigger asChild>
         <Button variant="outline" size="icon" className="h-9 w-9">
-          <Avatar className="h-8 w-8">
-            <AvatarImage src={picture} />
-            <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
+          <UserAvatar name={name} picture={picture} className="h-8 w-8" />
         </Button>
       </DropDownTrigger>
       <DropDownContent
@@ -58,9 +53,7 @@ export function UserMenu() {
       >
         <div className="space-y-1">
           <div className="flex items-center space-x-3 p-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold">
-              {initials}
-            </div>
+            <UserAvatar name={name} picture={picture} className="h-10 w-10 shrink-0" />
             <div className="min-w-0">
               <p className="font-medium truncate">{name}</p>
               {email ? (

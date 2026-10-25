@@ -27,7 +27,8 @@ import { Button } from "@/components/ui/button";
 import { KeyboardHint } from "@/design-system/KeyboardHint";
 import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { AskAnalystDock } from "@/components/AskAnalystDock";
-import { cn, initials } from "@/lib/utils";
+import { UserAvatar } from "@/components/UserAvatar";
+import { cn } from "@/lib/utils";
 import { UserMenu } from "@/components/UserMenu";
 import { AppShellProvider } from "@/components/app-shell-context";
 
@@ -126,6 +127,7 @@ function SidebarContent({ pathname, onNavigate }: { pathname: string; onNavigate
   const profile = user?.profile as Record<string, unknown> | undefined;
   const name = String(profile?.name ?? profile?.preferred_username ?? profile?.email ?? "Signed in");
   const role = profile?.role ? String(profile.role) : "Member";
+  const picture = typeof profile?.picture === "string" && profile.picture.trim() ? profile.picture : undefined;
   const isActive = (to: string) => (to === "/" ? pathname === "/" : pathname.startsWith(to));
 
   return (
@@ -149,9 +151,12 @@ function SidebarContent({ pathname, onNavigate }: { pathname: string; onNavigate
 
       <div className="border-t p-3">
         <div className="flex items-center gap-3 px-1 py-2">
-          <span className="co-human-sigil flex h-9 w-9 shrink-0 items-center justify-center text-sm">
-            {initials(name)}
-          </span>
+          <UserAvatar
+            name={name}
+            picture={picture}
+            className="h-9 w-9 shrink-0"
+            fallbackClassName="co-human-sigil text-sm"
+          />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{name}</p>
             <span className="mt-0.5 inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
