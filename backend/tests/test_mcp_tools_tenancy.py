@@ -139,3 +139,52 @@ async def test_get_tenant_requires_scope() -> None:
             _ctx("CLIENT", ""),
             GetTenantInput(tenant_id=uuid.uuid4()),
         )
+
+
+class _Result:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def scalars(self) -> "_Result":
+        return self
+
+    def all(self) -> list[Any]:
+        return self._rows
+
+
+class _FakeDb:
+    """Answers list_tenants' queries in order: home tenants, memberships, extras."""
+
+    def __init__(self, *results: list[Any]) -> None:
+        self._results = list(results)
+
+    async def execute(self, *_a: Any, **_k: Any) -> _Result:
+        return _Result(self._results.pop(0))
+
+
+def _tenant(tid: uuid.UUID, slug: str) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id=tid, slug=slug, kind=SimpleNamespace(value="brand"), display_name=slug.title(),
+        owner_user_id=uuid.uuid4(), parent_tenant_id=None, hipaa_mode=False, gdpr_mode=False,
+        data_residency=None, carddav_enabled=False, data_intel_publish_consent=False,
+        deprecated_at=None, created_at=None, updated_at=None, etag="e", graph_mode=None,
+        graph_name=None, qdrant_namespace=None, garage_bucket_prefix=None, plan_tier=None,
+        isolation_mode=None, retention_policy={}, branding={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_tenants_reports_role_on_home_workspace() -> None:
+    home_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    other_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+    ctx = _ctx("CLIENT", "tenant:read")
+    ctx.db = cast(Any, _FakeDb(
+        [_tenant(home_id, "home")],
+        [(home_id, "admin"), (other_id, "member")],
+        [_tenant(other_id, "other")],
+    ))
+    out = await list_tenants(ctx, ListTenantsInput())
+    roles = {item["tenant_id"]: item.get("role") for item in out.items}
+    assert roles == {str(home_id): "admin", str(other_id): "member"}

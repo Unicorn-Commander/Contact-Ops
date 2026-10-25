@@ -182,26 +182,33 @@ async def list_tenants(ctx: MCPContext, req: ListTenantsInput) -> ListTenantsOut
     )
     home = rows[: req.limit]
     home_ids = {t.id for t in home}
-    items = [_tenant_summary(tenant) for tenant in home]
+    # The caller's active memberships (tenants_select RLS (0035) already permits
+    # these rows; the explicit user_uc_uid filter scopes to the caller regardless
+    # of RLS). The role is reported on the home workspace too, so the UI can show
+    # what the caller is in the workspace they are in.
+    uc_uid = str(getattr(ctx, "user_id", "") or "")
+    mem_roles: dict[Any, Any] = {}
+    if uc_uid:
+        mem_rows = (
+            await ctx.db.execute(
+                text(
+                    "SELECT tenant_id, role FROM user_tenant_membership "
+                    "WHERE user_uc_uid = :u AND status = 'active'"
+                ),
+                {"u": uc_uid},
+            )
+        ).all()
+        mem_roles = {row[0]: row[1] for row in mem_rows}
+    items = [
+        {**_tenant_summary(tenant), "role": mem_roles.get(tenant.id)} for tenant in home
+    ]
     next_cursor = home[-1].slug if len(rows) > req.limit and home else None
 
     # Phase 4.3: append the caller's OTHER active-membership workspaces (label-only,
     # §2.4) so the switcher can list them. First page only (no cursor); a user
-    # belongs to few workspaces. tenants_select RLS (0035) already permits these
-    # rows; the explicit user_uc_uid filter scopes to the caller regardless of RLS.
+    # belongs to few workspaces.
     if not req.cursor:
-        uc_uid = str(getattr(ctx, "user_id", "") or "")
         if uc_uid:
-            mem_rows = (
-                await ctx.db.execute(
-                    text(
-                        "SELECT tenant_id, role FROM user_tenant_membership "
-                        "WHERE user_uc_uid = :u AND status = 'active'"
-                    ),
-                    {"u": uc_uid},
-                )
-            ).all()
-            mem_roles = {row[0]: row[1] for row in mem_rows}
             extra_ids = [tid for tid in mem_roles if tid not in home_ids]
             if extra_ids:
                 extra = (
