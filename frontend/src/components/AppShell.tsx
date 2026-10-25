@@ -29,6 +29,7 @@ import { TenantSwitcher } from "@/components/domain/TenantSwitcher";
 import { AskAnalystDock } from "@/components/AskAnalystDock";
 import { UserAvatar } from "@/components/UserAvatar";
 import { cn } from "@/lib/utils";
+import { useActiveTenantId, useTenants } from "@/hooks/useMcp";
 import { UserMenu } from "@/components/UserMenu";
 import { AppShellProvider } from "@/components/app-shell-context";
 
@@ -126,7 +127,16 @@ function SidebarContent({ pathname, onNavigate }: { pathname: string; onNavigate
   const { user, signoutRedirect } = useAuth();
   const profile = user?.profile as Record<string, unknown> | undefined;
   const name = String(profile?.name ?? profile?.preferred_username ?? profile?.email ?? "Signed in");
-  const role = profile?.role ? String(profile.role) : "Member";
+  // The workspace membership role is what Contact-Ops authorizes on, so prefer it
+  // over a profile claim (most Keycloak profiles carry no role at all).
+  const activeTenantId = useActiveTenantId();
+  const { data: tenantsData } = useTenants();
+  const activeMembership = (tenantsData?.items ?? []).find((t) => t.tenant_id === activeTenantId);
+  const role = activeMembership?.role
+    ? activeMembership.role.charAt(0).toUpperCase() + activeMembership.role.slice(1)
+    : profile?.role
+      ? String(profile.role)
+      : "Member";
   const picture = typeof profile?.picture === "string" && profile.picture.trim() ? profile.picture : undefined;
   const isActive = (to: string) => (to === "/" ? pathname === "/" : pathname.startsWith(to));
 
