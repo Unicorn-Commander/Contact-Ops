@@ -217,7 +217,7 @@ export type PersonalAccessToken = {
 /** Returned only by `issue_personal_access_token` — includes plaintext once. */
 export type PersonalAccessTokenIssued = PersonalAccessToken & {
   /** Full bearer token, e.g. `co_pat_…48`. Show once, then drop. */
-  plaintext_token: string;
+  token_plaintext: string;
 };
 
 // ---- Workspace members (Team surface — user_tenant_membership) ----
