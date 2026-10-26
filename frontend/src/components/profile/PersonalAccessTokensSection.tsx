@@ -303,7 +303,7 @@ export function PersonalAccessTokensSection() {
                   className="block w-full break-all rounded bg-background/80 px-2 py-1.5 font-mono text-xs"
                   data-testid="pat-plaintext"
                 >
-                  {newlyIssued.plaintext_token}
+                  {newlyIssued.token_plaintext}
                 </code>
               </div>
               <div className="flex shrink-0 flex-col gap-1">
@@ -311,7 +311,7 @@ export function PersonalAccessTokensSection() {
                   variant="ghost"
                   size="icon"
                   aria-label="Copy token"
-                  onClick={() => void handleCopy(newlyIssued.plaintext_token)}
+                  onClick={() => void handleCopy(newlyIssued.token_plaintext)}
                 >
                   {copied ? (
                     <CheckCircle2 className="h-4 w-4 text-success" strokeWidth={1.6} />
