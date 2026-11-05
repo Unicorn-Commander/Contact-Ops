@@ -177,10 +177,15 @@ class Settings(BaseSettings):
             return []
         if isinstance(value, str):
             # Accept the legacy JSON-list spelling (RLS_SELFTEST_TENANT_IDS=["a","b"]) as well as
-            # the documented comma-separated form: dogfood's .env used the JSON form until 2026-09-27
+            # the documented comma-separated form: dogfood's .env used the
+            # JSON form until 2026-09-27
             # and the strict parser refused boot on '["a"' (measured, restart loop, 2 min outage).
             cleaned = value.strip().strip("[]")
-            return [item.strip().strip("\"'") for item in cleaned.split(",") if item.strip().strip("\"'")]
+            return [
+                item.strip().strip("\"'")
+                for item in cleaned.split(",")
+                if item.strip().strip("\"'")
+            ]
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
         raise TypeError("RLS_SELFTEST_TENANT_IDS must be a comma-separated UUID list")
@@ -358,6 +363,12 @@ class Settings(BaseSettings):
     # it NEVER touches legal_hold rows or the non-expiring retention classes.
     RETENTION_SWEEP_ENABLED: bool = False
     RETENTION_SWEEP_SHADOW: bool = True
+    # TTL scope is a comma-separated list of exact person-tenant tag slugs.
+    # Empty/unset is fail-closed: the tombstone grace branch still runs, but
+    # the retention-ageing branch selects nobody until an explicit tag scope is
+    # configured. This is intentionally tag-based because persons do not carry
+    # a usable lead-origin column today.
+    RETENTION_SWEEP_TTL_SCOPE: str = ""
     # Dedup BATCH agent master flag, same "present but OFF" posture. The
     # agent-execution bridge (contact_ops.agents.agent_tasks.run_dedup) is wired
     # into the beat schedule, but DORMANT until this is True: with it False the
