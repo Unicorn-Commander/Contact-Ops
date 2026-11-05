@@ -5,10 +5,10 @@ entitlement/billing/garage "present but OFF" posture):
 
 1. **Tombstone grace expiry** — persons that were tombstoned (Art.17 phase 1)
    and whose ``purge_after`` has elapsed are hard-purged (phase 2).
-2. **Retention ageing** — persons whose ``retention_class`` TTL has elapsed
-   (measured from ``last_interaction_at``) are purged, EXCEPT anything under
-   ``legal_hold`` or a non-expiring class (``legal_hold``, ``hipaa_6y``,
-   ``indefinite``).
+2. **Retention ageing** — persons carrying an explicitly configured
+   person-tenant tag whose ``retention_class`` TTL has elapsed (measured from
+   ``last_interaction_at``) are purged, EXCEPT anything under ``legal_hold`` or
+   a non-expiring class (``legal_hold``, ``hipaa_6y``, ``indefinite``).
 
 The actual deletion is delegated to the async
 ``contact_ops.services.compliance_erasure.purge_person`` — the single
@@ -37,14 +37,15 @@ work inside one ``engine.begin()`` block; we do all of ours inside one
 ``asyncio.run``.)
 
 SHADOW: when ``RETENTION_SWEEP_SHADOW`` is True (default) the sweep logs
-``retention_would_purge`` with per-tenant counts and purges NOTHING. Flip
-it False (and ``RETENTION_SWEEP_ENABLED`` True) to actually purge.
+``retention_would_purge`` with per-tenant tombstone/TTL counts and purges
+NOTHING. Flip it False (and ``RETENTION_SWEEP_ENABLED`` True) to actually
+purge.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from celery import shared_task
@@ -68,6 +69,15 @@ logger = structlog.get_logger(__name__)
 # TTL path because its (long) clock is HIPAA-specific and intentionally NOT
 # swept by v1 — Aaron's rule: the sweep NEVER touches legal_hold/hipaa.
 _NON_EXPIRING_CLASSES = ("legal_hold", "hipaa_6y", "indefinite")
+
+
+def _ttl_scope(settings: Settings) -> list[str]:
+    """Return configured exact person-tag slugs, with blank entries removed."""
+    return [
+        value.strip()
+        for value in settings.RETENTION_SWEEP_TTL_SCOPE.split(",")
+        if value.strip()
+    ]
 
 
 def _admin_async_url(settings: Settings) -> str | None:
@@ -113,16 +123,22 @@ async def _enumerate_tenant_ids(settings: Settings) -> list[str]:
     return [str(r[0]) for r in rows]
 
 
-async def _candidates_for_tenant(
-    db: AsyncSession, *, settings: Settings, limit: int
-) -> list[str]:
+async def _candidate_rows_for_tenant(
+    db: AsyncSession,
+    *,
+    settings: Settings,
+    ttl_scope: list[str],
+    limit: int,
+) -> list[tuple[str, Literal["tombstone", "ttl"]]]:
     """Select person ids eligible for purge in the RLS-bound tenant.
 
     Eligibility = phase-2 tombstone grace elapsed
     (``tombstoned_at IS NOT NULL AND purge_after <= now()``) OR retention-class
-    TTL elapsed (``last_interaction_at`` older than the class TTL). In BOTH
-    cases ``legal_hold`` rows and the non-expiring retention classes are
-    excluded — Aaron's invariant: the sweep NEVER touches legal_hold.
+    TTL elapsed (``last_interaction_at`` older than the class TTL) for a person
+    carrying one of the configured exact tags. In BOTH cases ``legal_hold``
+    rows and the non-expiring retention classes are excluded — Aaron's
+    invariant: the sweep NEVER touches legal_hold. An empty ``ttl_scope``
+    therefore makes only the tombstone branch selectable.
 
     The TTL clock falls back to ``created_at`` when ``last_interaction_at`` is
     NULL (a person we've never interacted with still ages out), and a NULL
@@ -131,7 +147,13 @@ async def _candidates_for_tenant(
     result = await db.execute(
         text(
             """
-            SELECT id::text
+            SELECT
+                id::text,
+                CASE
+                    WHEN tombstoned_at IS NOT NULL AND purge_after <= now()
+                        THEN 'tombstone'
+                    ELSE 'ttl'
+                END AS candidate_reason
             FROM persons
             WHERE legal_hold = false
               AND COALESCE(retention_class::text, 'operational_2y')
@@ -141,7 +163,15 @@ async def _candidates_for_tenant(
                     (tombstoned_at IS NOT NULL AND purge_after <= now())
                     -- retention ageing by class TTL off last activity
                     OR (
-                        COALESCE(last_interaction_at, created_at)
+                        EXISTS (
+                            SELECT 1
+                            FROM person_tenant_membership AS ptm
+                            WHERE ptm.person_id = persons.id
+                              AND ptm.tenant_id = persons.canonical_owner_tenant_id
+                              AND COALESCE(ptm.tags, ARRAY[]::text[])
+                                  && CAST(:ttl_scope AS text[])
+                        )
+                        AND COALESCE(last_interaction_at, created_at)
                           < now() - make_interval(
                               days => CASE
                                   COALESCE(retention_class::text, 'operational_2y')
@@ -159,10 +189,25 @@ async def _candidates_for_tenant(
         {
             "ephemeral_days": int(settings.RETENTION_EPHEMERAL_TTL_DAYS),
             "operational_days": int(settings.RETENTION_OPERATIONAL_TTL_DAYS),
+            "ttl_scope": ttl_scope,
             "limit": int(limit),
         },
     )
-    return [row[0] for row in result.all()]
+    return [(row[0], row[1]) for row in result.all()]
+
+
+async def _candidates_for_tenant(
+    db: AsyncSession, *, settings: Settings, limit: int
+) -> list[str]:
+    """Return only the ids from ``_candidate_rows_for_tenant``.
+
+    Keep the original helper's id-only contract for callers that only need to
+    drive purges; the sweep uses the reason-bearing rows for shadow telemetry.
+    """
+    rows = await _candidate_rows_for_tenant(
+        db, settings=settings, ttl_scope=_ttl_scope(settings), limit=limit
+    )
+    return [person_id for person_id, _reason in rows]
 
 
 async def _sweep_async(settings: Settings) -> dict[str, int]:
@@ -173,6 +218,9 @@ async def _sweep_async(settings: Settings) -> dict[str, int]:
     """
     shadow = bool(settings.RETENTION_SWEEP_SHADOW)
     batch_limit = int(settings.RETENTION_SWEEP_BATCH_LIMIT)
+    ttl_scope = _ttl_scope(settings)
+    if not ttl_scope:
+        logger.info("retention_sweep_ttl_scope_empty")
 
     tenant_ids = await _enumerate_tenant_ids(settings)
     if not tenant_ids:
@@ -233,15 +281,20 @@ async def _sweep_async(settings: Settings) -> dict[str, int]:
                         "service:retention-sweep",
                         settings,
                     )
-                    candidates = await _candidates_for_tenant(
-                        session, settings=settings, limit=batch_limit
+                    candidate_rows = await _candidate_rows_for_tenant(
+                        session,
+                        settings=settings,
+                        ttl_scope=ttl_scope,
+                        limit=batch_limit,
                     )
                     # Read-only selection — release the txn before purging so
                     # each purge runs in its own committed unit.
                     await session.rollback()
 
-                if not candidates:
-                    continue
+                candidates = [person_id for person_id, _reason in candidate_rows]
+                reason_counts = {"tombstone": 0, "ttl": 0}
+                for _person_id, reason in candidate_rows:
+                    reason_counts[reason] += 1
 
                 totals["candidates"] += len(candidates)
 
@@ -249,9 +302,12 @@ async def _sweep_async(settings: Settings) -> dict[str, int]:
                     logger.info(
                         "retention_would_purge",
                         tenant_id=tenant_id,
-                        count=len(candidates),
-                        person_ids=candidates[:50],  # cap log payload
+                        tombstone=reason_counts["tombstone"],
+                        ttl=reason_counts["ttl"],
                     )
+                    continue
+
+                if not candidates:
                     continue
 
                 # Real purge: one RLS-bound session+txn per person so a single
