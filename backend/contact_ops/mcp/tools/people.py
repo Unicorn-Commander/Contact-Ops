@@ -374,6 +374,11 @@ class ListPeopleInput(BaseModel):
     limit: int = Field(default=25, ge=1, le=100)
     cursor: str | None = None
 
+    @field_validator("tags_any", "tags_all")
+    @classmethod
+    def normalize_tags(cls, tags: list[str] | None) -> list[str] | None:
+        return [_normalize_tag(tag) for tag in tags] if tags else tags
+
 
 class ListPeopleOutput(ToolOutput):
     items: list[PersonSummary]
@@ -1552,6 +1557,26 @@ def _apply_list_filters(
                 )
             )
         )
+    if data.tags_any:
+        stmt = stmt.where(
+            sa.exists(
+                select(PersonTenantMembership.person_id).where(
+                    PersonTenantMembership.person_id == Person.id,
+                    PersonTenantMembership.tenant_id == ctx.tenant_id,
+                    PersonTenantMembership.tags.overlap(data.tags_any),
+                )
+            )
+        )
+    if data.tags_all:
+        stmt = stmt.where(
+            sa.exists(
+                select(PersonTenantMembership.person_id).where(
+                    PersonTenantMembership.person_id == Person.id,
+                    PersonTenantMembership.tenant_id == ctx.tenant_id,
+                    PersonTenantMembership.tags.contains(data.tags_all),
+                )
+            )
+        )
     resolved = _resolved_read_category(ctx, data.category)
     if resolved is not None:
         stmt = stmt.where(Person.category == resolved)
@@ -1689,9 +1714,14 @@ async def find_person_by_identifier(
             retryable=False,
             hint="use suggest_merge to resolve",
         )
+    org_names = await _current_org_names(ctx, [person for person, _found in matches])
     items = [
         IdentifierMatchOutput(
-            **person_summary(person, await primary_email_for(ctx, person.id)).model_dump(),
+            **person_summary(
+                person,
+                await primary_email_for(ctx, person.id),
+                current_org_name=org_names.get(person.current_org_id),
+            ).model_dump(),
             matched_on=found,
         )
         for person, found in matches
@@ -2022,7 +2052,12 @@ def register_people_tools() -> None:
     )
     register(
         name="get_person",
-        description="Fetch one visible person by system ID with optional expansions. Read-only; CLIENT with person:read required.",
+        description=(
+            "Fetch one visible person by system ID with optional expansions. "
+            "Contact-point arrays are returned only when named in include "
+            "(emails, phones, identifiers, URLs, or IM handles); person:read "
+            "is the only scope required. Read-only; CLIENT with person:read required."
+        ),
         input_model=GetPersonInput,
         output_model=GetPersonOutput,
         handler=get_person,

@@ -292,6 +292,63 @@ async def test_upsert_existing_merges_contacts_tags_and_organization_idempotentl
 
 
 @pytest.mark.asyncio
+async def test_upsert_organization_employment_is_visible_by_identifier(db_session):
+    c = ctx(db_session)
+    first = await create_person(
+        c,
+        CreatePersonInput(
+            display_name="Employment Target",
+            emails=[{"address": "REMOVED"}],
+        ),
+    )
+
+    updated = await upsert_person(
+        c,
+        UpsertPersonInput(
+            match_by=[
+                IdentifierInput(
+                    namespace="email", value="REMOVED"
+                )
+            ],
+            organization={
+                "name": "Synthetic Harbor Works",
+                "role": "employee",
+                "title": "Operations Lead",
+                "domain": "harbor-works.example",
+            },
+        ),
+    )
+
+    assert updated.action == "updated"
+    assert "organization" in updated.changed_fields
+    organization = await db_session.scalar(
+        select(Organization).where(
+            Organization.canonical_owner_tenant_id == TENANT_ID,
+            Organization.domain == "harbor-works.example",
+        )
+    )
+    role = await db_session.scalar(
+        select(PersonOrgRole).where(PersonOrgRole.person_id == first.person_id)
+    )
+    assert organization is not None and role is not None
+    assert role.organization_id == organization.id
+
+    found = await find_person_by_identifier(
+        ctx(db_session, role="CLIENT", scopes="person:read"),
+        FindPersonByIdentifierInput(
+            identifiers=[
+                IdentifierInput(
+                    namespace="email", value="REMOVED"
+                )
+            ]
+        ),
+    )
+    assert len(found.matches) == 1
+    assert found.matches[0].current_org_id == organization.id
+    assert found.matches[0].current_org_name == "Synthetic Harbor Works"
+
+
+@pytest.mark.asyncio
 async def test_upsert_without_organization_leaves_org_projection_unchanged(db_session):
     c = ctx(db_session)
     first = await create_person(
@@ -397,6 +454,49 @@ async def test_upsert_person_adds_im_handles_idempotently(db_session):
 
 
 @pytest.mark.asyncio
+async def test_get_person_contact_expansions_use_person_read_scope(db_session):
+    from contact_ops.models import Identifier
+
+    writer = ctx(db_session)
+    created = await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="PAT Expansion Target",
+            emails=[{"address": "REMOVED"}],
+            phones=[{"e164": "+15551230001"}],
+        ),
+    )
+    db_session.add(
+        Identifier(
+            person_id=created.person_id,
+            namespace="synthetic",
+            value="pat-expansion-001",
+        )
+    )
+    await db_session.flush()
+
+    for scopes in ("person:read", "person:read identifier:read org:read"):
+        reader = ctx(db_session, role="CLIENT", scopes=scopes)
+        reader.claims.update(
+            {"iss": "contact-ops:personal-access-token", "pat_id": "pat-expansion-test"}
+        )
+        minimal = await get_person(reader, GetPersonInput(person_id=created.person_id))
+        expanded = await get_person(
+            reader,
+            GetPersonInput(
+                person_id=created.person_id,
+                include=["emails", "phones", "identifiers"],
+            ),
+        )
+        assert minimal.emails is None
+        assert minimal.phones is None
+        assert minimal.identifiers is None
+        assert expanded.emails and expanded.emails[0]["address"] == "REMOVED"
+        assert expanded.phones and expanded.phones[0]["e164"] == "+15551230001"
+        assert expanded.identifiers and expanded.identifiers[0]["value"] == "pat-expansion-001"
+
+
+@pytest.mark.asyncio
 async def test_list_and_search_people(db_session):
     c = ctx(db_session, role="CLIENT", scopes="person:read")
     writer = ctx(db_session)
@@ -405,6 +505,45 @@ async def test_list_and_search_people(db_session):
     searched = await search_people(c, SearchPeopleInput(query="Filter"))
     assert listed.count >= 1
     assert any(item.display_name == "Filter Target" for item in searched.items)
+
+
+@pytest.mark.asyncio
+async def test_search_people_applies_any_and_all_tag_filters(db_session):
+    writer = ctx(db_session)
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="VIP Harbor",
+            initial_tags=["vip", "partner"],
+        ),
+    )
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="Warm Harbor",
+            initial_tags=["partner", "warm"],
+        ),
+    )
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="Other Harbor",
+            initial_tags=["other"],
+        ),
+    )
+
+    reader = ctx(db_session, role="CLIENT", scopes="person:read")
+    any_result = await search_people(
+        reader,
+        SearchPeopleInput(tags_any=["VIP", "missing"], limit=50),
+    )
+    all_result = await search_people(
+        reader,
+        SearchPeopleInput(tags_all=["partner", "warm"], limit=50),
+    )
+
+    assert {item.display_name for item in any_result.items} == {"VIP Harbor"}
+    assert {item.display_name for item in all_result.items} == {"Warm Harbor"}
 
 
 @pytest.mark.asyncio
