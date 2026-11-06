@@ -374,6 +374,11 @@ class ListPeopleInput(BaseModel):
     limit: int = Field(default=25, ge=1, le=100)
     cursor: str | None = None
 
+    @field_validator("tags_any", "tags_all")
+    @classmethod
+    def normalize_tags(cls, tags: list[str] | None) -> list[str] | None:
+        return [_normalize_tag(tag) for tag in tags] if tags else tags
+
 
 class ListPeopleOutput(ToolOutput):
     items: list[PersonSummary]
@@ -1549,6 +1554,26 @@ def _apply_list_filters(
             sa.exists(
                 select(Email.id).where(
                     Email.person_id == Person.id, Email.address.ilike(f"%@{data.has_email_domain}")
+                )
+            )
+        )
+    if data.tags_any:
+        stmt = stmt.where(
+            sa.exists(
+                select(PersonTenantMembership.person_id).where(
+                    PersonTenantMembership.person_id == Person.id,
+                    PersonTenantMembership.tenant_id == ctx.tenant_id,
+                    PersonTenantMembership.tags.overlap(data.tags_any),
+                )
+            )
+        )
+    if data.tags_all:
+        stmt = stmt.where(
+            sa.exists(
+                select(PersonTenantMembership.person_id).where(
+                    PersonTenantMembership.person_id == Person.id,
+                    PersonTenantMembership.tenant_id == ctx.tenant_id,
+                    PersonTenantMembership.tags.contains(data.tags_all),
                 )
             )
         )

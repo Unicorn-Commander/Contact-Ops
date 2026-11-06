@@ -465,6 +465,45 @@ async def test_list_and_search_people(db_session):
 
 
 @pytest.mark.asyncio
+async def test_search_people_applies_any_and_all_tag_filters(db_session):
+    writer = ctx(db_session)
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="VIP Harbor",
+            initial_tags=["vip", "partner"],
+        ),
+    )
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="Warm Harbor",
+            initial_tags=["partner", "warm"],
+        ),
+    )
+    await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="Other Harbor",
+            initial_tags=["other"],
+        ),
+    )
+
+    reader = ctx(db_session, role="CLIENT", scopes="person:read")
+    any_result = await search_people(
+        reader,
+        SearchPeopleInput(tags_any=["VIP", "missing"], limit=50),
+    )
+    all_result = await search_people(
+        reader,
+        SearchPeopleInput(tags_all=["partner", "warm"], limit=50),
+    )
+
+    assert {item.display_name for item in any_result.items} == {"VIP Harbor"}
+    assert {item.display_name for item in all_result.items} == {"Warm Harbor"}
+
+
+@pytest.mark.asyncio
 async def test_find_person_by_identifier_ambiguous(db_session):
     c = ctx(db_session)
     p1 = await create_person(c, CreatePersonInput(display_name="One"))
