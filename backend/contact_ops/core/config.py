@@ -190,6 +190,17 @@ class Settings(BaseSettings):
             return [str(item).strip() for item in value if str(item).strip()]
         raise TypeError("RLS_SELFTEST_TENANT_IDS must be a comma-separated UUID list")
 
+    @field_validator("MCP_ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _parse_mcp_allowed_origins(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip().rstrip("/") for item in value if str(item).strip()]
+        raise TypeError("MCP_ALLOWED_ORIGINS must be a comma-separated origin list")
+
     # Keycloak — uchub realm
     KEYCLOAK_ISSUER: str = Field(
         default="",
@@ -207,6 +218,11 @@ class Settings(BaseSettings):
     KEYCLOAK_AUDIENCE: str | None = None
     JWKS_CACHE_TTL_SECONDS: int = 300
     JWT_ALLOWED_ALGORITHMS: list[str] = ["RS256"]
+
+    # RFC 9728 resource identifier for the separately-routed MCP host. The
+    # default is the dogfood ring; production must set this to its production
+    # MCP origin in the deployment environment.
+    MCP_CANONICAL_URL: str = "https://mcp.contacts.magicunicorn.dev/mcp"
 
     # --- Phase 4.3 workspace-switch (silent re-auth) confidential client ---
     # The backend uses this confidential client's client-credentials grant to set
@@ -234,6 +250,10 @@ class Settings(BaseSettings):
     # CORS — empty by default. Set to a list of origins in dev/prod via env.
     CORS_ORIGINS: list[str] = []
     CORS_ALLOW_CREDENTIALS: bool = False
+    # Additional browser origins allowed to use the hosted MCP transport.
+    # Accepts a comma-separated env value; the app's own web and MCP origins
+    # are allowed automatically.
+    MCP_ALLOWED_ORIGINS: Annotated[list[str], NoDecode] = []
 
     # Qdrant
     QDRANT_URL: str = "http://unicorn-qdrant:6333"
@@ -460,6 +480,27 @@ class Settings(BaseSettings):
         if issuer:
             return f"{issuer.rstrip('/')}/protocol/openid-connect/certs"
         return ""
+
+    @field_validator("MCP_CANONICAL_URL")
+    @classmethod
+    def _validate_mcp_canonical_url(cls, value: str) -> str:
+        """Reject malformed resource URLs before they reach HTTP headers."""
+        value = value.strip()
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.path.rstrip("/") != "/mcp"
+            or parsed.query
+            or parsed.fragment
+            or any(char in value for char in "\r\n\x00")
+            or "@" in parsed.netloc
+        ):
+            raise ValueError(
+                "MCP_CANONICAL_URL must be an http(s) URL for the /mcp endpoint "
+                "without query, fragment, or userinfo"
+            )
+        return f"{parsed.scheme}://{parsed.netloc}/mcp"
 
     @field_validator("KEYCLOAK_AUDIENCE", mode="before")
     @classmethod

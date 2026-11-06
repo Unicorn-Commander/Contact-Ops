@@ -32,6 +32,7 @@ from contact_ops.core.database import (
     async_session_maker,
     bind_session_context,
 )
+from contact_ops.oauth_discovery import mcp_unauthorized_response
 from contact_ops.services.brigade_jwt_verifier import verify_brigade_jwt
 
 logger = structlog.get_logger(__name__)
@@ -149,6 +150,7 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
     SKIP_PREFIXES: tuple[str, ...] = (
         "/carddav",
         "/.well-known/carddav",
+        "/.well-known/oauth-protected-resource",
         "/api/connectors/m365/oauth/callback",
         "/api/connectors/gmail/oauth/callback",
         "/api/webhooks/lago",
@@ -186,7 +188,11 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
 
         token = self._extract_bearer(request)
         if not token:
-            return _unauthorized("missing bearer token")
+            return _unauthorized(
+                "missing bearer token",
+                request=request,
+                token_present=False,
+            )
 
         # Narrow tenant-less allowance (Phase 4.4 onboarding): a brand-new user's
         # token carries no tenant_id yet. Decided HERE and ONLY for POST
@@ -200,7 +206,11 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
         if token.startswith("co_pat_"):
             claims, pat_error, pat_id = await self._validate_pat(token)
             if claims is None:
-                return _unauthorized(pat_error or "invalid personal access token")
+                return _unauthorized(
+                    pat_error or "invalid personal access token",
+                    request=request,
+                    token_present=True,
+                )
             if pat_id is not None:
                 asyncio.create_task(self._mark_pat_used(pat_id))
         else:
@@ -208,7 +218,11 @@ class JWTValidationMiddleware(BaseHTTPMiddleware):
             if claims is None:
                 claims = await self._validate_brigade(token)
         if claims is None:
-            return _unauthorized("invalid token")
+            return _unauthorized(
+                "invalid token",
+                request=request,
+                token_present=True,
+            )
 
         request.state.jwt_claims = claims
         request.state.actor_chain = _build_actor_chain(claims)
@@ -752,7 +766,14 @@ def _role_from_scopes(scopes: list[Any]) -> str:
     return "CLIENT"
 
 
-def _unauthorized(reason: str) -> Response:
+def _unauthorized(
+    reason: str,
+    *,
+    request: Request | None = None,
+    token_present: bool = True,
+) -> Response:
+    if request is not None and request.url.path in {"/mcp", "/mcp/"}:
+        return mcp_unauthorized_response(token_present=token_present)
     return Response(
         content=b'{"detail":"unauthorized"}',
         status_code=status.HTTP_401_UNAUTHORIZED,

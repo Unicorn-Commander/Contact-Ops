@@ -27,7 +27,7 @@ import uuid
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from contact_ops.core.config import get_settings
@@ -41,6 +41,7 @@ from contact_ops.mcp.errors import ToolError, error_result
 from contact_ops.mcp.registry import MCPContext, get_tool, list_tools
 from contact_ops.mcp.tools import register_all_tools
 from contact_ops.mcp.tools.common import enforce_tool_rbac
+from contact_ops.oauth_discovery import bearer_token_present, mcp_unauthorized_response
 
 logger = structlog.get_logger(__name__)
 register_all_tools()
@@ -265,6 +266,38 @@ class MCPServerInstance:
 # ---------------------------------------------------------------------------
 
 
+async def _mcp_membership_allowed(claims: dict[str, Any]) -> bool:
+    """Apply the existing human membership gate before any MCP method runs."""
+    settings = get_settings()
+    if (
+        not settings.MEMBERSHIP_GATE_ENFORCED
+        or claims.get("iss") != settings.KEYCLOAK_ISSUER
+    ):
+        return True
+
+    tenant_id = str(claims.get("tenant_id") or "")
+    uc_uid = str(claims.get("uc_uid") or claims.get("sub") or "")
+    if not tenant_id or not uc_uid:
+        return False
+
+    try:
+        from contact_ops.core.database import _user_is_active_member
+
+        async with async_session_maker() as db:
+            try:
+                await bind_session_context(db, tenant_id, uc_uid, settings)
+                return bool(await _user_is_active_member(db, uc_uid, tenant_id))
+            finally:
+                await db.rollback()
+    except Exception as exc:  # noqa: BLE001 — membership failures fail closed
+        logger.warning(
+            "mcp_membership_lookup_failed",
+            error_type=type(exc).__name__,
+        )
+        return False
+
+
+@router.post("/mcp/")
 @router.post("/mcp")
 async def mcp_endpoint(request: Request) -> Response:
     """JSON-RPC 2.0 endpoint.
@@ -275,7 +308,9 @@ async def mcp_endpoint(request: Request) -> Response:
     claims = getattr(request.state, "jwt_claims", None)
     if not claims or not claims.get("tenant_id"):
         # JWT middleware should have already 401'd; defensive 401 here.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthenticated")
+        return mcp_unauthorized_response(
+            token_present=bearer_token_present(request.headers)
+        )
 
     try:
         body = await request.json()
@@ -287,11 +322,19 @@ async def mcp_endpoint(request: Request) -> Response:
 
     try:
         tenant_id = uuid.UUID(str(claims["tenant_id"]))
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid tenant_id claim",
-        ) from exc
+    except (ValueError, TypeError):
+        return mcp_unauthorized_response(token_present=True)
+
+    if not await _mcp_membership_allowed(claims):
+        return _http_error(
+            status.HTTP_403_FORBIDDEN,
+            _jsonrpc_error(
+                _request_id(body),
+                -32003,
+                "not a member of this workspace",
+            ),
+        )
+
     user_id = str(claims.get("sub") or "")
     server = MCPServerInstance(
         tenant_id=tenant_id,
@@ -411,6 +454,13 @@ class _MCPInvalidParamsError(Exception):
 
 def _jsonrpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "error": {"code": code, "message": message}, "id": request_id}
+
+
+def _request_id(body: Any) -> Any:
+    """Extract a single JSON-RPC id for a transport-level denial."""
+    if isinstance(body, dict):
+        return body.get("id")
+    return None
 
 
 def _ok(body: Any) -> Response:
