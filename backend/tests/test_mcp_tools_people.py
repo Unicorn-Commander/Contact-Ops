@@ -292,6 +292,63 @@ async def test_upsert_existing_merges_contacts_tags_and_organization_idempotentl
 
 
 @pytest.mark.asyncio
+async def test_upsert_organization_employment_is_visible_by_identifier(db_session):
+    c = ctx(db_session)
+    first = await create_person(
+        c,
+        CreatePersonInput(
+            display_name="Employment Target",
+            emails=[{"address": "REMOVED"}],
+        ),
+    )
+
+    updated = await upsert_person(
+        c,
+        UpsertPersonInput(
+            match_by=[
+                IdentifierInput(
+                    namespace="email", value="REMOVED"
+                )
+            ],
+            organization={
+                "name": "Synthetic Harbor Works",
+                "role": "employee",
+                "title": "Operations Lead",
+                "domain": "harbor-works.example",
+            },
+        ),
+    )
+
+    assert updated.action == "updated"
+    assert "organization" in updated.changed_fields
+    organization = await db_session.scalar(
+        select(Organization).where(
+            Organization.canonical_owner_tenant_id == TENANT_ID,
+            Organization.domain == "harbor-works.example",
+        )
+    )
+    role = await db_session.scalar(
+        select(PersonOrgRole).where(PersonOrgRole.person_id == first.person_id)
+    )
+    assert organization is not None and role is not None
+    assert role.organization_id == organization.id
+
+    found = await find_person_by_identifier(
+        ctx(db_session, role="CLIENT", scopes="person:read"),
+        FindPersonByIdentifierInput(
+            identifiers=[
+                IdentifierInput(
+                    namespace="email", value="REMOVED"
+                )
+            ]
+        ),
+    )
+    assert len(found.matches) == 1
+    assert found.matches[0].current_org_id == organization.id
+    assert found.matches[0].current_org_name == "Synthetic Harbor Works"
+
+
+@pytest.mark.asyncio
 async def test_upsert_without_organization_leaves_org_projection_unchanged(db_session):
     c = ctx(db_session)
     first = await create_person(

@@ -1689,9 +1689,14 @@ async def find_person_by_identifier(
             retryable=False,
             hint="use suggest_merge to resolve",
         )
+    org_names = await _current_org_names(ctx, [person for person, _found in matches])
     items = [
         IdentifierMatchOutput(
-            **person_summary(person, await primary_email_for(ctx, person.id)).model_dump(),
+            **person_summary(
+                person,
+                await primary_email_for(ctx, person.id),
+                current_org_name=org_names.get(person.current_org_id),
+            ).model_dump(),
             matched_on=found,
         )
         for person, found in matches
@@ -2022,7 +2027,12 @@ def register_people_tools() -> None:
     )
     register(
         name="get_person",
-        description="Fetch one visible person by system ID with optional expansions. Read-only; CLIENT with person:read required.",
+        description=(
+            "Fetch one visible person by system ID with optional expansions. "
+            "Contact-point arrays are returned only when named in include "
+            "(emails, phones, identifiers, URLs, or IM handles); person:read "
+            "is the only scope required. Read-only; CLIENT with person:read required."
+        ),
         input_model=GetPersonInput,
         output_model=GetPersonOutput,
         handler=get_person,
