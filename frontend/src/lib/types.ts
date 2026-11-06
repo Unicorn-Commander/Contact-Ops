@@ -193,6 +193,66 @@ export type CardDavPassword = {
   last_used_at?: string | null;
 };
 
+// Mirrors backend/contact_ops/pat_scopes.py. Keep this tuple in the frontend
+// type layer so the Settings chips and their contract test share one value.
+export const PAT_SCOPE_CATALOGUE = [
+  "acl:read",
+  "acl:write",
+  "address:geocode",
+  "address:write",
+  "carddav:admin",
+  "carddav:read",
+  "connectors:read",
+  "connectors:write",
+  "consent:write",
+  "contactops:agents.admin",
+  "contactops:inbox.review",
+  "contactops:webhooks.admin",
+  "contacts:read_personal",
+  "dedup:apply",
+  "dedup:propose",
+  "dedup:read",
+  "email:verify",
+  "email:write",
+  "identifier:read",
+  "identifier:verify",
+  "identifier:write",
+  "media:read",
+  "media:write",
+  "membership:write",
+  "name:read",
+  "name:write",
+  "notes:read",
+  "notes:write",
+  "org:archive",
+  "org:read",
+  "org:write",
+  "pat:read",
+  "pat:write",
+  "person:archive",
+  "person:bulk",
+  "person:delete",
+  "person:read",
+  "person:write",
+  "phone:normalize",
+  "phone:write",
+  "proposal:archive",
+  "proposal:auto-apply",
+  "proposal:read",
+  "relationship:read",
+  "relationship:write",
+  "tag:bulk",
+  "tag:read",
+  "tag:write",
+  "tenant:read",
+  "tenant:write",
+  "voice:match",
+  "voice:read",
+  "voice:write"
+] as const;
+
+export type PersonalAccessTokenScope = (typeof PAT_SCOPE_CATALOGUE)[number];
+
 // ---- Personal Access Tokens (matches Codex PAT backend) ----
 //
 // PATs let an external MCP client (Claude Code, Cline, Cursor, etc.) connect

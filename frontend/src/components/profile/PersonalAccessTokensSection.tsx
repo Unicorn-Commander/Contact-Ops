@@ -41,7 +41,11 @@ import {
   useIssuePatMutation,
   useRevokePatMutation
 } from "@/hooks/usePersonalAccessTokens";
-import type { PersonalAccessToken, PersonalAccessTokenIssued } from "@/lib/types";
+import {
+  PAT_SCOPE_CATALOGUE,
+  type PersonalAccessToken,
+  type PersonalAccessTokenIssued
+} from "@/lib/types";
 import { cn, compactDate } from "@/lib/utils";
 
 type ExpiryOption = { label: string; days: number | null };
@@ -53,17 +57,9 @@ const EXPIRY_OPTIONS: ExpiryOption[] = [
   { label: "1 year", days: 365 }
 ];
 
-// Read-only sample scopes shown in the form. The backend ultimately gates which
-// scopes are allowed for the calling user; the chips here are a hint, not
-// authoritative. Selecting none = inherits all the user's existing scopes.
-const SAMPLE_SCOPES = [
-  "person:read",
-  "person:write",
-  "org:read",
-  "org:write",
-  "tag:read",
-  "tag:write"
-];
+// The backend catalogue is mirrored in lib/types.ts and covered by the
+// frontend contract test. Selecting none = inherits all existing scopes.
+export const PAT_SCOPE_CHIPS = [...PAT_SCOPE_CATALOGUE];
 
 function relTime(iso: string | null | undefined): string {
   if (!iso) return "Never";
@@ -241,7 +237,7 @@ export function PersonalAccessTokensSection() {
                 Scopes <span className="font-normal text-muted-foreground">(optional)</span>
               </label>
               <div className="flex flex-wrap gap-1.5">
-                {SAMPLE_SCOPES.map((scope) => {
+                {PAT_SCOPE_CHIPS.map((scope) => {
                   const active = selectedScopes.includes(scope);
                   return (
                     <button
