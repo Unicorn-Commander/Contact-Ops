@@ -29,6 +29,13 @@
   <img src="docs/screenshots/people.webp" width="1200" alt="Contact-Ops people directory with demo contacts">
 </p>
 
+## Watch the demo
+
+<p align="center">
+  <a href="https://unicorncommander.com/products/contact-ops"><img src="https://unicorncommander.com/media/products/contact-ops/demo-poster.jpg" width="100%" alt="Contact-Ops demo video: click to watch on the product page"></a>
+</p>
+<p align="center"><sub>73 seconds on a synthetic company's contacts. Narrated in a machine voice rendered on our own hardware. <a href="https://unicorncommander.com/products/contact-ops">Watch it on the product page</a>.</sub></p>
+
 ## What is Contact-Ops?
 
 Contact-Ops is the shared contact and identity graph for teams and the agents that work with them. It brings people, organizations, contact points, identifiers, employment, tags, and relationships into tenant-scoped canonical records. Agents can search, import, and propose changes, and can infer organization links from email domains. People review proposals and approve what becomes canonical. When the confidence approver runs, it auto-applies a proposal at confidence 0.95 or higher when the reversibility class is `reversible` or `reversible_24h`, the proposal is not marked HIPAA, is not cross-tenant, has no parent proposal, and has no open conflict, unless that tenant has `auto_approve_disabled` set. It is self-hostable and can share identity, scoped data, and agent calls with other Unicorn Commander services through Keycloak and optional Brigade registration.
