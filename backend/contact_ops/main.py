@@ -47,6 +47,12 @@ from contact_ops.middleware import (
     RequestMetricsMiddleware,
     SecurityHeadersMiddleware,
 )
+from contact_ops.oauth_discovery import (
+    MCPPathCORSMiddleware,
+)
+from contact_ops.oauth_discovery import (
+    router as oauth_discovery_router,
+)
 from contact_ops.observability.sentry import init_sentry
 from contact_ops.ops.rls_status import (
     RLSSelfTestError,
@@ -384,6 +390,13 @@ def create_application() -> FastAPI:
             max_age=600,
         )
 
+    # MCP preflight and origin checks must run before JWT auth. Added last so
+    # this path-scoped middleware is the outermost layer for MCP requests.
+    app.add_middleware(
+        MCPPathCORSMiddleware,
+        allowed_origins=settings.MCP_ALLOWED_ORIGINS,
+    )
+
     # Routes
     app.include_router(health_router)
     app.include_router(auth_router)
@@ -400,6 +413,7 @@ def create_application() -> FastAPI:
     app.include_router(import_vcard_router)
     app.include_router(import_csv_router)
     app.include_router(well_known_router)
+    app.include_router(oauth_discovery_router)
     if settings.ENV != "prod":
         app.include_router(test_brigade_jwt_router)
     app.include_router(mcp_router)
