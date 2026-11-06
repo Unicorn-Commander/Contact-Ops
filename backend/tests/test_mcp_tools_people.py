@@ -454,6 +454,49 @@ async def test_upsert_person_adds_im_handles_idempotently(db_session):
 
 
 @pytest.mark.asyncio
+async def test_get_person_contact_expansions_use_person_read_scope(db_session):
+    from contact_ops.models import Identifier
+
+    writer = ctx(db_session)
+    created = await create_person(
+        writer,
+        CreatePersonInput(
+            display_name="PAT Expansion Target",
+            emails=[{"address": "REMOVED"}],
+            phones=[{"e164": "+15551230001"}],
+        ),
+    )
+    db_session.add(
+        Identifier(
+            person_id=created.person_id,
+            namespace="synthetic",
+            value="pat-expansion-001",
+        )
+    )
+    await db_session.flush()
+
+    for scopes in ("person:read", "person:read identifier:read org:read"):
+        reader = ctx(db_session, role="CLIENT", scopes=scopes)
+        reader.claims.update(
+            {"iss": "contact-ops:personal-access-token", "pat_id": "pat-expansion-test"}
+        )
+        minimal = await get_person(reader, GetPersonInput(person_id=created.person_id))
+        expanded = await get_person(
+            reader,
+            GetPersonInput(
+                person_id=created.person_id,
+                include=["emails", "phones", "identifiers"],
+            ),
+        )
+        assert minimal.emails is None
+        assert minimal.phones is None
+        assert minimal.identifiers is None
+        assert expanded.emails and expanded.emails[0]["address"] == "REMOVED"
+        assert expanded.phones and expanded.phones[0]["e164"] == "+15551230001"
+        assert expanded.identifiers and expanded.identifiers[0]["value"] == "pat-expansion-001"
+
+
+@pytest.mark.asyncio
 async def test_list_and_search_people(db_session):
     c = ctx(db_session, role="CLIENT", scopes="person:read")
     writer = ctx(db_session)
